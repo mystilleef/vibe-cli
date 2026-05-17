@@ -1,0 +1,27 @@
+{
+	"name": "vibe-cli",
+	"version": "1.0.0",
+	"description": "Metacognitive AI agent oversight — pure CLI with JSON I/O",
+	"type": "module",
+	"bin": {
+		"vibe": "dist/cli.js"
+	},
+	"scripts": {
+		"build": "bun build src/cli.ts --outfile dist/cli.js --target bun --minify && chmod +x dist/cli.js",
+		"dev": "bun run src/cli.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@google/generative-ai": "^0.17.1",
+		"commander": "^12.1.0",
+		"openai": "^4.68.1"
+	},
+	"devDependencies": {
+		"@types/node": "^20.17.25",
+		"typescript": "^5.3.0"
+	},
+	"engines": {
+		"bun": ">=1.0.0"
+	},
+	"license": "MIT"
+}
