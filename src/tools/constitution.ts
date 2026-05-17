@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ensureDataDir, getDataRoot, resolveAutosession } from "../utils/autosession.js";
+import {
+  ensureDataDir,
+  getDataRoot,
+  resolveAutosession,
+} from "../utils/autosession.js";
 
 function getConstitutionFile(): string {
   return path.join(getDataRoot(), "constitution.json");
