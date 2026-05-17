@@ -1,4 +1,4 @@
-# vibe-check-cli — Session Notes
+# vibe-cli — Session Notes
 
 ## What this is
 
@@ -6,7 +6,7 @@ A CLI rewrite of the abandoned `vibe-check-mcp-server` (final release v2.8.0).
 Strips the MCP/HTTP/express layer entirely and exposes the same core logic as a
 pure flag-driven CLI with JSON I/O.
 
-Project location: `/home/lateef/Projects/vibe-check-cli/`
+Project location: `/home/lateef/Projects/vibe-cli/`
 Original MCP server: `/home/lateef/Projects/vibe-check-mcp-server/`
 
 ## How it works

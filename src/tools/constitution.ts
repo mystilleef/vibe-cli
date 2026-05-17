@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const DATA_DIR = path.join(os.homedir(), '.vibe-check');
+const DATA_DIR = path.join(os.homedir(), '.vibe-cli');
 const CONSTITUTION_FILE = path.join(DATA_DIR, 'constitution.json');
 const MAX_RULES = 50;
 

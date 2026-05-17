@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { VibeCheckInput } from '../tools/vibeCheck.js';
 
-const DATA_DIR = path.join(os.homedir(), '.vibe-check');
+const DATA_DIR = path.join(os.homedir(), '.vibe-cli');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 
 interface Interaction {

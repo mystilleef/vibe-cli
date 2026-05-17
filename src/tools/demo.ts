@@ -56,7 +56,7 @@ export async function runDemo({ sessionId = 'demo', modelOverride }: DemoOptions
   await loadHistory();
 
   ln();
-  ln(bold(magenta('  ▸ vibe-check demo')));
+  ln(bold(magenta('  ▸ vibe demo')));
   ln(dim('  Metacognitive AI agent oversight — live walkthrough'));
   ln(dim('  Three steps: constitution → check → learn'));
 
