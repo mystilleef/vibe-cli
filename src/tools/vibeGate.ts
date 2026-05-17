@@ -1,5 +1,5 @@
-import { vibeCheckTool, VibeCheckInput } from './vibeCheck.js';
-import { getGateDecision, revisePlan } from '../utils/llm.js';
+import { getGateDecision, revisePlan } from "../utils/llm.js";
+import { type VibeCheckInput, vibeCheckTool } from "./vibeCheck.js";
 
 export interface VibeGateInput extends VibeCheckInput {}
 
@@ -13,7 +13,9 @@ export interface VibeGateOutput {
   exhausted?: boolean;
 }
 
-export async function vibeGateTool(input: VibeGateInput): Promise<VibeGateOutput> {
+export async function vibeGateTool(
+  input: VibeGateInput,
+): Promise<VibeGateOutput> {
   const checkResult = await vibeCheckTool(input);
   const decision = await getGateDecision({
     goal: input.goal,
@@ -39,8 +41,8 @@ export async function vibeGateLoop(
   let last!: VibeGateOutput;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    last = await vibeGateTool({ ...input, plan });
-    last = { ...last, plan, attempts: attempt };
+    const toolResult = await vibeGateTool({ ...input, plan });
+    last = { ...toolResult, plan, attempts: attempt };
     if (last.proceed) return last;
     if (attempt < maxAttempts) {
       plan = await revisePlan({

@@ -1,13 +1,15 @@
-import { getLearningContextText } from './storage.js';
-import { getConstitution } from '../tools/constitution.js';
-import { resolveAnthropicConfig, buildAnthropicHeaders } from './anthropic.js';
+import type { GoogleGenerativeAI } from "@google/generative-ai";
+import type OpenAI from "openai";
+import { getConstitution } from "../tools/constitution.js";
+import { buildAnthropicHeaders, resolveAnthropicConfig } from "./anthropic.js";
+import { getLearningContextText } from "./storage.js";
 
-let genAI: any = null;
-let openaiClient: any = null;
+let genAI: GoogleGenerativeAI | null = null;
+let openaiClient: OpenAI | null = null;
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
-const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 
 const SYSTEM_PROMPT = `You are a meta-mentor for AI agents: expert at reading intent, spotting dysfunctional patterns, and delivering feedback that advances the goal.
 
@@ -26,12 +28,12 @@ Response constraints:
 - Prefer one sharp question over three vague ones.
 - Never exceed what the agent needs to hear right now.`;
 
-const FALLBACK_QUESTIONS = [
-  '1. Does this plan directly address what the user requested, or might it be solving a different problem?',
+export const FALLBACK_QUESTIONS = [
+  "1. Does this plan directly address what the user requested, or might it be solving a different problem?",
   "2. Is there a simpler approach that would meet the user's needs?",
-  '3. What unstated assumptions might be limiting the thinking here?',
+  "3. What unstated assumptions might be limiting the thinking here?",
   "4. How does this align with the user's original intent?",
-].join('\n');
+].join("\n");
 
 interface QuestionInput {
   goal: string;
@@ -51,37 +53,50 @@ interface QuestionOutput {
 
 async function ensureGemini() {
   if (!genAI && process.env.GEMINI_API_KEY) {
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const { GoogleGenerativeAI } = await import("@google/generative-ai");
     genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
 }
 
 async function ensureOpenAI() {
   if (!openaiClient && process.env.OPENAI_API_KEY) {
-    const { OpenAI } = await import('openai');
+    const { OpenAI } = await import("openai");
     openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
 }
 
-function detectProvider(): string {
+export function detectProvider(): string {
   if (process.env.DEFAULT_LLM_PROVIDER) return process.env.DEFAULT_LLM_PROVIDER;
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return 'anthropic';
-  if (process.env.GEMINI_API_KEY) return 'gemini';
-  if (process.env.OPENAI_API_KEY) return 'openai';
-  if (process.env.OPENROUTER_API_KEY) return 'openrouter';
-  if (process.env.DEEPSEEK_API_KEY) return 'deepseek';
-  if (process.env.OPENCODE_API_KEY) return 'opencode';
-  return 'gemini';
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN)
+    return "anthropic";
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (process.env.DEEPSEEK_API_KEY) return "deepseek";
+  if (process.env.OPENCODE_API_KEY) return "opencode";
+  return "gemini";
 }
 
-const DEFAULT_MODELS: Record<string, string> = {
-  gemini: 'gemini-2.5-flash',
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-haiku-4-5-20251001',
-  openrouter: '',
-  deepseek: 'deepseek-v4-pro',
-  'opencode': 'kimi-k2.6',
+export const DEFAULT_MODELS: Record<string, string> = {
+  gemini: "gemini-2.5-flash",
+  openai: "gpt-4o-mini",
+  anthropic: "claude-haiku-4-5-20251001",
+  openrouter: "",
+  deepseek: "deepseek-v4-pro",
+  opencode: "kimi-k2.6",
 };
+
+function resolveProviderAndModel(modelOverride?: {
+  provider?: string;
+  model?: string;
+}): { provider: string; model: string } {
+  const provider = modelOverride?.provider || detectProvider();
+  const model =
+    modelOverride?.model ||
+    process.env.DEFAULT_MODEL ||
+    DEFAULT_MODELS[provider];
+  return { provider, model };
+}
 
 async function callProvider(
   provider: string,
@@ -92,73 +107,114 @@ async function callProvider(
 ): Promise<string> {
   const combined = `${systemPrompt}\n\n${userContent}`;
 
-  if (provider === 'gemini') {
+  if (provider === "gemini") {
     await ensureGemini();
-    if (!genAI) throw new Error('GEMINI_API_KEY not set.');
-    const m = model || 'gemini-2.5-pro';
+    if (!genAI) throw new Error("GEMINI_API_KEY not set.");
+    const m = model || "gemini-2.5-pro";
     try {
-      return (await genAI.getGenerativeModel({ model: m }).generateContent(combined)).response.text();
+      return (
+        await genAI.getGenerativeModel({ model: m }).generateContent(combined)
+      ).response.text();
     } catch {
-      return (await genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }).generateContent(combined)).response.text();
+      return (
+        await genAI
+          .getGenerativeModel({ model: "gemini-2.5-flash" })
+          .generateContent(combined)
+      ).response.text();
     }
-  } else if (provider === 'openai') {
+  } else if (provider === "openai") {
     await ensureOpenAI();
-    if (!openaiClient) throw new Error('OPENAI_API_KEY not set.');
+    if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
     const res = await openaiClient.chat.completions.create({
-      model: model || 'o4-mini',
-      messages: [{ role: 'system', content: combined }],
+      model: model || "o4-mini",
+      messages: [{ role: "system", content: combined }],
     });
-    return res.choices[0].message.content || '';
-  } else if (provider === 'openrouter') {
-    if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set.');
-    if (!model) throw new Error('--model is required with provider openrouter.');
+    return res.choices[0].message.content || "";
+  } else if (provider === "openrouter") {
+    if (!process.env.OPENROUTER_API_KEY)
+      throw new Error("OPENROUTER_API_KEY not set.");
+    if (!model)
+      throw new Error("--model is required with provider openrouter.");
     const res = await fetch(OPENROUTER_URL, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'http://localhost',
-        'X-Title': 'Vibe Check CLI',
+        "HTTP-Referer": "http://localhost",
+        "X-Title": "Vibe Check CLI",
       },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: combined }] }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: combined }],
+      }),
     });
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-    return data.choices[0].message.content || '';
-  } else if (provider === 'deepseek') {
-    if (!process.env.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY not set.');
-    return callOpenAICompat({ baseURL: DEEPSEEK_BASE_URL, apiKey: process.env.DEEPSEEK_API_KEY, model: model || 'deepseek-chat', prompt: combined });
-  } else if (provider === 'opencode') {
-    if (!process.env.OPENCODE_API_KEY) throw new Error('OPENCODE_API_KEY not set.');
-    return callOpenAICompat({ baseURL: OPENCODE_GO_BASE_URL, apiKey: process.env.OPENCODE_API_KEY!, model: model || 'kimi-k2.6', prompt: combined });
-  } else if (provider === 'anthropic') {
-    return callAnthropic({ model: model || 'claude-haiku-4-5-20251001', systemPrompt, compiledPrompt: userContent, temperature });
+    const data = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    return data.choices[0].message.content || "";
+  } else if (provider === "deepseek") {
+    if (!process.env.DEEPSEEK_API_KEY)
+      throw new Error("DEEPSEEK_API_KEY not set.");
+    return callOpenAICompat({
+      baseURL: DEEPSEEK_BASE_URL,
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      model: model || "deepseek-chat",
+      prompt: combined,
+    });
+  } else if (provider === "opencode") {
+    const opencodeApiKey = process.env.OPENCODE_API_KEY;
+    if (!opencodeApiKey) throw new Error("OPENCODE_API_KEY not set.");
+    return callOpenAICompat({
+      baseURL: OPENCODE_GO_BASE_URL,
+      apiKey: opencodeApiKey,
+      model: model || "kimi-k2.6",
+      prompt: combined,
+    });
+  } else if (provider === "anthropic") {
+    return callAnthropic({
+      model: model || "claude-haiku-4-5-20251001",
+      systemPrompt,
+      compiledPrompt: userContent,
+      temperature,
+    });
   } else {
-    throw new Error(`Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`);
+    throw new Error(
+      `Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`,
+    );
   }
 }
 
 async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
-  const provider = input.modelOverride?.provider || detectProvider();
-  const model = input.modelOverride?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider];
+  const { provider, model } = resolveProviderAndModel(input.modelOverride);
 
-  const learningContext = process.env.USE_LEARNING_HISTORY === 'true' ? getLearningContextText() : '';
-  const rules = input.sessionId ? getConstitution(input.sessionId) : [];
-  const constitutionBlock = rules.length ? `\nConstitution:\n${rules.map(r => `- ${r}`).join('\n')}` : '';
+  const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
+  const learningContext = useLearning ? getLearningContextText() : "";
+  const rules = getConstitution();
+  const constitutionBlock = rules.length
+    ? `\nConstitution:\n${rules.map((r) => `- ${r}`).join("\n")}`
+    : "";
 
   const contextSection = [
-    'CONTEXT:',
-    `History Context: ${input.historySummary || 'None'}`,
-    learningContext ? `Learning Context:\n${learningContext}` : '',
+    "CONTEXT:",
+    `History Context: ${input.historySummary || "None"}`,
+    learningContext ? `Learning Context:\n${learningContext}` : "",
     `Goal: ${input.goal}`,
     `Plan: ${input.plan}`,
-    `Progress: ${input.progress || 'None'}`,
-    `Uncertainties: ${input.uncertainties?.join(', ') || 'None'}`,
-    `Task Context: ${input.taskContext || 'None'}`,
-    `User Prompt: ${input.userPrompt || 'None'}`,
+    `Progress: ${input.progress || "None"}`,
+    `Uncertainties: ${input.uncertainties?.join(", ") || "None"}`,
+    `Task Context: ${input.taskContext || "None"}`,
+    `User Prompt: ${input.userPrompt || "None"}`,
     constitutionBlock,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  const responseText = await callProvider(provider, model, SYSTEM_PROMPT, contextSection);
+  const responseText = await callProvider(
+    provider,
+    model,
+    SYSTEM_PROMPT,
+    contextSection,
+  );
   return { questions: responseText };
 }
 
@@ -175,10 +231,15 @@ export async function revisePlan(input: {
   reason: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<string> {
-  const provider = input.modelOverride?.provider || detectProvider();
-  const model = input.modelOverride?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider];
+  const { provider, model } = resolveProviderAndModel(input.modelOverride);
   const userContent = `Goal: ${input.goal}\nBlocked plan: ${input.plan}\nBlock reason: ${input.reason}\nSafety feedback: ${input.feedback}`;
-  return callProvider(provider, model, PLAN_REVISION_SYSTEM_PROMPT, userContent, 0.3);
+  return callProvider(
+    provider,
+    model,
+    PLAN_REVISION_SYSTEM_PROMPT,
+    userContent,
+    0.3,
+  );
 }
 
 const GATE_SYSTEM_PROMPT = `You are a go/no-go decision engine for AI agent plans. Read the metacognitive feedback and decide whether the agent should proceed.
@@ -197,15 +258,30 @@ interface GateDecision {
 }
 
 function parseGateDecision(raw: string): GateDecision {
-  const stripped = raw.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+  const stripped = raw
+    .replace(/^```(?:json)?\n?/m, "")
+    .replace(/\n?```$/m, "")
+    .trim();
   const match = stripped.match(/\{[^}]+\}/);
   try {
     const parsed = JSON.parse(match?.[0] ?? stripped);
-    if (typeof parsed.proceed === 'boolean' && typeof parsed.confidence === 'number' && typeof parsed.reason === 'string') {
-      return { proceed: parsed.proceed, confidence: Math.min(1, Math.max(0, parsed.confidence)), reason: parsed.reason };
+    if (
+      typeof parsed.proceed === "boolean" &&
+      typeof parsed.confidence === "number" &&
+      typeof parsed.reason === "string"
+    ) {
+      return {
+        proceed: parsed.proceed,
+        confidence: Math.min(1, Math.max(0, parsed.confidence)),
+        reason: parsed.reason,
+      };
     }
   } catch {}
-  return { proceed: false, confidence: 0.5, reason: 'Gate decision unavailable — defaulting to block.' };
+  return {
+    proceed: false,
+    confidence: 0.5,
+    reason: "Gate decision unavailable — defaulting to block.",
+  };
 }
 
 export async function getGateDecision(input: {
@@ -214,10 +290,15 @@ export async function getGateDecision(input: {
   feedback: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<GateDecision> {
-  const provider = input.modelOverride?.provider || detectProvider();
-  const model = input.modelOverride?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider];
+  const { provider, model } = resolveProviderAndModel(input.modelOverride);
   const userContent = `Goal: ${input.goal}\nPlan: ${input.plan}\nFeedback: ${input.feedback}`;
-  const raw = await callProvider(provider, model, GATE_SYSTEM_PROMPT, userContent, 0.1);
+  const raw = await callProvider(
+    provider,
+    model,
+    GATE_SYSTEM_PROMPT,
+    userContent,
+    0.1,
+  );
   return parseGateDecision(raw);
 }
 
@@ -230,10 +311,15 @@ interface VerifyResult {
   error?: string;
 }
 
-export async function verifyConnection(opts?: { provider?: string; model?: string }): Promise<VerifyResult> {
+export async function verifyConnection(opts?: {
+  provider?: string;
+  model?: string;
+}): Promise<VerifyResult> {
   const provider = opts?.provider || detectProvider();
-  const model = opts?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider] || '';
-  const probe = 'Reply with exactly one sentence confirming you are reachable and working.';
+  const model =
+    opts?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider] || "";
+  const probe =
+    "Reply with exactly one sentence confirming you are reachable and working.";
   const start = Date.now();
   try {
     const result = await generateResponse({
@@ -244,25 +330,27 @@ export async function verifyConnection(opts?: { provider?: string; model?: strin
     return {
       ok: true,
       provider,
-      model: model || '(default)',
+      model: model || "(default)",
       latency_ms: Date.now() - start,
       response: result.questions.slice(0, 200),
     };
-  } catch (err: any) {
+  } catch (err) {
     return {
       ok: false,
       provider,
-      model: model || '(default)',
-      error: err?.message ?? String(err),
+      model: model || "(default)",
+      error: getErrorMessage(err),
     };
   }
 }
 
-export async function getMetacognitiveQuestions(input: QuestionInput): Promise<QuestionOutput> {
+export async function getMetacognitiveQuestions(
+  input: QuestionInput,
+): Promise<QuestionOutput> {
   try {
     return await generateResponse(input);
   } catch (error) {
-    console.error('LLM error:', error);
+    console.error("LLM error:", error);
     return { questions: FALLBACK_QUESTIONS };
   }
 }
@@ -278,13 +366,13 @@ async function callOpenAICompat({
   model: string;
   prompt: string;
 }): Promise<string> {
-  const { OpenAI } = await import('openai');
+  const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey, baseURL });
   const response = await client.chat.completions.create({
     model,
-    messages: [{ role: 'system', content: prompt }],
+    messages: [{ role: "system", content: prompt }],
   });
-  return response.choices[0].message.content || '';
+  return response.choices[0].message.content || "";
 }
 
 interface AnthropicCallOptions {
@@ -293,6 +381,30 @@ interface AnthropicCallOptions {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getStringProperty(
+  value: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const property = value?.[key];
+  return typeof property === "string" ? property : undefined;
+}
+
+function isAnthropicTextBlock(
+  value: unknown,
+): value is { type: "text"; text: string } {
+  return (
+    isRecord(value) && value.type === "text" && typeof value.text === "string"
+  );
 }
 
 async function callAnthropic({
@@ -309,36 +421,61 @@ async function callAnthropic({
     model,
     max_tokens: maxTokens,
     temperature,
-    messages: [{ role: 'user', content: compiledPrompt }],
+    messages: [{ role: "user", content: compiledPrompt }],
   };
   if (systemPrompt) body.system = systemPrompt;
 
   const response = await fetch(`${baseUrl}/v1/messages`, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: JSON.stringify(body),
   });
 
   const rawText = await response.text();
-  let parsed: any;
-  try { parsed = JSON.parse(rawText); } catch { parsed = undefined; }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    parsed = undefined;
+  }
+  const parsedObject = isRecord(parsed) ? parsed : undefined;
 
   if (!response.ok) {
-    const requestId = response.headers.get('anthropic-request-id') || response.headers.get('x-request-id');
-    const suffix = requestId ? ` (request id: ${requestId})` : '';
-    const msg = parsed?.error?.message ?? parsed?.message ?? rawText?.trim();
+    const requestId =
+      response.headers.get("anthropic-request-id") ||
+      response.headers.get("x-request-id");
+    const suffix = requestId ? ` (request id: ${requestId})` : "";
+    const errorObject = isRecord(parsedObject?.error)
+      ? parsedObject.error
+      : undefined;
+    const msg =
+      getStringProperty(errorObject, "message") ??
+      getStringProperty(parsedObject, "message") ??
+      rawText.trim();
 
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`);
+      throw new Error(
+        `Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`,
+      );
     }
     if (response.status === 429) {
-      const retry = response.headers.get('retry-after');
-      throw new Error(`Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ''}`);
+      const retry = response.headers.get("retry-after");
+      throw new Error(
+        `Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ""}`,
+      );
     }
-    throw new Error(`Anthropic error ${response.status}${suffix}. ${msg ?? ''}`.trim());
+    throw new Error(
+      `Anthropic error ${response.status}${suffix}. ${msg ?? ""}`.trim(),
+    );
   }
 
-  const content = Array.isArray(parsed?.content) ? parsed.content : [];
-  const text = content.find((b: any) => b?.type === 'text' && typeof b?.text === 'string')?.text;
-  return typeof text === 'string' ? text : (content[0]?.text ?? '');
+  const content = Array.isArray(parsedObject?.content)
+    ? parsedObject.content
+    : [];
+  const text = content.find(isAnthropicTextBlock)?.text;
+  return (
+    text ??
+    getStringProperty(isRecord(content[0]) ? content[0] : undefined, "text") ??
+    ""
+  );
 }

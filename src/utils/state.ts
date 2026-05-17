@@ -1,10 +1,11 @@
-import fs from 'fs/promises';
-import path from 'path';
-import os from 'os';
-import { VibeCheckInput } from '../tools/vibeCheck.js';
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { VibeCheckInput } from "../tools/vibeCheck.js";
+import { getDataRoot } from "./autosession.js";
 
-const DATA_DIR = path.join(os.homedir(), '.vibe-cli');
-const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+function getHistoryFile(): string {
+  return path.join(getDataRoot(), "history.json");
+}
 
 interface Interaction {
   input: VibeCheckInput;
@@ -16,33 +17,39 @@ let history: Map<string, Interaction[]> = new Map();
 
 async function ensureDataDir() {
   try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.mkdir(getDataRoot(), { recursive: true });
   } catch {}
 }
 
 export async function loadHistory() {
   await ensureDataDir();
   try {
-    const data = await fs.readFile(HISTORY_FILE, 'utf-8');
+    const data = await fs.readFile(getHistoryFile(), "utf-8");
     const parsed = JSON.parse(data);
-    history = new Map(Object.entries(parsed).map(([k, v]) => [k, v as Interaction[]]));
+    history = new Map(
+      Object.entries(parsed).map(([k, v]) => [k, v as Interaction[]]),
+    );
   } catch {
-    history.set('default', []);
+    history = new Map();
   }
 }
 
 async function saveHistory() {
+  await ensureDataDir();
   const data = Object.fromEntries(history);
-  await fs.writeFile(HISTORY_FILE, JSON.stringify(data));
+  await fs.writeFile(getHistoryFile(), JSON.stringify(data));
 }
 
-export function getHistorySummary(sessionId = 'default'): string {
+export function getHistorySummary(sessionId = "default"): string {
   const sessHistory = history.get(sessionId) || [];
-  if (!sessHistory.length) return '';
+  if (!sessHistory.length) return "";
   const summary = sessHistory
     .slice(-5)
-    .map((int, i) => `Interaction ${i + 1}: Goal ${int.input.goal}, Guidance: ${int.output.slice(0, 100)}...`)
-    .join('\n');
+    .map(
+      (int, i) =>
+        `Interaction ${i + 1}: Goal ${int.input.goal}, Guidance: ${int.output.slice(0, 100)}...`,
+    )
+    .join("\n");
   return `History Context:\n${summary}\n`;
 }
 
@@ -51,10 +58,14 @@ export async function clearSession(sessionId: string): Promise<void> {
   await saveHistory();
 }
 
-export function addToHistory(sessionId = 'default', input: VibeCheckInput, output: string) {
-  if (!history.has(sessionId)) history.set(sessionId, []);
-  const sessHistory = history.get(sessionId)!;
+export async function addToHistory(
+  sessionId: string,
+  input: VibeCheckInput,
+  output: string,
+) {
+  const sessHistory = history.get(sessionId) ?? [];
+  history.set(sessionId, sessHistory);
   sessHistory.push({ input, output, timestamp: Date.now() });
   if (sessHistory.length > 10) sessHistory.shift();
-  saveHistory();
+  await saveHistory();
 }

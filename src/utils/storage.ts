@@ -1,11 +1,12 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import fs from "node:fs";
+import path from "node:path";
+import { ensureDataDir, getDataRoot } from "./autosession.js";
 
-const DATA_DIR = path.join(os.homedir(), '.vibe-cli');
-const LOG_FILE = path.join(DATA_DIR, 'vibe-log.json');
+function getLogFile(): string {
+  return path.join(getDataRoot(), "vibe-log.json");
+}
 
-export type LearningType = 'mistake' | 'preference' | 'success';
+export type LearningType = "mistake" | "preference" | "success";
 
 export interface LearningEntry {
   type: LearningType;
@@ -16,24 +17,24 @@ export interface LearningEntry {
 }
 
 interface VibeLog {
-  mistakes: Record<string, { count: number; examples: LearningEntry[]; lastUpdated: number }>;
+  mistakes: Record<
+    string,
+    { count: number; examples: LearningEntry[]; lastUpdated: number }
+  >;
   lastUpdated: number;
 }
 
 const emptyLog: VibeLog = { mistakes: {}, lastUpdated: Date.now() };
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
 function readLogFile(): VibeLog {
   ensureDataDir();
-  if (!fs.existsSync(LOG_FILE)) {
+  const logFile = getLogFile();
+  if (!fs.existsSync(logFile)) {
     writeLogFile(emptyLog);
     return emptyLog;
   }
   try {
-    return JSON.parse(fs.readFileSync(LOG_FILE, 'utf8')) as VibeLog;
+    return JSON.parse(fs.readFileSync(logFile, "utf8")) as VibeLog;
   } catch {
     return emptyLog;
   }
@@ -42,9 +43,9 @@ function readLogFile(): VibeLog {
 function writeLogFile(data: VibeLog): void {
   ensureDataDir();
   try {
-    fs.writeFileSync(LOG_FILE, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(getLogFile(), JSON.stringify(data, null, 2), "utf8");
   } catch (error) {
-    console.error('Error writing vibe log:', error);
+    console.error("Error writing vibe log:", error);
   }
 }
 
@@ -52,11 +53,17 @@ export function addLearningEntry(
   mistake: string,
   category: string,
   solution?: string,
-  type: LearningType = 'mistake'
+  type: LearningType = "mistake",
 ): LearningEntry {
   const log = readLogFile();
   const now = Date.now();
-  const entry: LearningEntry = { type, category, mistake, solution, timestamp: now };
+  const entry: LearningEntry = {
+    type,
+    category,
+    mistake,
+    solution,
+    timestamp: now,
+  };
 
   if (!log.mistakes[category]) {
     log.mistakes[category] = { count: 0, examples: [], lastUpdated: now };
@@ -72,7 +79,7 @@ export function addLearningEntry(
 export function getLearningEntries(): Record<string, LearningEntry[]> {
   const log = readLogFile();
   return Object.fromEntries(
-    Object.entries(log.mistakes).map(([cat, data]) => [cat, data.examples])
+    Object.entries(log.mistakes).map(([cat, data]) => [cat, data.examples]),
   );
 }
 
@@ -95,12 +102,12 @@ export function removeLearningEntriesAfter(timestamp: number): void {
   const log = readLogFile();
   for (const cat of Object.keys(log.mistakes)) {
     const data = log.mistakes[cat];
-    data.examples = data.examples.filter(e => e.timestamp < timestamp);
+    data.examples = data.examples.filter((e) => e.timestamp < timestamp);
     if (data.examples.length === 0) {
       delete log.mistakes[cat];
     } else {
       data.count = data.examples.length;
-      data.lastUpdated = Math.max(...data.examples.map(e => e.timestamp));
+      data.lastUpdated = Math.max(...data.examples.map((e) => e.timestamp));
     }
   }
   log.lastUpdated = Date.now();
@@ -114,14 +121,19 @@ export function getLearningContextText(maxPerCategory = 5): string {
       const examples = [...data.examples]
         .sort((a, b) => a.timestamp - b.timestamp)
         .slice(-maxPerCategory)
-        .map(ex => {
-          const label = ex.type === 'mistake' ? 'Mistake' : ex.type === 'preference' ? 'Preference' : 'Success';
-          const sol = ex.solution ? ` | Solution: ${ex.solution}` : '';
+        .map((ex) => {
+          const label =
+            ex.type === "mistake"
+              ? "Mistake"
+              : ex.type === "preference"
+                ? "Preference"
+                : "Success";
+          const sol = ex.solution ? ` | Solution: ${ex.solution}` : "";
           return `- [${new Date(ex.timestamp).toISOString()}] ${label}: ${ex.mistake}${sol}`;
         })
-        .join('\n');
+        .join("\n");
       return `Category: ${category} (count: ${data.count})\n${examples}`;
     })
-    .join('\n\n')
+    .join("\n\n")
     .trim();
 }
