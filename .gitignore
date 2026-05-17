@@ -5,3 +5,4 @@ dist/
 !.env.example
 .claude/settings.local.json
 .DS_Store
+@plugins/installed_plugins.json
