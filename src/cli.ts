@@ -47,6 +47,17 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
+function resolveModelOverride(opts: { provider?: string; model?: string }) {
+  return opts.provider || opts.model
+    ? {
+        modelOverride: {
+          ...(opts.provider !== undefined && { provider: opts.provider }),
+          ...(opts.model !== undefined && { model: opts.model }),
+        },
+      }
+    : {};
+}
+
 const program = new Command();
 
 program
@@ -87,14 +98,7 @@ program
         }),
         ...(opts.context !== undefined && { taskContext: opts.context }),
         ...(opts.prompt !== undefined && { userPrompt: opts.prompt }),
-        ...(opts.provider || opts.model
-          ? {
-              modelOverride: {
-                ...(opts.provider !== undefined && { provider: opts.provider }),
-                ...(opts.model !== undefined && { model: opts.model }),
-              },
-            }
-          : {}),
+        ...resolveModelOverride(opts),
       },
       Math.max(1, parseInt(opts.maxAttempts, 10) || 10),
     );
@@ -188,16 +192,7 @@ program
   .option("--provider <name>", "LLM provider override")
   .option("--model <name>", "Model override")
   .action(async (opts) => {
-    await runDemo(
-      opts.provider || opts.model
-        ? {
-            modelOverride: {
-              ...(opts.provider !== undefined && { provider: opts.provider }),
-              ...(opts.model !== undefined && { model: opts.model }),
-            },
-          }
-        : {},
-    );
+    await runDemo(resolveModelOverride(opts));
   });
 
 program
