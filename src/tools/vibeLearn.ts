@@ -11,6 +11,7 @@ export interface VibeLearnInput {
   category: string;
   solution?: string;
   type?: LearningType;
+  demoId?: string;
 }
 
 export interface VibeLearnOutput {
@@ -46,7 +47,7 @@ export async function vibeLearnTool(
     const alreadyKnown = existing.some((e) => isSimilar(e.mistake, mistake));
 
     if (!alreadyKnown) {
-      addLearningEntry(mistake, category, solution, entryType);
+      addLearningEntry(mistake, category, solution, entryType, input.demoId);
     }
 
     const categorySummary = getLearningCategorySummary();

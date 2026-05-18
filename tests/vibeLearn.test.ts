@@ -106,6 +106,94 @@ describe("vibeLearnTool", () => {
     expect(entries[0]?.solution).toBe("Verify before acting.");
   });
 
+  test("rejects input with missing mistake", async () => {
+    const result = await vibeLearnTool({
+      mistake: "",
+      category: "validation",
+    });
+    expect(result).toEqual({
+      added: false,
+      alreadyKnown: false,
+      currentTally: 0,
+      topCategories: [],
+    });
+  });
+
+  test("rejects input with missing category", async () => {
+    const result = await vibeLearnTool({
+      mistake: "A mistake",
+      category: "",
+    });
+    expect(result).toEqual({
+      added: false,
+      alreadyKnown: false,
+      currentTally: 0,
+      topCategories: [],
+    });
+  });
+
+  test("accepts success type entries with a solution", async () => {
+    const result = await vibeLearnTool({
+      mistake: "Achieved a great outcome",
+      category: "wins",
+      solution: "Keep doing it this way",
+      type: "success",
+    });
+    const entries = getLearningEntries().wins ?? [];
+
+    expect(result.added).toBe(true);
+    expect(result.currentTally).toBe(1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.type).toBe("success");
+    expect(entries[0]?.solution).toBe("Keep doing it this way.");
+  });
+
+  test("passes demoId through to the storage layer", async () => {
+    const result = await vibeLearnTool({
+      mistake: "Demo test entry.",
+      category: "democat",
+      solution: "Demo test solution.",
+      demoId: "my-demo-123",
+    });
+    expect(result.added).toBe(true);
+
+    const entries = getLearningEntries().democat ?? [];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.demoId).toBe("my-demo-123");
+  });
+
+  test("normalizes all standard categories via keyword matching", async () => {
+    const suites = [
+      { input: "complex solution needed", expected: "Complex Solution Bias" },
+      { input: "extra feature scope creep", expected: "Feature Creep" },
+      { input: "jumping in too early", expected: "Premature Implementation" },
+      { input: "wrong direction misaligned", expected: "Misalignment" },
+      { input: "unnecessary tools overkill", expected: "Overtooling" },
+    ];
+
+    for (const { input, expected } of suites) {
+      const result = await vibeLearnTool({
+        mistake: `Test for ${input}.`,
+        category: input,
+        solution: "Normalize test solution.",
+      });
+      const summary = getLearningCategorySummary();
+      const found = summary.find((s) => s.category === expected);
+      expect(
+        found,
+        `category "${input}" should map to "${expected}"`,
+      ).toBeDefined();
+      expect(result.added).toBe(true);
+    }
+
+    // All 5 standard categories should exist with count=1 each
+    const summary = getLearningCategorySummary();
+    expect(summary).toHaveLength(5);
+    for (const s of summary) {
+      expect(s.count).toBe(1);
+    }
+  });
+
   test("ignores empty legacy mistakes when checking similarity", async () => {
     addLearningEntry("", "legacy", "legacy solution");
 
