@@ -35,6 +35,12 @@ function resolveSessionId(): string {
   return resolveAutosession().id;
 }
 
+/**
+ * Append a rule to the active autosession constitution.
+ *
+ * Empty rules perform no write. The persisted rule list retains at most the
+ * most recent 50 entries, dropping the oldest entry before appending when full.
+ */
 export function updateConstitution(rule: string): void {
   const resolvedSessionId = resolveSessionId();
   if (!resolvedSessionId || !rule) return;
@@ -46,6 +52,12 @@ export function updateConstitution(rule: string): void {
   write(store);
 }
 
+/**
+ * Replace the active autosession constitution.
+ *
+ * Passing an empty array clears the session rules. Only the first 50 rules
+ * persist, matching the storage limit enforced by incremental updates.
+ */
 export function resetConstitution(rules: string[]): void {
   const resolvedSessionId = resolveSessionId();
   if (!resolvedSessionId) return;
@@ -54,10 +66,16 @@ export function resetConstitution(rules: string[]): void {
   write(store);
 }
 
+/**
+ * Return the active autosession constitution rules.
+ *
+ * Missing, unreadable, or malformed storage resolves to an empty rule list.
+ */
 export function getConstitution(): string[] {
   return read()[resolveSessionId()] ?? [];
 }
 
+/** Return the autosession id used as the constitution storage key. */
 export function getCurrentConstitutionSessionId(): string {
   return resolveAutosession().id;
 }

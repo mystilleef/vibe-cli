@@ -4,6 +4,12 @@ import { loadDotenv } from "./utils/dotenv.js";
 
 loadDotenv();
 
+/**
+ * Register the `vibe` command surface and preserve JSON-only process output.
+ *
+ * All command handlers emit machine-readable JSON, with operational failures
+ * routed through `fatal` so agents can parse errors without scraping text.
+ */
 import {
   getConstitution,
   getCurrentConstitutionSessionId,
@@ -21,10 +27,12 @@ import {
 } from "./utils/llm.js";
 import { loadHistory } from "./utils/state.js";
 
+/** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
   process.stdout.write(`${JSON.stringify(data)}\n`);
 }
 
+/** Emit a fatal JSON error to stderr and terminate with exit code 1. */
 function fatal(message: string): never {
   process.stderr.write(`${JSON.stringify({ error: message })}\n`);
   process.exit(1);
@@ -36,12 +44,14 @@ const PROVIDER_DESC =
 const MODEL_OPTION = "--model <name>" as const;
 const MODEL_DESC = "Model name override";
 
+/** Add shared provider and model overrides to commands that call an LLM. */
 function addModelOptions(cmd: Command) {
   return cmd
     .option(PROVIDER_OPTION, PROVIDER_DESC)
     .option(MODEL_OPTION, MODEL_DESC);
 }
 
+/** Return a model override payload only when callers supplied override flags. */
 function resolveModelOverride(opts: { provider?: string; model?: string }) {
   return opts.provider || opts.model
     ? {
@@ -184,6 +194,12 @@ demoCmd.action(async (opts) => {
   await runDemo(resolveModelOverride(opts));
 });
 
+/**
+ * Build the compact agent-facing schema for commands, outputs, and exits.
+ *
+ * The schema reports the currently detected provider and model so agents can
+ * inspect runtime configuration without invoking an LLM request.
+ */
 function buildSchema() {
   const provider = detectProvider();
   const model =

@@ -6,18 +6,29 @@ import {
   type LearningType,
 } from "../utils/storage.js";
 
+/** Input for recording an agent learning pattern. */
 export interface VibeLearnInput {
+  /** Pattern text; stored as the first sentence and required for every entry. */
   mistake: string;
+  /** Category label; known aliases normalize to canonical learning categories. */
   category: string;
+  /** Required resolution text for mistake and success entries. */
   solution?: string;
+  /** Learning entry kind; defaults to `mistake`. */
   type?: LearningType;
+  /** Optional demo identifier preserved with the stored learning entry. */
   demoId?: string;
 }
 
+/** Result of attempting to record a learning pattern. */
 export interface VibeLearnOutput {
+  /** True when a new entry was written; false for duplicates or validation failures. */
   added: boolean;
+  /** Count for the normalized category after the attempt, or zero on failure. */
   currentTally: number;
+  /** True when an existing entry overlaps enough to suppress a duplicate write. */
   alreadyKnown?: boolean;
+  /** Up to three most frequent categories, ordered by stored count descending. */
   topCategories: Array<{
     category: string;
     count: number;
@@ -25,6 +36,14 @@ export interface VibeLearnOutput {
   }>;
 }
 
+/**
+ * Record a mistake, preference, or success pattern in the local learning log.
+ *
+ * Preferences may omit `solution`; mistake and success entries require it. The
+ * tool normalizes text to one sentence, canonicalizes known category aliases,
+ * suppresses similar entries, and returns JSON-safe status data instead of
+ * throwing validation or storage errors.
+ */
 export async function vibeLearnTool(
   input: VibeLearnInput,
 ): Promise<VibeLearnOutput> {
