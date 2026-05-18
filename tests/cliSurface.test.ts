@@ -9,6 +9,12 @@ const homes: TempHomeContext[] = [];
 const cwdRoots: string[] = [];
 const originalCwd = process.cwd();
 const cli = join(originalCwd, "src", "cli.ts");
+const mockAnthropicFetch = join(
+  originalCwd,
+  "tests",
+  "helpers",
+  "mockAnthropicFetch.ts",
+);
 
 interface CliResult {
   stdout: string;
@@ -38,12 +44,35 @@ async function createCwd(): Promise<string> {
 
 function runCli(
   args: string[],
-  options: { cwd?: string; home?: string } = {},
+  options: {
+    cwd?: string;
+    home?: string;
+    env?: Record<string, string | undefined>;
+    preload?: string;
+  } = {},
 ): CliResult {
+  const env: Record<string, string> = {
+    ...process.env,
+    HOME: options.home ?? process.env.HOME ?? "",
+  };
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    if (value === undefined) {
+      delete env[key];
+    } else {
+      env[key] = value;
+    }
+  }
+
   const result = Bun.spawnSync({
-    cmd: ["bun", "run", cli, ...args],
+    cmd: [
+      "bun",
+      "run",
+      ...(options.preload === undefined ? [] : ["--preload", options.preload]),
+      cli,
+      ...args,
+    ],
     cwd: options.cwd ?? originalCwd,
-    env: { ...process.env, HOME: options.home ?? process.env.HOME ?? "" },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -68,8 +97,7 @@ describe("CLI autosession surface", () => {
     expectHelpWithoutSession(["constitution", "get"]);
     expectHelpWithoutSession(["constitution", "reset"]);
 
-    const demoHelp = runCli(["demo", "--help"]);
-    expect(demoHelp.stdout).toContain("--session");
+    expectHelpWithoutSession(["demo"]);
   });
 
   test("removed --session options fail through Commander", () => {
@@ -79,6 +107,7 @@ describe("CLI autosession surface", () => {
       ["constitution", "set", "--session", "x", "--rule", "r"],
       ["constitution", "get", "--session", "x"],
       ["constitution", "reset", "--session", "x"],
+      ["demo", "--session", "x"],
     ]) {
       const result = runCli(command);
       expect(result.exitCode).not.toBe(0);
@@ -132,5 +161,251 @@ describe("CLI autosession surface", () => {
         "--session",
       );
     }
+  });
+
+  test("schema loads home env file without overriding shell env vars", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(
+      join(home.dataRoot, ".env"),
+      [
+        "# ignored comment",
+        "DEFAULT_LLM_PROVIDER=deepseek",
+        "DEFAULT_MODEL=file-model",
+        "MALFORMED_LINE",
+        "EMPTY_VALUE=",
+      ].join("\n"),
+    );
+
+    const result = runCli(["schema"], {
+      home: home.home,
+      env: {
+        DEFAULT_LLM_PROVIDER: undefined,
+        DEFAULT_MODEL: "shell-model",
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: undefined,
+        GEMINI_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        OPENROUTER_API_KEY: undefined,
+        DEEPSEEK_API_KEY: undefined,
+        OPENCODE_API_KEY: undefined,
+      },
+    });
+    const schema = JSON.parse(result.stdout) as {
+      config: { provider: string; model: string };
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(schema.config).toEqual({
+      provider: "deepseek",
+      model: "shell-model",
+    });
+  });
+
+  test("verify emits JSON failure and exits 1 for unsupported providers", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["verify", "--provider", "bogus"], {
+      home: home.home,
+      env: { DEFAULT_MODEL: undefined },
+    });
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      provider: string;
+      model: string;
+      error: string;
+    };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      ok: false,
+      provider: "bogus",
+      model: "(default)",
+    });
+    expect(payload.error).toContain("Unknown provider: bogus");
+  });
+
+  test("check emits fatal JSON when gate provider resolution fails", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      ["check", "--goal", "g", "--plan", "p", "--provider", "bogus"],
+      { home: home.home, env: { DEFAULT_MODEL: undefined } },
+    );
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain("Unknown provider: bogus");
+  });
+
+  test("check emits approval JSON and exits 0 with mocked Anthropic", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      [
+        "check",
+        "--goal",
+        "ship safely",
+        "--plan",
+        "run targeted tests",
+        "--progress",
+        "implementation done",
+        "--uncertainty",
+        "edge cases",
+        "--context",
+        "release prep",
+        "--prompt",
+        "please verify",
+        "--provider",
+        "anthropic",
+        "--model",
+        "mock-claude",
+      ],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "proceed",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      proceed: boolean;
+      confidence: number;
+      reason: string;
+      questions: string;
+      attempts: number;
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      proceed: true,
+      confidence: 0.91,
+      reason: "proceed:mock-claude",
+      attempts: 1,
+    });
+    expect(payload.questions).toContain("questions:mock-claude");
+  });
+
+  test("check emits exhausted block JSON and exits 2 at attempt boundary", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      [
+        "check",
+        "--goal",
+        "ship safely",
+        "--plan",
+        "skip rollback",
+        "--provider",
+        "anthropic",
+        "--max-attempts",
+        "1",
+      ],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "block",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      proceed: boolean;
+      exhausted?: boolean;
+      attempts: number;
+      reason: string;
+    };
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      proceed: false,
+      exhausted: true,
+      attempts: 1,
+      reason: "block:claude-haiku-4-5-20251001",
+    });
+  });
+
+  test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      ["verify", "--provider", "anthropic", "--model", "mock-verify"],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: { ANTHROPIC_API_KEY: "ak", DEFAULT_MODEL: undefined },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      provider: string;
+      model: string;
+      response: string;
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      ok: true,
+      provider: "anthropic",
+      model: "mock-verify",
+    });
+    expect(payload.response).toContain("questions:mock-verify");
+  });
+
+  test("learn command emits validation failure JSON without process failure", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      ["learn", "--mistake", "Repeated risky plan.", "--category", "risk"],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      added: boolean;
+      alreadyKnown: boolean;
+      currentTally: number;
+      topCategories: unknown[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      "--solution is required for mistake and success types",
+    );
+    expect(payload).toEqual({
+      added: false,
+      alreadyKnown: false,
+      currentTally: 0,
+      topCategories: [],
+    });
+  });
+
+  test("constitution commands preserve ordered state and support clearing", async () => {
+    const home = await useTempHome();
+    const cwd = await createCwd();
+
+    const set = runCli(
+      ["constitution", "set", "--rule", "Prefer tests", "Prefer rollbacks"],
+      { cwd, home: home.home },
+    );
+    const get = runCli(["constitution", "get"], { cwd, home: home.home });
+    const reset = runCli(["constitution", "reset"], { cwd, home: home.home });
+
+    expect(set.exitCode).toBe(0);
+    expect(JSON.parse(set.stdout)).toMatchObject({
+      rules: ["Prefer tests", "Prefer rollbacks"],
+    });
+    expect(JSON.parse(get.stdout)).toMatchObject({
+      rules: ["Prefer tests", "Prefer rollbacks"],
+    });
+    expect(JSON.parse(reset.stdout)).toMatchObject({ rules: [] });
   });
 });
