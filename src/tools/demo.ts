@@ -1,4 +1,5 @@
-import { clearSession, loadHistory } from "../utils/state.js";
+import { resolveAutosession } from "../utils/autosession.js";
+import { loadHistory } from "../utils/state.js";
 import { removeLearningEntriesAfter } from "../utils/storage.js";
 import { getConstitution, resetConstitution } from "./constitution.js";
 import { vibeGateTool } from "./vibeGate.js";
@@ -50,15 +51,12 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export interface DemoOptions {
-  sessionId?: string;
   modelOverride?: { provider?: string; model?: string };
 }
 
-export async function runDemo({
-  sessionId = "demo",
-  modelOverride,
-}: DemoOptions = {}) {
+export async function runDemo({ modelOverride }: DemoOptions = {}) {
   const demoStart = Date.now();
+  const sessionId = resolveAutosession().id;
   await loadHistory();
 
   ln();
@@ -74,7 +72,7 @@ export async function runDemo({
     1,
     3,
     "Set a constitution rule",
-    `vibe constitution set --session ${sessionId} --rule "..."`,
+    `vibe constitution set --rule "..."`,
   );
 
   resetConstitution([rule]);
@@ -92,7 +90,7 @@ export async function runDemo({
       "No rollback plan if the migration fails mid-way through the 50M rows",
       "Production data volume untested — dry-run covered only 1k rows",
     ],
-    modelOverride,
+    ...(modelOverride !== undefined && { modelOverride }),
   };
 
   stepHeader(
@@ -151,7 +149,6 @@ export async function runDemo({
 
   // ── Cleanup ─────────────────────────────────────────────────────────────
   removeLearningEntriesAfter(demoStart);
-  await clearSession(sessionId);
   resetConstitution([]);
 
   ln();

@@ -81,14 +81,20 @@ program
       {
         goal: opts.goal,
         plan: opts.plan,
-        progress: opts.progress,
-        uncertainties: opts.uncertainty,
-        taskContext: opts.context,
-        userPrompt: opts.prompt,
-        modelOverride:
-          opts.provider || opts.model
-            ? { provider: opts.provider, model: opts.model }
-            : undefined,
+        ...(opts.progress !== undefined && { progress: opts.progress }),
+        ...(opts.uncertainty !== undefined && {
+          uncertainties: opts.uncertainty,
+        }),
+        ...(opts.context !== undefined && { taskContext: opts.context }),
+        ...(opts.prompt !== undefined && { userPrompt: opts.prompt }),
+        ...(opts.provider || opts.model
+          ? {
+              modelOverride: {
+                ...(opts.provider !== undefined && { provider: opts.provider }),
+                ...(opts.model !== undefined && { model: opts.model }),
+              },
+            }
+          : {}),
       },
       Math.max(1, parseInt(opts.maxAttempts, 10) || 10),
     );
@@ -179,17 +185,19 @@ program
 program
   .command("demo")
   .description("Live walkthrough of vibe-check capabilities")
-  .option("--session <id>", "Session ID for the demo run", "demo")
   .option("--provider <name>", "LLM provider override")
   .option("--model <name>", "Model override")
   .action(async (opts) => {
-    await runDemo({
-      sessionId: opts.session,
-      modelOverride:
-        opts.provider || opts.model
-          ? { provider: opts.provider, model: opts.model }
-          : undefined,
-    });
+    await runDemo(
+      opts.provider || opts.model
+        ? {
+            modelOverride: {
+              ...(opts.provider !== undefined && { provider: opts.provider }),
+              ...(opts.model !== undefined && { model: opts.model }),
+            },
+          }
+        : {},
+    );
   });
 
 program

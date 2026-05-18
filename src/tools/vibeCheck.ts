@@ -25,11 +25,17 @@ export async function vibeCheckTool(
     const response = await getMetacognitiveQuestions({
       goal: input.goal,
       plan: input.plan,
-      modelOverride: input.modelOverride,
-      userPrompt: input.userPrompt,
-      progress: input.progress,
-      uncertainties: input.uncertainties,
-      taskContext: input.taskContext,
+      ...(input.modelOverride !== undefined && {
+        modelOverride: input.modelOverride,
+      }),
+      ...(input.userPrompt !== undefined && { userPrompt: input.userPrompt }),
+      ...(input.progress !== undefined && { progress: input.progress }),
+      ...(input.uncertainties !== undefined && {
+        uncertainties: input.uncertainties,
+      }),
+      ...(input.taskContext !== undefined && {
+        taskContext: input.taskContext,
+      }),
       sessionId,
       historySummary,
     });

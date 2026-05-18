@@ -21,7 +21,9 @@ export async function vibeGateTool(
     goal: input.goal,
     plan: input.plan,
     feedback: checkResult.questions,
-    modelOverride: input.modelOverride,
+    ...(input.modelOverride !== undefined && {
+      modelOverride: input.modelOverride,
+    }),
   });
   return {
     proceed: decision.proceed,
@@ -50,7 +52,9 @@ export async function vibeGateLoop(
         plan,
         feedback: last.questions,
         reason: last.reason,
-        modelOverride: input.modelOverride,
+        ...(input.modelOverride !== undefined && {
+          modelOverride: input.modelOverride,
+        }),
       });
     }
   }
