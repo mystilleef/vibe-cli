@@ -1,25 +1,8 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Command } from "commander";
+import { loadDotenv } from "./utils/dotenv.js";
 
-// Load ~/.vibe-cli/.env before anything else, without overriding shell env vars
-try {
-  const lines = readFileSync(
-    join(homedir(), ".vibe-cli", ".env"),
-    "utf8",
-  ).split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim();
-    if (key && val && !process.env[key]) process.env[key] = val;
-  }
-} catch {}
+loadDotenv();
 
 import {
   getConstitution,
@@ -47,6 +30,18 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
+const PROVIDER_OPTION = "--provider <name>" as const;
+const PROVIDER_DESC =
+  "LLM provider: gemini | openai | openrouter | anthropic | deepseek | opencode";
+const MODEL_OPTION = "--model <name>" as const;
+const MODEL_DESC = "Model name override";
+
+function addModelOptions(cmd: Command) {
+  return cmd
+    .option(PROVIDER_OPTION, PROVIDER_DESC)
+    .option(MODEL_OPTION, MODEL_DESC);
+}
+
 function resolveModelOverride(opts: { provider?: string; model?: string }) {
   return opts.provider || opts.model
     ? {
@@ -65,7 +60,7 @@ program
   .description("Metacognitive AI agent oversight CLI")
   .version("1.0.0");
 
-program
+const checkCmd = program
   .command("check")
   .description(
     "Run a metacognitive vibe check — returns feedback and a go/no-go decision",
@@ -77,34 +72,30 @@ program
   .option("--context <text>", "Task context")
   .option("--prompt <text>", "Original user prompt")
   .option(
-    "--provider <name>",
-    "LLM provider: gemini | openai | openrouter | anthropic | deepseek | opencode",
-  )
-  .option("--model <name>", "Model name override")
-  .option(
     "--max-attempts <n>",
     "Max refinement attempts before giving up",
     "10",
-  )
-  .action(async (opts) => {
-    await loadHistory();
-    const result = await vibeGateLoop(
-      {
-        goal: opts.goal,
-        plan: opts.plan,
-        ...(opts.progress !== undefined && { progress: opts.progress }),
-        ...(opts.uncertainty !== undefined && {
-          uncertainties: opts.uncertainty,
-        }),
-        ...(opts.context !== undefined && { taskContext: opts.context }),
-        ...(opts.prompt !== undefined && { userPrompt: opts.prompt }),
-        ...resolveModelOverride(opts),
-      },
-      Math.max(1, parseInt(opts.maxAttempts, 10) || 10),
-    );
-    emit(result);
-    if (!result.proceed) process.exit(2);
-  });
+  );
+addModelOptions(checkCmd);
+checkCmd.action(async (opts) => {
+  await loadHistory();
+  const result = await vibeGateLoop(
+    {
+      goal: opts.goal,
+      plan: opts.plan,
+      ...(opts.progress !== undefined && { progress: opts.progress }),
+      ...(opts.uncertainty !== undefined && {
+        uncertainties: opts.uncertainty,
+      }),
+      ...(opts.context !== undefined && { taskContext: opts.context }),
+      ...(opts.prompt !== undefined && { userPrompt: opts.prompt }),
+      ...resolveModelOverride(opts),
+    },
+    Math.max(1, parseInt(opts.maxAttempts, 10) || 10),
+  );
+  emit(result);
+  if (!result.proceed) process.exit(2);
+});
 
 program
   .command("learn")
@@ -170,125 +161,123 @@ program
     emit({ session: resolveAutosession().id });
   });
 
-program
+const verifyCmd = program
   .command("verify")
   .description(
     "Test LLM connectivity and report provider, model, latency, and response",
-  )
-  .option("--provider <name>", "LLM provider override")
-  .option("--model <name>", "Model override")
-  .action(async (opts) => {
-    const result = await verifyConnection({
-      provider: opts.provider,
-      model: opts.model,
-    });
-    emit(result);
-    if (!result.ok) process.exit(1);
+  );
+addModelOptions(verifyCmd);
+verifyCmd.action(async (opts) => {
+  const result = await verifyConnection({
+    provider: opts.provider,
+    model: opts.model,
   });
+  emit(result);
+  if (!result.ok) process.exit(1);
+});
 
-program
+const demoCmd = program
   .command("demo")
-  .description("Live walkthrough of vibe-check capabilities")
-  .option("--provider <name>", "LLM provider override")
-  .option("--model <name>", "Model override")
-  .action(async (opts) => {
-    await runDemo(resolveModelOverride(opts));
-  });
+  .description("Live walkthrough of vibe-check capabilities");
+addModelOptions(demoCmd);
+demoCmd.action(async (opts) => {
+  await runDemo(resolveModelOverride(opts));
+});
+
+function buildSchema() {
+  const provider = detectProvider();
+  const model =
+    process.env.DEFAULT_MODEL ||
+    DEFAULT_MODELS[provider] ||
+    "(required via --model)";
+  return {
+    v: "1.0.0",
+    data: "~/.vibe-cli/",
+    errors: 'stderr {"error":"msg"} exit 1',
+    config: { provider, model },
+    commands: {
+      check: {
+        when: "before any action — especially risky or irreversible ones; halt if proceed is false",
+        req: { "--goal": "str", "--plan": "str" },
+        opt: {
+          "--progress": "str",
+          "--uncertainty": "str (repeatable)",
+          "--context": "str",
+          "--prompt": "str",
+          "--provider": "gemini|openai|openrouter|anthropic|deepseek|opencode",
+          "--model": "str",
+          "--max-attempts": "int=10 (refinement loop limit)",
+        },
+        out: {
+          proceed: "bool",
+          confidence: "float",
+          reason: "str",
+          questions: "str",
+          plan: "str (final approved or last plan)",
+          attempts: "int",
+          exhausted: "bool?",
+        },
+        exit: {
+          "0": "proceed=true",
+          "2": "proceed=false or exhausted",
+          "1": "error",
+        },
+      },
+      learn: {
+        when: "after completing a task; when a mistake, preference, or success is observed",
+        req: { "--mistake": "str (one sentence)", "--category": "str" },
+        opt: {
+          "--solution": "str (required unless --type preference)",
+          "--type": "mistake|preference|success (default: mistake)",
+        },
+        out: {
+          added: "bool",
+          alreadyKnown: "bool",
+          currentTally: "int",
+          topCategories: "[{category,count,recentExample}]",
+        },
+      },
+      "constitution set": {
+        when: "establish behavioral rules for the current session before work begins",
+        req: { "--rule": "str (repeatable)" },
+        out: { session: "str", rules: "[str]" },
+      },
+      "constitution reset": {
+        when: "replace or clear all rules for the current session",
+        req: {},
+        opt: { "--rule": "str (repeatable, omit to clear all)" },
+        out: { session: "str", rules: "[str]" },
+      },
+      session: {
+        when: "inspect the active autosession ID for the current working directory",
+        req: {},
+        out: { session: "str" },
+      },
+      verify: {
+        when: "preflight check before using vibe check in a new environment",
+        req: {},
+        opt: { "--provider": "str", "--model": "str" },
+        out: {
+          ok: "bool",
+          provider: "str",
+          model: "str",
+          latency_ms: "int?",
+          response: "str?",
+          error: "str?",
+        },
+      },
+      "constitution get": {
+        when: "inspect active rules before acting",
+        req: {},
+        out: { session: "str", rules: "[str]" },
+      },
+    },
+  };
+}
 
 program
   .command("schema")
   .description("Emit compact JSON schema for agent consumption")
-  .action(() => {
-    const provider = detectProvider();
-    const model =
-      process.env.DEFAULT_MODEL ||
-      DEFAULT_MODELS[provider] ||
-      "(required via --model)";
-
-    emit({
-      v: "1.0.0",
-      data: "~/.vibe-cli/",
-      errors: 'stderr {"error":"msg"} exit 1',
-      config: { provider, model },
-      commands: {
-        check: {
-          when: "before any action — especially risky or irreversible ones; halt if proceed is false",
-          req: { "--goal": "str", "--plan": "str" },
-          opt: {
-            "--progress": "str",
-            "--uncertainty": "str (repeatable)",
-            "--context": "str",
-            "--prompt": "str",
-            "--provider":
-              "gemini|openai|openrouter|anthropic|deepseek|opencode",
-            "--model": "str",
-            "--max-attempts": "int=10 (refinement loop limit)",
-          },
-          out: {
-            proceed: "bool",
-            confidence: "float",
-            reason: "str",
-            questions: "str",
-            plan: "str (final approved or last plan)",
-            attempts: "int",
-            exhausted: "bool?",
-          },
-          exit: {
-            "0": "proceed=true",
-            "2": "proceed=false or exhausted",
-            "1": "error",
-          },
-        },
-        learn: {
-          when: "after completing a task; when a mistake, preference, or success is observed",
-          req: { "--mistake": "str (one sentence)", "--category": "str" },
-          opt: {
-            "--solution": "str (required unless --type preference)",
-            "--type": "mistake|preference|success (default: mistake)",
-          },
-          out: {
-            added: "bool",
-            alreadyKnown: "bool",
-            currentTally: "int",
-            topCategories: "[{category,count,recentExample}]",
-          },
-        },
-        "constitution set": {
-          when: "establish behavioral rules for the current session before work begins",
-          req: { "--rule": "str (repeatable)" },
-          out: { session: "str", rules: "[str]" },
-        },
-        "constitution reset": {
-          when: "replace or clear all rules for the current session",
-          req: {},
-          opt: { "--rule": "str (repeatable, omit to clear all)" },
-          out: { session: "str", rules: "[str]" },
-        },
-        session: {
-          when: "inspect the active autosession ID for the current working directory",
-          req: {},
-          out: { session: "str" },
-        },
-        verify: {
-          when: "preflight check before using vibe check in a new environment",
-          req: {},
-          opt: { "--provider": "str", "--model": "str" },
-          out: {
-            ok: "bool",
-            provider: "str",
-            model: "str",
-            latency_ms: "int?",
-            response: "str?",
-            error: "str?",
-          },
-        },
-        "constitution get": {
-          when: "inspect active rules before acting",
-          req: {},
-          out: { session: "str", rules: "[str]" },
-        },
-      },
-    });
-  });
+  .action(() => emit(buildSchema()));
 
 program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));
