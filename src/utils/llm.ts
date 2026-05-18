@@ -94,7 +94,8 @@ function resolveProviderAndModel(modelOverride?: {
   const model =
     modelOverride?.model ||
     process.env.DEFAULT_MODEL ||
-    DEFAULT_MODELS[provider];
+    DEFAULT_MODELS[provider] ||
+    "";
   return { provider, model };
 }
 
@@ -129,7 +130,7 @@ async function callProvider(
       model: model || "o4-mini",
       messages: [{ role: "system", content: combined }],
     });
-    return res.choices[0].message.content || "";
+    return res.choices[0]?.message.content || "";
   } else if (provider === "openrouter") {
     if (!process.env.OPENROUTER_API_KEY)
       throw new Error("OPENROUTER_API_KEY not set.");
@@ -151,7 +152,7 @@ async function callProvider(
     const data = (await res.json()) as {
       choices: Array<{ message: { content: string } }>;
     };
-    return data.choices[0].message.content || "";
+    return data.choices[0]?.message.content || "";
   } else if (provider === "deepseek") {
     if (!process.env.DEEPSEEK_API_KEY)
       throw new Error("DEEPSEEK_API_KEY not set.");
@@ -257,7 +258,7 @@ interface GateDecision {
   reason: string;
 }
 
-function parseGateDecision(raw: string): GateDecision {
+export function parseGateDecision(raw: string): GateDecision {
   const stripped = raw
     .replace(/^```(?:json)?\n?/m, "")
     .replace(/\n?```$/m, "")
@@ -325,7 +326,7 @@ export async function verifyConnection(opts?: {
     const result = await generateResponse({
       goal: probe,
       plan: probe,
-      modelOverride: { provider, model: model || undefined },
+      modelOverride: { provider, ...(model && { model }) },
     });
     return {
       ok: true,
@@ -349,8 +350,7 @@ export async function getMetacognitiveQuestions(
 ): Promise<QuestionOutput> {
   try {
     return await generateResponse(input);
-  } catch (error) {
-    console.error("LLM error:", error);
+  } catch {
     return { questions: FALLBACK_QUESTIONS };
   }
 }
@@ -372,7 +372,7 @@ async function callOpenAICompat({
     model,
     messages: [{ role: "system", content: prompt }],
   });
-  return response.choices[0].message.content || "";
+  return response.choices[0]?.message.content || "";
 }
 
 interface AnthropicCallOptions {
@@ -415,7 +415,11 @@ async function callAnthropic({
   temperature = 0.2,
 }: AnthropicCallOptions): Promise<string> {
   const { baseUrl, apiKey, authToken, version } = resolveAnthropicConfig();
-  const headers = buildAnthropicHeaders({ apiKey, authToken, version });
+  const headers = buildAnthropicHeaders({
+    version,
+    ...(apiKey !== undefined && { apiKey }),
+    ...(authToken !== undefined && { authToken }),
+  });
 
   const body: Record<string, unknown> = {
     model,

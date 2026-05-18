@@ -25,7 +25,12 @@ export function resolveAnthropicConfig(): AnthropicConfig {
     );
   }
 
-  return { baseUrl, apiKey, authToken, version };
+  return {
+    baseUrl,
+    version,
+    ...(apiKey !== undefined && { apiKey }),
+    ...(authToken !== undefined && { authToken }),
+  };
 }
 
 export function buildAnthropicHeaders({

@@ -24,19 +24,22 @@ interface VibeLog {
   lastUpdated: number;
 }
 
-const emptyLog: VibeLog = { mistakes: {}, lastUpdated: Date.now() };
+function freshLog(): VibeLog {
+  return { mistakes: {}, lastUpdated: Date.now() };
+}
 
 function readLogFile(): VibeLog {
   ensureDataDir();
   const logFile = getLogFile();
   if (!fs.existsSync(logFile)) {
-    writeLogFile(emptyLog);
-    return emptyLog;
+    const log = freshLog();
+    writeLogFile(log);
+    return log;
   }
   try {
     return JSON.parse(fs.readFileSync(logFile, "utf8")) as VibeLog;
   } catch {
-    return emptyLog;
+    return freshLog();
   }
 }
 
@@ -61,7 +64,7 @@ export function addLearningEntry(
     type,
     category,
     mistake,
-    solution,
+    ...(solution !== undefined && { solution }),
     timestamp: now,
   };
 
@@ -90,11 +93,18 @@ export function getLearningCategorySummary(): Array<{
 }> {
   const log = readLogFile();
   return Object.entries(log.mistakes)
-    .map(([category, data]) => ({
-      category,
-      count: data.count,
-      recentExample: data.examples[data.examples.length - 1],
-    }))
+    .flatMap(([category, data]) => {
+      const recentExample = data.examples.at(-1);
+      return recentExample === undefined
+        ? []
+        : [
+            {
+              category,
+              count: data.count,
+              recentExample,
+            },
+          ];
+    })
     .sort((a, b) => b.count - a.count);
 }
 
@@ -102,6 +112,7 @@ export function removeLearningEntriesAfter(timestamp: number): void {
   const log = readLogFile();
   for (const cat of Object.keys(log.mistakes)) {
     const data = log.mistakes[cat];
+    if (!data) continue;
     data.examples = data.examples.filter((e) => e.timestamp < timestamp);
     if (data.examples.length === 0) {
       delete log.mistakes[cat];
