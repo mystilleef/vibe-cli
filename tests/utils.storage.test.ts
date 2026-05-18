@@ -7,6 +7,7 @@ import {
   getLearningContextText,
   getLearningEntries,
   removeLearningEntriesAfter,
+  removeLearningEntriesForDemo,
 } from "../src/utils/storage";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
@@ -82,7 +83,12 @@ function writeRawLog(
   dataRoot: string,
   categories: Record<
     string,
-    Array<{ mistake: string; timestamp: number; type?: string }>
+    Array<{
+      mistake: string;
+      timestamp: number;
+      type?: string;
+      demoId?: string;
+    }>
   >,
 ) {
   const logPath = path.join(dataRoot, "vibe-log.json");
@@ -98,6 +104,7 @@ function writeRawLog(
         category: cat,
         mistake: e.mistake,
         timestamp: e.timestamp,
+        ...(e.demoId !== undefined && { demoId: e.demoId }),
       })),
       lastUpdated: Math.max(...entries.map((e) => e.timestamp)),
     };
@@ -147,6 +154,45 @@ describe("removeLearningEntriesAfter", () => {
   });
 });
 
+describe("removeLearningEntriesForDemo", () => {
+  test("removes only entries owned by the selected demo", () => {
+    writeRawLog(home.dataRoot, {
+      mixed: [
+        { mistake: "legacy", timestamp: 100 },
+        { mistake: "demo one", timestamp: 200, demoId: "demo-1" },
+        { mistake: "demo two", timestamp: 300, demoId: "demo-2" },
+      ],
+    });
+
+    removeLearningEntriesForDemo("demo-1");
+
+    expect(getLearningEntries().mixed?.map((entry) => entry.mistake)).toEqual([
+      "legacy",
+      "demo two",
+    ]);
+  });
+
+  test("recalculates category metadata and deletes empty categories", () => {
+    writeRawLog(home.dataRoot, {
+      kept: [
+        { mistake: "old", timestamp: 100 },
+        { mistake: "new", timestamp: 300 },
+        { mistake: "demo", timestamp: 200, demoId: "demo-1" },
+      ],
+      empty: [{ mistake: "gone", timestamp: 400, demoId: "demo-1" }],
+    });
+
+    removeLearningEntriesForDemo("demo-1");
+
+    const entries = getLearningEntries();
+    expect(entries.empty).toBeUndefined();
+    const summary = getLearningCategorySummary();
+    const kept = summary.find((entry) => entry.category === "kept");
+    expect(kept?.count).toBe(2);
+    expect(kept?.recentExample.mistake).toBe("new");
+  });
+});
+
 describe("removeLearningEntriesAfter — edge cases", () => {
   test("is a no-op when cutoff is before all entries", () => {
     addLearningEntry("x", "kept");
@@ -175,6 +221,36 @@ describe("removeLearningEntriesAfter — edge cases", () => {
     expect(entries["cat-update"]).toHaveLength(1);
     // log.lastUpdated is updated — verified indirectly by no throw
     expect(before).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+describe("readLogFile corruption recovery", () => {
+  test("returns fresh log when JSON is corrupt without crashing", () => {
+    const logPath = path.join(home.dataRoot, "vibe-log.json");
+    fs.mkdirSync(home.dataRoot, { recursive: true });
+    fs.writeFileSync(logPath, "not valid json {{{", "utf8");
+
+    // Any operation that reads the log should recover gracefully
+    const entries = getLearningEntries();
+    expect(entries).toEqual({});
+
+    // The corrupt file remains on disk (catch returns freshLog without write-back)
+    const raw = fs.readFileSync(logPath, "utf8");
+    expect(raw).toBe("not valid json {{{");
+  });
+
+  test("recovers on a subsequent write after corrupt log replacement", () => {
+    const logPath = path.join(home.dataRoot, "vibe-log.json");
+    fs.mkdirSync(home.dataRoot, { recursive: true });
+    fs.writeFileSync(logPath, "garbage", "utf8");
+
+    // Write-through: addLearningEntry calls readLogFile → recovers → writes
+    addLearningEntry("post-recovery", "recov");
+
+    const entries = getLearningEntries();
+    expect(entries.recov).toHaveLength(1);
+    const raw = JSON.parse(fs.readFileSync(logPath, "utf8"));
+    expect(raw.mistakes.recov.count).toBe(1);
   });
 });
 

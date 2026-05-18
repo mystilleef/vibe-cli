@@ -14,6 +14,7 @@ export interface LearningEntry {
   mistake: string;
   solution?: string;
   timestamp: number;
+  demoId?: string;
 }
 
 interface VibeLog {
@@ -57,6 +58,7 @@ export function addLearningEntry(
   category: string,
   solution?: string,
   type: LearningType = "mistake",
+  demoId?: string,
 ): LearningEntry {
   const log = readLogFile();
   const now = Date.now();
@@ -66,6 +68,7 @@ export function addLearningEntry(
     mistake,
     ...(solution !== undefined && { solution }),
     timestamp: now,
+    ...(demoId !== undefined && { demoId }),
   };
 
   if (!log.mistakes[category]) {
@@ -108,12 +111,14 @@ export function getLearningCategorySummary(): Array<{
     .sort((a, b) => b.count - a.count);
 }
 
-export function removeLearningEntriesAfter(timestamp: number): void {
+function rewriteLearningLog(
+  filterEntry: (entry: LearningEntry) => boolean,
+): void {
   const log = readLogFile();
   for (const cat of Object.keys(log.mistakes)) {
     const data = log.mistakes[cat];
     if (!data) continue;
-    data.examples = data.examples.filter((e) => e.timestamp < timestamp);
+    data.examples = data.examples.filter(filterEntry);
     if (data.examples.length === 0) {
       delete log.mistakes[cat];
     } else {
@@ -123,6 +128,14 @@ export function removeLearningEntriesAfter(timestamp: number): void {
   }
   log.lastUpdated = Date.now();
   writeLogFile(log);
+}
+
+export function removeLearningEntriesAfter(timestamp: number): void {
+  rewriteLearningLog((entry) => entry.timestamp < timestamp);
+}
+
+export function removeLearningEntriesForDemo(demoId: string): void {
+  rewriteLearningLog((entry) => entry.demoId !== demoId);
 }
 
 export function getLearningContextText(maxPerCategory = 5): string {
