@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getConstitution } from "../src/tools/constitution";
+import { getConstitution, resetConstitution } from "../src/tools/constitution";
 import { runDemo } from "../src/tools/demo";
-import { getLearningEntries } from "../src/utils/storage";
+import {
+  addLearningEntry,
+  getLearningCategorySummary,
+  getLearningEntries,
+} from "../src/utils/storage";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 interface AnthropicBody {
@@ -28,6 +33,7 @@ let originalStdoutWrite: typeof process.stdout.write;
 let savedEnv: Partial<Record<ProviderEnvKey, string | undefined>>;
 const requests: AnthropicBody[] = [];
 const responseQueue: string[] = [];
+let onFetchRequest: ((requestCount: number) => void) | undefined;
 let stdout = "";
 
 function configureAnthropicEnv(): void {
@@ -45,6 +51,7 @@ function installAnthropicFetch(): void {
   globalThis.fetch = (async (_input, init) => {
     const body = JSON.parse(String(init?.body ?? "{}")) as AnthropicBody;
     requests.push(body);
+    onFetchRequest?.(requests.length);
     const text = responseQueue.shift() ?? "fallback-demo-response";
     return new Response(JSON.stringify({ content: [{ type: "text", text }] }), {
       headers: { "content-type": "application/json" },
@@ -76,6 +83,11 @@ function visibleOutput(): string {
   return output;
 }
 
+function learningLogPath(): string {
+  if (home === undefined) throw new Error("temp home not initialized");
+  return join(home.dataRoot, "vibe-log.json");
+}
+
 beforeEach(async () => {
   originalFetch = globalThis.fetch;
   originalStdoutWrite = process.stdout.write;
@@ -86,6 +98,7 @@ beforeEach(async () => {
   process.chdir(cwd);
   requests.length = 0;
   responseQueue.length = 0;
+  onFetchRequest = undefined;
   stdout = "";
   configureAnthropicEnv();
   installAnthropicFetch();
@@ -108,10 +121,25 @@ afterEach(async () => {
 
 describe("runDemo", () => {
   test("walks through the demo, prints the decision, and clears demo state", async () => {
+    resetConstitution(["Keep existing user rules"]);
     responseQueue.push(
       "Question one\n\nQuestion two",
       gateDecision(false, 0.42, "missing rollback"),
     );
+    const legacyEntry = addLearningEntry(
+      "Legacy user learning",
+      "Premature Implementation",
+      "Keep legacy data",
+    );
+    onFetchRequest = (requestCount) => {
+      if (requestCount === 2) {
+        addLearningEntry(
+          "Concurrent user learning",
+          "Premature Implementation",
+          "Keep concurrent data",
+        );
+      }
+    };
 
     await runDemo();
 
@@ -129,8 +157,43 @@ describe("runDemo", () => {
       'JSON: {"proceed":false,"confidence":0.42,"reason":"missing rollback"}',
     );
     expect(output).toContain("✓ Demo complete.");
-    expect(getConstitution()).toEqual([]);
-    expect(getLearningEntries()).toEqual({});
+    expect(output).toMatch(/"demoId": "demo-\d+-[a-z0-9]+"/);
+    expect(getConstitution()).toEqual(["Keep existing user rules"]);
+    expect(
+      getLearningEntries()["Premature Implementation"]?.map(
+        (entry) => entry.mistake,
+      ),
+    ).toEqual(["Legacy user learning", "Concurrent user learning"]);
+    expect(
+      getLearningEntries()["Premature Implementation"]?.every(
+        (entry) => entry.demoId === undefined,
+      ),
+    ).toBe(true);
+    const persisted = JSON.parse(readFileSync(learningLogPath(), "utf8")) as {
+      mistakes: Record<
+        string,
+        { count: number; examples: Array<{ mistake: string; demoId?: string }> }
+      >;
+    };
+    expect(persisted.mistakes["Premature Implementation"]?.count).toBe(2);
+    expect(
+      persisted.mistakes["Premature Implementation"]?.examples.map(
+        (entry) => entry.mistake,
+      ),
+    ).toEqual(["Legacy user learning", "Concurrent user learning"]);
+    expect(
+      persisted.mistakes["Premature Implementation"]?.examples.every(
+        (entry) => entry.demoId === undefined,
+      ),
+    ).toBe(true);
+    const summary = getLearningCategorySummary();
+    expect(summary).toHaveLength(1);
+    expect(summary[0]?.category).toBe("Premature Implementation");
+    expect(summary[0]?.count).toBe(2);
+    expect(summary[0]?.recentExample.mistake).toBe("Concurrent user learning");
+    expect(summary[0]?.recentExample.timestamp).toBeGreaterThanOrEqual(
+      legacyEntry.timestamp,
+    );
     expect(requests).toHaveLength(2);
     expect(requests[0]?.model).toBe("default-demo-model");
     expect(requests[1]?.messages?.[0]?.content).toContain(
@@ -155,9 +218,17 @@ describe("runDemo", () => {
     expect(visibleOutput()).toContain("✓ proceed");
     expect(getConstitution()).toEqual([]);
     expect(getLearningEntries()).toEqual({});
+    const logPath = learningLogPath();
+    expect(existsSync(logPath)).toBe(true);
+    const persisted = JSON.parse(readFileSync(logPath, "utf8")) as {
+      mistakes: Record<string, unknown>;
+    };
+    expect(persisted.mistakes).toEqual({});
   });
 
   test("propagates provider failures after the constitution step", async () => {
+    resetConstitution(["Preserve provider failure rules"]);
+
     await expect(
       runDemo({ modelOverride: { provider: "unsupported-provider" } }),
     ).rejects.toThrow(/Unknown provider/);
@@ -167,9 +238,7 @@ describe("runDemo", () => {
     expect(visibleOutput()).toContain(
       "Step 2/3: Run a vibe check on a risky plan",
     );
-    expect(getConstitution()).toEqual([
-      "Never execute irreversible operations without a tested rollback plan.",
-    ]);
+    expect(getConstitution()).toEqual(["Preserve provider failure rules"]);
     expect(getLearningEntries()).toEqual({});
   });
 });
