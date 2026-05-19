@@ -1,8 +1,7 @@
 import { getGateDecision, revisePlan } from "../utils/llm.js";
 import { type VibeCheckInput, vibeCheckTool } from "./vibeCheck.js";
 
-/** Describes the plan context reviewed by the blocking vibe gate. */
-export interface VibeGateInput extends VibeCheckInput {}
+export type { VibeCheckInput };
 
 /** Contains the gate verdict, supporting feedback, and reviewed plan state. */
 export interface VibeGateOutput {
@@ -31,7 +30,7 @@ export interface VibeGateOutput {
  * decision failures still reject to callers.
  */
 export async function vibeGateTool(
-  input: VibeGateInput,
+  input: VibeCheckInput,
 ): Promise<VibeGateOutput> {
   const checkResult = await vibeCheckTool(input);
   const decision = await getGateDecision({
@@ -61,11 +60,15 @@ export async function vibeGateTool(
  * reports exhaustion.
  */
 export async function vibeGateLoop(
-  input: VibeGateInput,
+  input: VibeCheckInput,
   maxAttempts: number,
 ): Promise<VibeGateOutput> {
+  if (maxAttempts <= 0) {
+    return { exhausted: true } as VibeGateOutput;
+  }
+
   let plan = input.plan;
-  let last!: VibeGateOutput;
+  let last: VibeGateOutput | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const toolResult = await vibeGateTool({ ...input, plan });
@@ -76,7 +79,6 @@ export async function vibeGateLoop(
         goal: input.goal,
         plan,
         feedback: last.questions,
-        reason: last.reason,
         ...(input.modelOverride !== undefined && {
           modelOverride: input.modelOverride,
         }),
@@ -84,5 +86,6 @@ export async function vibeGateLoop(
     }
   }
 
-  return { ...last, exhausted: true };
+  // At least one iteration ran: maxAttempts > 0 guard ensures last is assigned.
+  return { ...last, exhausted: true } as VibeGateOutput;
 }

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type VibeGateInput,
+  type VibeCheckInput,
   vibeGateLoop,
   vibeGateTool,
 } from "../src/tools/vibeGate";
@@ -49,7 +49,7 @@ function installAnthropicFetch(): void {
   }) as typeof fetch;
 }
 
-function input(overrides: Partial<VibeGateInput> = {}): VibeGateInput {
+function input(overrides: Partial<VibeCheckInput> = {}): VibeCheckInput {
   return {
     goal: "ship safely",
     plan: "run focused tests",
@@ -116,7 +116,8 @@ describe("vibeGateTool", () => {
     expect(requests).toHaveLength(2);
     expect(requests[0]?.model).toBe("mock-gate");
     expect(requests[1]?.model).toBe("mock-gate");
-    expect(requests[1]?.messages?.[0]?.content).toContain(
+    const gatePrompt = requests[1]?.messages?.[0]?.content ?? "";
+    expect(gatePrompt).toContain(
       "Feedback: questions:mock-gate:review rollback",
     );
   });
@@ -167,8 +168,9 @@ describe("vibeGateLoop", () => {
     expect(requests[2]?.messages?.[0]?.content).toContain(
       "Blocked plan: run focused tests",
     );
+    expect(requests[2]?.messages?.[0]?.content).not.toContain("Block reason:");
     expect(requests[2]?.messages?.[0]?.content).toContain(
-      "Block reason: missing rollback",
+      "Safety feedback: questions:first",
     );
     expect(requests[3]?.messages?.[0]?.content).toContain(
       "Plan: add rollback and smoke tests",
@@ -194,6 +196,14 @@ describe("vibeGateLoop", () => {
 
   test("returns an exhausted boundary result without running checks for zero attempts", async () => {
     const result = await vibeGateLoop(input(), 0);
+
+    expect(result.exhausted).toBe(true);
+    expect(Object.keys(result)).toEqual(["exhausted"]);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("returns an exhausted boundary result for negative maxAttempts", async () => {
+    const result = await vibeGateLoop(input(), -1);
 
     expect(result.exhausted).toBe(true);
     expect(Object.keys(result)).toEqual(["exhausted"]);
