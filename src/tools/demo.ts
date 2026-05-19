@@ -5,12 +5,13 @@ import { getConstitution, resetConstitution } from "./constitution.js";
 import { vibeGateTool } from "./vibeGate.js";
 import { vibeLearnTool } from "./vibeLearn.js";
 
-const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
-const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
-const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
-const magenta = (s: string) => `\x1b[35m${s}\x1b[0m`;
+const sgr = (code: number) => (s: string) => `\x1b[${code}m${s}\x1b[0m`;
+const bold = sgr(1);
+const dim = sgr(2);
+const cyan = sgr(36);
+const yellow = sgr(33);
+const green = sgr(32);
+const magenta = sgr(35);
 
 const HEADER_WIDTH = 62;
 
@@ -26,10 +27,7 @@ function stepHeader(n: number, total: number, title: string, cmd: string) {
 }
 
 function indentJSON(data: unknown) {
-  return JSON.stringify(data, null, 2)
-    .split("\n")
-    .map((l) => `  ${l}`)
-    .join("\n");
+  return JSON.stringify(data, null, 2).replace(/^/gm, "  ");
 }
 
 function printQuestions(text: string) {
@@ -38,11 +36,12 @@ function printQuestions(text: string) {
   }
 }
 
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   let i = 0;
   const id = setInterval(() => {
-    wr(`\r  ${dim(label)} ${frames[i++ % frames.length]}`);
+    wr(`\r  ${dim(label)} ${SPINNER[i++ % SPINNER.length]}`);
   }, 80);
   try {
     return await fn();
