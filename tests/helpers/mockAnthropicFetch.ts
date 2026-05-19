@@ -18,7 +18,7 @@ globalThis.fetch = Object.assign(
     const system = body.system ?? "";
     const prompt = body.messages?.[0]?.content ?? "";
 
-    if (system.includes("go/no-go decision engine")) {
+    if (system.includes("Go/no-go decision engine")) {
       return anthropicMessage(
         JSON.stringify({
           proceed: mode === "proceed",

@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { resetConstitution } from "../src/tools/constitution";
 import {
   DEFAULT_MODELS,
   detectProvider,
@@ -378,9 +382,19 @@ describe("FALLBACK_QUESTIONS", () => {
     expect(FALLBACK_QUESTIONS.length).toBeGreaterThan(0);
   });
 
-  test("contains four numbered questions", () => {
-    const matches = FALLBACK_QUESTIONS.match(/^\d+\./gm);
-    expect(matches?.length).toBe(4);
+  test("contains exactly three numbered, non-duplicative questions", () => {
+    const questions = FALLBACK_QUESTIONS.split("\n");
+    expect(questions).toHaveLength(3);
+    expect(new Set(questions).size).toBe(3);
+    expect(questions.every((q, index) => q.startsWith(`${index + 1}. `))).toBe(
+      true,
+    );
+  });
+
+  test("covers goal alignment, reversibility, and unstated assumptions", () => {
+    expect(FALLBACK_QUESTIONS).toContain("user's goal");
+    expect(FALLBACK_QUESTIONS).toMatch(/rollback|safe-stop/);
+    expect(FALLBACK_QUESTIONS).toContain("unstated assumptions");
   });
 });
 
@@ -635,7 +649,7 @@ describe("provider success paths", () => {
     });
     const body = parseBody<OpenAiCompatRequest>(call0.init);
     expect(body.model).toBe("openrouter/model");
-    const content = body.messages[0]?.content;
+    const content = body.messages[0]?.content ?? "";
     expect(content).toContain("Goal: goal text");
     expect(content).toContain("Plan: plan text");
     expect(content).toContain("Progress: half done");
@@ -643,6 +657,98 @@ describe("provider success paths", () => {
     expect(content).toContain("Task Context: task context");
     expect(content).toContain("User Prompt: user prompt");
     expect(content).toContain("History Context: history summary");
+    expect(content).toContain("Misalignment");
+    expect(content).toContain("Assumption lock-in");
+    expect(content).toContain("Learning patterns");
+    expect(content).toContain("Constitution");
+    expect(content).toContain("Irreversibility");
+    expect(content).toContain("adjacent");
+    expect(content).toContain("rollback");
+    expect(content).toContain("Hard risk");
+    expect(content).toContain("Soft risk");
+    expect(content).toContain("Socratic");
+    expect(content).toContain("highest-weight");
+    expect(content).toContain("blast radius");
+    expect(content.indexOf("Goal: goal text")).toBeLessThan(
+      content.indexOf("Plan: plan text"),
+    );
+    expect(content.indexOf("Plan: plan text")).toBeLessThan(
+      content.indexOf("User Prompt: user prompt"),
+    );
+    expect(content.indexOf("User Prompt: user prompt")).toBeLessThan(
+      content.indexOf("Progress: half done"),
+    );
+    expect(content.indexOf("Progress: half done")).toBeLessThan(
+      content.indexOf("Uncertainties: risk one, risk two"),
+    );
+    expect(content.indexOf("Uncertainties: risk one, risk two")).toBeLessThan(
+      content.indexOf("Task Context: task context"),
+    );
+    expect(content.indexOf("Task Context: task context")).toBeLessThan(
+      content.indexOf("History Context: history summary"),
+    );
+  });
+
+  test("getMetacognitiveQuestions omits absent optional context", async () => {
+    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env.DEFAULT_MODEL = "openrouter/model";
+    process.env.USE_LEARNING_HISTORY = "false";
+    mockFetch(() =>
+      Response.json({
+        choices: [{ message: { content: "provider question" } }],
+      }),
+    );
+
+    await getMetacognitiveQuestions({ goal: "goal text", plan: "plan text" });
+
+    const call0 = requireValue(fetchCalls[0], "fetch call 0");
+    const body = parseBody<OpenAiCompatRequest>(call0.init);
+    const content = body.messages[0]?.content ?? "";
+    expect(content).toContain("Goal: goal text");
+    expect(content).toContain("Plan: plan text");
+    expect(content).not.toContain("None");
+    expect(content).not.toContain("User Prompt:");
+    expect(content).not.toContain("Progress:");
+    expect(content).not.toContain("Uncertainties:");
+    expect(content).not.toContain("Task Context:");
+    expect(content).not.toContain("History Context:");
+  });
+
+  test("getMetacognitiveQuestions includes constitution before history", async () => {
+    const originalHome = process.env.HOME;
+    const tempHome = mkdtempSync(path.join(tmpdir(), "vibe-llm-test-"));
+    try {
+      process.env.HOME = tempHome;
+      resetConstitution(["Follow session rule"]);
+      process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+      process.env.OPENROUTER_API_KEY = "or-key";
+      process.env.DEFAULT_MODEL = "openrouter/model";
+      process.env.USE_LEARNING_HISTORY = "false";
+      mockFetch(() =>
+        Response.json({
+          choices: [{ message: { content: "provider question" } }],
+        }),
+      );
+
+      await getMetacognitiveQuestions({
+        goal: "goal text",
+        plan: "plan text",
+        historySummary: "history summary",
+      });
+
+      const call0 = requireValue(fetchCalls[0], "fetch call 0");
+      const body = parseBody<OpenAiCompatRequest>(call0.init);
+      const content = body.messages[0]?.content ?? "";
+      expect(content).toContain("Constitution:\n- Follow session rule");
+      expect(content.indexOf("Constitution:")).toBeLessThan(
+        content.indexOf("History Context: history summary"),
+      );
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 
   test("getGateDecision parses a successful OpenRouter decision", async () => {
@@ -672,6 +778,14 @@ describe("provider success paths", () => {
       confidence: 0.75,
       reason: "risks addressed",
     });
+
+    const call0 = requireValue(fetchCalls[0], "fetch call 0");
+    const body = parseBody<OpenAiCompatRequest>(call0.init);
+    const content = body.messages[0]?.content ?? "";
+    expect(content).toContain("Output ONLY one line of valid JSON");
+    expect(content).toContain("0.5 = uncertain");
+    expect(content).toContain("≥0.8 = clear");
+    expect(content).toContain("block unless safety concerns are minor");
   });
 
   test("revisePlan posts Anthropic system prompt and returns first text block", async () => {
@@ -684,7 +798,6 @@ describe("provider success paths", () => {
       goal: "goal",
       plan: "old plan",
       feedback: "missing rollback",
-      reason: "unsafe",
       modelOverride: { provider: "anthropic" },
     });
 
@@ -706,7 +819,10 @@ describe("provider success paths", () => {
     expect(body.max_tokens).toBe(1024);
     expect(body.temperature).toBe(0.3);
     expect(body.system).toContain("plan reviser");
+    expect(body.system).toContain("preserve everything else");
+    expect(body.system).toContain("Prioritize goal alignment");
     expect(body.messages[0]?.content).toContain("Blocked plan: old plan");
+    expect(body.messages[0]?.content).not.toContain("Block reason:");
     expect(body.messages[0]?.content).toContain(
       "Safety feedback: missing rollback",
     );
@@ -787,6 +903,45 @@ describe("provider success paths", () => {
 // callAnthropic response handling
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// callOpenAI — empty choices boundary
+// ---------------------------------------------------------------------------
+
+describe("callOpenAI empty choices boundary", () => {
+  test("returns empty string when choices array is empty", async () => {
+    process.env.OPENAI_API_KEY = "openai-key";
+    openAiResponseText = "";
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "openai" },
+    });
+
+    expect(result.questions).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// callOpenRouter — empty choices boundary
+// ---------------------------------------------------------------------------
+
+describe("callOpenRouter empty choices boundary", () => {
+  test("returns empty string when choices array is empty", async () => {
+    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+    process.env.DEFAULT_MODEL = "openrouter/model";
+    mockFetch(() => Response.json({ choices: [] }));
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+    });
+
+    expect(result.questions).toBe("");
+  });
+});
+
 describe("callAnthropic response handling", () => {
   test("auth failure includes status and request id", async () => {
     process.env.ANTHROPIC_API_KEY = "bad-key";
@@ -862,5 +1017,86 @@ describe("callAnthropic response handling", () => {
     });
 
     expect(result.questions).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// callGemini — pro→flash fallback
+// ---------------------------------------------------------------------------
+
+describe("callGemini fallback to flash model", () => {
+  let geminiCalls: Array<{ model: string; prompt: string }> = [];
+  let geminiResponses: string[] = [];
+  let throwOnCall: number | undefined;
+
+  const mockGenAI = {
+    getGenerativeModel: ({ model }: { model: string }) => ({
+      generateContent: async (prompt: string) => {
+        geminiCalls.push({ model, prompt });
+        if (geminiCalls.length === throwOnCall) {
+          throw new Error("simulated gemini failure");
+        }
+        return { response: { text: () => geminiResponses.shift() ?? "" } };
+      },
+    }),
+  };
+
+  mock.module("@google/generative-ai", () => ({
+    GoogleGenerativeAI: class {
+      getGenerativeModel = mockGenAI.getGenerativeModel;
+    },
+  }));
+
+  beforeEach(() => {
+    geminiCalls = [];
+    geminiResponses = [];
+    throwOnCall = undefined;
+    process.env.GEMINI_API_KEY = "g-key";
+  });
+
+  test("falls back to gemini-2.5-flash when gemini-2.5-pro fails", async () => {
+    throwOnCall = 1;
+    geminiResponses = ["flash fallback response"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe("flash fallback response");
+    expect(geminiCalls).toHaveLength(2);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+    expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
+  });
+
+  test("does not fall back when pro succeeds", async () => {
+    geminiResponses = ["pro response"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe("pro response");
+    expect(geminiCalls).toHaveLength(1);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+  });
+
+  test("defaults model to gemini-2.5-flash when none specified", async () => {
+    throwOnCall = 1;
+    geminiResponses = ["flash response"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini" },
+    });
+
+    expect(result.questions).toBe("flash response");
+    expect(geminiCalls).toHaveLength(2);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-flash");
+    expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
   });
 });

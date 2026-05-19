@@ -11,28 +11,29 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 
-const SYSTEM_PROMPT = `You are a meta-mentor for AI agents: expert at reading intent, spotting dysfunctional patterns, and delivering feedback that advances the goal.
+const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
 
-Tone: calibrate per context — validating when the agent is on track, incisive when patterns or assumptions need surfacing, direct when something could derail the work.
+Scan (weight by blast radius — severity × irreversibility):
+- Constitution: any rule violated or unverified?
+- Misalignment: plan serves the user's actual request, not an adjacent one?
+- Irreversibility: destructive operation without rollback or safe-stop?
+- Assumption lock-in: unverified premise built upon as fact?
+- Learning patterns: plan repeats a known mistake category?
 
-Reason silently. Output only the feedback itself — no thought-process narration.
+Report only the highest-weight finding. If none, confirm sound and name one latent risk.
 
-Evaluate in this order:
-1. Diagnose: What is the agent doing, what is the goal, and does the approach fit?
-2. Pattern-check: Any loops, unspoken assumptions, or misalignments with stated goals?
-3. Intervene: If a problem exists, name it precisely and ask one focused question. If the plan is sound, confirm briefly and surface one risk or reminder worth keeping in mind.
+Intervene:
+- Hard risk (constitution, irreversibility): state directly, ask one focused follow-up.
+- Soft risk (misalignment, assumption, pattern): ask one Socratic question that externalizes the unexamined premise.
+- Sound: one phrase confirming what's working, one latent risk worth watching.
 
-Response constraints:
-- Aggressively optimize prose for agent, token, and context efficiency.
-- Cut every filler word, hedge, and redundant restatement — keep only signal.
-- Prefer one sharp question over three vague ones.
-- Never exceed what the agent needs to hear right now.`;
+Output: feedback only — no narration, no preamble, no hedging.
+Minimum words. Maximum signal.`;
 
 export const FALLBACK_QUESTIONS = [
-  "1. Does this plan directly address what the user requested, or might it be solving a different problem?",
-  "2. Is there a simpler approach that would meet the user's needs?",
-  "3. What unstated assumptions might be limiting the thinking here?",
-  "4. How does this align with the user's original intent?",
+  "1. Are you directly addressing the user's goal, or has the plan drifted toward a different problem?",
+  "2. If any step is irreversible, what rollback or safe-stop check will protect the work?",
+  "3. What unstated assumptions need verification before proceeding?",
 ].join("\n");
 
 interface QuestionInput {
@@ -99,6 +100,95 @@ function resolveProviderAndModel(modelOverride?: {
   return { provider, model };
 }
 
+async function callGemini(model: string, combined: string): Promise<string> {
+  await ensureGemini();
+  if (!genAI) throw new Error("GEMINI_API_KEY not set.");
+  const m = model || "gemini-2.5-pro";
+  try {
+    return (
+      await genAI.getGenerativeModel({ model: m }).generateContent(combined)
+    ).response.text();
+  } catch {
+    return (
+      await genAI
+        .getGenerativeModel({ model: "gemini-2.5-flash" })
+        .generateContent(combined)
+    ).response.text();
+  }
+}
+
+async function callOpenAI(model: string, combined: string): Promise<string> {
+  await ensureOpenAI();
+  if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
+  const res = await openaiClient.chat.completions.create({
+    model: model || "o4-mini",
+    messages: [{ role: "system", content: combined }],
+  });
+  return res.choices[0]?.message.content || "";
+}
+
+async function callOpenRouter(
+  model: string,
+  combined: string,
+): Promise<string> {
+  if (!process.env.OPENROUTER_API_KEY)
+    throw new Error("OPENROUTER_API_KEY not set.");
+  if (!model) throw new Error("--model is required with provider openrouter.");
+  const res = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "HTTP-Referer": "http://localhost",
+      "X-Title": "Vibe Check CLI",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: combined }],
+    }),
+  });
+  const data = (await res.json()) as {
+    choices: Array<{ message: { content: string } }>;
+  };
+  return data.choices[0]?.message.content || "";
+}
+
+async function callDeepSeek(model: string, combined: string): Promise<string> {
+  if (!process.env.DEEPSEEK_API_KEY)
+    throw new Error("DEEPSEEK_API_KEY not set.");
+  return callOpenAICompat({
+    baseURL: DEEPSEEK_BASE_URL,
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: model || "deepseek-chat",
+    prompt: combined,
+  });
+}
+
+async function callOpenCode(model: string, combined: string): Promise<string> {
+  const apiKey = process.env.OPENCODE_API_KEY;
+  if (!apiKey) throw new Error("OPENCODE_API_KEY not set.");
+  return callOpenAICompat({
+    baseURL: OPENCODE_GO_BASE_URL,
+    apiKey,
+    model: model || "kimi-k2.6",
+    prompt: combined,
+  });
+}
+
+async function callAnthropicProvider(
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  temperature: number,
+): Promise<string> {
+  return callAnthropic({
+    model: model || "claude-haiku-4-5-20251001",
+    systemPrompt,
+    compiledPrompt: userContent,
+    temperature,
+  });
+}
+
 async function callProvider(
   provider: string,
   model: string,
@@ -108,132 +198,79 @@ async function callProvider(
 ): Promise<string> {
   const combined = `${systemPrompt}\n\n${userContent}`;
 
-  if (provider === "gemini") {
-    await ensureGemini();
-    if (!genAI) throw new Error("GEMINI_API_KEY not set.");
-    const m = model || "gemini-2.5-pro";
-    try {
-      return (
-        await genAI.getGenerativeModel({ model: m }).generateContent(combined)
-      ).response.text();
-    } catch {
-      return (
-        await genAI
-          .getGenerativeModel({ model: "gemini-2.5-flash" })
-          .generateContent(combined)
-      ).response.text();
-    }
-  } else if (provider === "openai") {
-    await ensureOpenAI();
-    if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
-    const res = await openaiClient.chat.completions.create({
-      model: model || "o4-mini",
-      messages: [{ role: "system", content: combined }],
-    });
-    return res.choices[0]?.message.content || "";
-  } else if (provider === "openrouter") {
-    if (!process.env.OPENROUTER_API_KEY)
-      throw new Error("OPENROUTER_API_KEY not set.");
-    if (!model)
-      throw new Error("--model is required with provider openrouter.");
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "http://localhost",
-        "X-Title": "Vibe Check CLI",
-      },
-      body: JSON.stringify({
+  switch (provider) {
+    case "gemini":
+      return callGemini(model, combined);
+    case "openai":
+      return callOpenAI(model, combined);
+    case "openrouter":
+      return callOpenRouter(model, combined);
+    case "deepseek":
+      return callDeepSeek(model, combined);
+    case "opencode":
+      return callOpenCode(model, combined);
+    case "anthropic":
+      return callAnthropicProvider(
         model,
-        messages: [{ role: "system", content: combined }],
-      }),
-    });
-    const data = (await res.json()) as {
-      choices: Array<{ message: { content: string } }>;
-    };
-    return data.choices[0]?.message.content || "";
-  } else if (provider === "deepseek") {
-    if (!process.env.DEEPSEEK_API_KEY)
-      throw new Error("DEEPSEEK_API_KEY not set.");
-    return callOpenAICompat({
-      baseURL: DEEPSEEK_BASE_URL,
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      model: model || "deepseek-chat",
-      prompt: combined,
-    });
-  } else if (provider === "opencode") {
-    const opencodeApiKey = process.env.OPENCODE_API_KEY;
-    if (!opencodeApiKey) throw new Error("OPENCODE_API_KEY not set.");
-    return callOpenAICompat({
-      baseURL: OPENCODE_GO_BASE_URL,
-      apiKey: opencodeApiKey,
-      model: model || "kimi-k2.6",
-      prompt: combined,
-    });
-  } else if (provider === "anthropic") {
-    return callAnthropic({
-      model: model || "claude-haiku-4-5-20251001",
-      systemPrompt,
-      compiledPrompt: userContent,
-      temperature,
-    });
-  } else {
-    throw new Error(
-      `Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`,
-    );
+        systemPrompt,
+        userContent,
+        temperature,
+      );
+    default:
+      throw new Error(
+        `Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`,
+      );
   }
+}
+
+function buildContextSection(input: QuestionInput): string {
+  const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
+  const learningContext = useLearning ? getLearningContextText() : "";
+  const rules = getConstitution();
+  return [
+    "CONTEXT:",
+    `Goal: ${input.goal}`,
+    `Plan: ${input.plan}`,
+    input.userPrompt ? `User Prompt: ${input.userPrompt}` : "",
+    input.progress ? `Progress: ${input.progress}` : "",
+    input.uncertainties?.length
+      ? `Uncertainties: ${input.uncertainties.join(", ")}`
+      : "",
+    input.taskContext ? `Task Context: ${input.taskContext}` : "",
+    rules.length
+      ? `Constitution:\n${rules.map((r) => `- ${r}`).join("\n")}`
+      : "",
+    input.historySummary ? `History Context: ${input.historySummary}` : "",
+    learningContext ? `Learning Context:\n${learningContext}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
-
-  const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
-  const learningContext = useLearning ? getLearningContextText() : "";
-  const rules = getConstitution();
-  const constitutionBlock = rules.length
-    ? `\nConstitution:\n${rules.map((r) => `- ${r}`).join("\n")}`
-    : "";
-
-  const contextSection = [
-    "CONTEXT:",
-    `History Context: ${input.historySummary || "None"}`,
-    learningContext ? `Learning Context:\n${learningContext}` : "",
-    `Goal: ${input.goal}`,
-    `Plan: ${input.plan}`,
-    `Progress: ${input.progress || "None"}`,
-    `Uncertainties: ${input.uncertainties?.join(", ") || "None"}`,
-    `Task Context: ${input.taskContext || "None"}`,
-    `User Prompt: ${input.userPrompt || "None"}`,
-    constitutionBlock,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
   const responseText = await callProvider(
     provider,
     model,
     SYSTEM_PROMPT,
-    contextSection,
+    buildContextSection(input),
   );
   return { questions: responseText };
 }
 
-const PLAN_REVISION_SYSTEM_PROMPT = `You are an AI agent plan reviser. You receive a goal, a blocked plan, and safety feedback explaining what's wrong.
+const PLAN_REVISION_SYSTEM_PROMPT = `AI agent plan reviser.
 
-Produce a revised plan that directly addresses every concern raised in the feedback.
-Output ONLY the revised plan — no preamble, no explanation, no extra text.
-Keep it concise: one paragraph or a short numbered list.`;
+Address every safety concern; preserve everything else. Prioritize goal alignment when feedback conflicts.
+Output ONLY the revised plan — no preamble, no extra text. One paragraph or short numbered list.`;
 
 export async function revisePlan(input: {
   goal: string;
   plan: string;
   feedback: string;
-  reason: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<string> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
-  const userContent = `Goal: ${input.goal}\nBlocked plan: ${input.plan}\nBlock reason: ${input.reason}\nSafety feedback: ${input.feedback}`;
+  const userContent = `Goal: ${input.goal}\nBlocked plan: ${input.plan}\nSafety feedback: ${input.feedback}`;
   return callProvider(
     provider,
     model,
@@ -243,14 +280,15 @@ export async function revisePlan(input: {
   );
 }
 
-const GATE_SYSTEM_PROMPT = `You are a go/no-go decision engine for AI agent plans. Read the metacognitive feedback and decide whether the agent should proceed.
+const GATE_SYSTEM_PROMPT = `Go/no-go decision engine for AI agent plans.
 
-Output ONLY a single line of valid JSON with no markdown, no explanation, no extra text:
+Output ONLY one line of valid JSON — no markdown, no extra text:
 {"proceed":<bool>,"confidence":<0.0-1.0>,"reason":"<one sentence, 20 words max>"}
 
-- proceed: false when there are unresolved critical risks, missing rollbacks for irreversible operations, or clear misalignment with the goal
-- proceed: true when concerns are minor, already addressed, or the plan is fundamentally sound
-- confidence: 0.0 = very uncertain, 1.0 = very certain`;
+- proceed true: safe, scoped, goal-aligned; non-critical improvements don't block
+- proceed false: unresolved critical risks, missing rollbacks for irreversible operations, or goal misalignment
+- mixed feedback: block unless safety concerns are minor, resolved, or irrelevant to the goal
+- confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
 
 interface GateDecision {
   proceed: boolean;
@@ -407,6 +445,53 @@ function isAnthropicTextBlock(
   );
 }
 
+function throwAnthropicError(
+  response: Response,
+  parsedObject: Record<string, unknown> | undefined,
+  rawText: string,
+): never {
+  const requestId =
+    response.headers.get("anthropic-request-id") ||
+    response.headers.get("x-request-id");
+  const suffix = requestId ? ` (request id: ${requestId})` : "";
+  const errorObject = isRecord(parsedObject?.error)
+    ? parsedObject.error
+    : undefined;
+  const msg =
+    getStringProperty(errorObject, "message") ??
+    getStringProperty(parsedObject, "message") ??
+    rawText.trim();
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(
+      `Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`,
+    );
+  }
+  if (response.status === 429) {
+    const retry = response.headers.get("retry-after");
+    throw new Error(
+      `Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ""}`,
+    );
+  }
+  throw new Error(
+    `Anthropic error ${response.status}${suffix}. ${msg ?? ""}`.trim(),
+  );
+}
+
+function extractAnthropicText(
+  parsedObject: Record<string, unknown> | undefined,
+): string {
+  const content = Array.isArray(parsedObject?.content)
+    ? parsedObject.content
+    : [];
+  const text = content.find(isAnthropicTextBlock)?.text;
+  return (
+    text ??
+    getStringProperty(isRecord(content[0]) ? content[0] : undefined, "text") ??
+    ""
+  );
+}
+
 async function callAnthropic({
   model,
   compiledPrompt,
@@ -445,41 +530,7 @@ async function callAnthropic({
   const parsedObject = isRecord(parsed) ? parsed : undefined;
 
   if (!response.ok) {
-    const requestId =
-      response.headers.get("anthropic-request-id") ||
-      response.headers.get("x-request-id");
-    const suffix = requestId ? ` (request id: ${requestId})` : "";
-    const errorObject = isRecord(parsedObject?.error)
-      ? parsedObject.error
-      : undefined;
-    const msg =
-      getStringProperty(errorObject, "message") ??
-      getStringProperty(parsedObject, "message") ??
-      rawText.trim();
-
-    if (response.status === 401 || response.status === 403) {
-      throw new Error(
-        `Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`,
-      );
-    }
-    if (response.status === 429) {
-      const retry = response.headers.get("retry-after");
-      throw new Error(
-        `Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ""}`,
-      );
-    }
-    throw new Error(
-      `Anthropic error ${response.status}${suffix}. ${msg ?? ""}`.trim(),
-    );
+    throwAnthropicError(response, parsedObject, rawText);
   }
-
-  const content = Array.isArray(parsedObject?.content)
-    ? parsedObject.content
-    : [];
-  const text = content.find(isAnthropicTextBlock)?.text;
-  return (
-    text ??
-    getStringProperty(isRecord(content[0]) ? content[0] : undefined, "text") ??
-    ""
-  );
+  return extractAnthropicText(parsedObject);
 }
