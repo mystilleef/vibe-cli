@@ -90,13 +90,9 @@ export async function vibeLearnTool(
 }
 
 function enforceOneSentence(text: string): string {
-  let sentence = text.replace(/\r?\n/g, " ");
-  const sentences = sentence.split(/([.!?])\s+/);
-  if (sentences.length > 0) {
-    sentence = (sentences[0] + (sentences[1] || "")).trim();
-  }
-  if (!/[.!?]$/.test(sentence)) sentence += ".";
-  return sentence;
+  const cleaned = text.replace(/\r?\n/g, " ").trim();
+  const match = cleaned.match(/^([^.!?]*[.!?])/);
+  return match?.[1] ?? `${cleaned}.`;
 }
 
 function isSimilar(a: string, b: string): boolean {

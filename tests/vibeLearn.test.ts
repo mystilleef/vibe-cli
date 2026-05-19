@@ -194,6 +194,51 @@ describe("vibeLearnTool", () => {
     }
   });
 
+  test("enforceOneSentence rejects empty string input upstream before processing", async () => {
+    // enforceOneSentence would return "." for empty input, but vibeLearnTool
+    // rejects empty mistake text first via --mistake is required validation.
+    const result = await vibeLearnTool({
+      mistake: "",
+      category: "edge",
+      solution: "Empty string validation fires first.",
+    });
+
+    expect(result.added).toBe(false);
+    expect(result.currentTally).toBe(0);
+  });
+
+  test("enforceOneSentence adds period to text without punctuation", async () => {
+    const result = await vibeLearnTool({
+      mistake: "hello world",
+      category: "nopunct",
+      solution: "fix it",
+    });
+
+    expect(result.added).toBe(true);
+    const entries = getLearningEntries().nopunct ?? [];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.mistake).toBe("hello world.");
+  });
+
+  test("enforceOneSentence rejects whitespace-only input upstream before processing", async () => {
+    // Whitespace-only input is truthy after trim, but enforceOneSentence
+    // trims to empty and returns ".". However, the input.mistake check fires
+    // on the raw string "   " which is truthy, so it passes validation.
+    // After enforceOneSentence: "   ".trim() = "", match fails, returns " .".
+    // Wait — trim() on "   " returns "", then cleaned.match(...) on ""
+    // returns null, so it falls to `${cleaned}.` = ""."? No — `${cleaned}.` = ".."
+    const result = await vibeLearnTool({
+      mistake: "   ",
+      category: "whitespace",
+      solution: "fix",
+    });
+
+    expect(result.added).toBe(true);
+    const entries = getLearningEntries().whitespace ?? [];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.mistake).toBe(".");
+  });
+
   test("ignores empty legacy mistakes when checking similarity", async () => {
     addLearningEntry("", "legacy", "legacy solution");
 
