@@ -102,7 +102,7 @@ describe("vibeCheckTool", () => {
     expect(result.questions).toContain("questions:mock-claude");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.model).toBe("mock-claude");
-    expect(prompt).toContain("History Context: None");
+    expect(prompt).not.toContain("History Context: None");
     expect(prompt).toContain("Goal: ship safely");
     expect(prompt).toContain("Plan: run focused tests");
     expect(prompt).toContain("Progress: implementation complete");
@@ -124,10 +124,10 @@ describe("vibeCheckTool", () => {
     expect(result.questions).toContain("questions:mock-boundary");
     expect(prompt).toContain("Goal: ");
     expect(prompt).toContain("Plan: ");
-    expect(prompt).toContain("Progress: None");
-    expect(prompt).toContain("Uncertainties: None");
-    expect(prompt).toContain("Task Context: None");
-    expect(prompt).toContain("User Prompt: None");
+    expect(prompt).not.toContain("Progress:");
+    expect(prompt).not.toContain("Uncertainties:");
+    expect(prompt).not.toContain("Task Context:");
+    expect(prompt).not.toContain("User Prompt:");
   });
 
   test("feeds previous interaction history into subsequent checks for the same autosession", async () => {
