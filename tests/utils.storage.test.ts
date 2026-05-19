@@ -263,9 +263,9 @@ describe("getLearningContextText", () => {
     addLearningEntry("err1", "style", "fix it");
     const text = getLearningContextText();
     expect(text).toContain("Category: style");
-    expect(text).toContain("Mistake:");
-    expect(text).toContain("err1");
+    expect(text).toContain("[Mistake] err1");
     expect(text).toContain("Solution: fix it");
+    expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
   test("omits Solution line when solution is absent", () => {
@@ -284,20 +284,20 @@ describe("getLearningContextText", () => {
     }
     const text = getLearningContextText(3);
     // Only last 3 entries should appear
-    const matches = (text.match(/- \[/g) ?? []).length;
+    const matches = (text.match(/- \[Mistake\]/g) ?? []).length;
     expect(matches).toBe(3);
   });
 
   test("uses Preference label for preference type", () => {
     addLearningEntry("pref1", "prefs", undefined, "preference");
     const text = getLearningContextText();
-    expect(text).toContain("Preference:");
+    expect(text).toContain("[Preference] pref1");
   });
 
   test("uses Success label for success type", () => {
     addLearningEntry("s1", "wins", undefined, "success");
     const text = getLearningContextText();
-    expect(text).toContain("Success:");
+    expect(text).toContain("[Success] s1");
   });
 
   test("joins multiple categories with double newline", () => {
@@ -308,5 +308,37 @@ describe("getLearningContextText", () => {
     expect(text).toContain("Category: beta");
     // Categories separated by blank line
     expect(text).toContain("\n\n");
+  });
+});
+
+describe("writeLogFile error handling", () => {
+  test("logs error and does not throw when write fails", () => {
+    const originalWriteFileSync = fs.writeFileSync;
+    const errors: unknown[] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(...args);
+    };
+
+    try {
+      // Write a valid log first so readLogFile succeeds
+      addLearningEntry("before-failure", "cat");
+
+      // Then mock writeFileSync to throw
+      fs.writeFileSync = () => {
+        throw new Error("disk full");
+      };
+
+      // Should not throw despite write failure
+      expect(() => {
+        addLearningEntry("during-failure", "cat");
+      }).not.toThrow();
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0]).toContain("Error writing vibe log:");
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+      console.error = originalConsoleError;
+    }
   });
 });

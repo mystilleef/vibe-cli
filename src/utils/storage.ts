@@ -153,7 +153,7 @@ export function getLearningContextText(maxPerCategory = 5): string {
                 ? "Preference"
                 : "Success";
           const sol = ex.solution ? ` | Solution: ${ex.solution}` : "";
-          return `- [${new Date(ex.timestamp).toISOString()}] ${label}: ${ex.mistake}${sol}`;
+          return `- [${label}] ${ex.mistake}${sol}`;
         })
         .join("\n");
       return `Category: ${category} (count: ${data.count})\n${examples}`;
