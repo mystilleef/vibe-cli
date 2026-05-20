@@ -1,9 +1,22 @@
+/**
+ * Interactive CLI demo showcasing the three core vibe-cli primitives:
+ * constitution rule, vibe gate check, and learning recording.
+ *
+ * Runs a scripted walkthrough against a sample risky migration plan, prints
+ * formatted terminal output for each step, and cleans up all demo data on
+ * completion (or failure) so no state leaks into the user session.
+ *
+ * @module demo
+ */
+
 import { resolveAutosession } from "../utils/autosession.js";
 import { loadHistory } from "../utils/state.js";
 import { removeLearningEntriesForDemo } from "../utils/storage.js";
 import { getConstitution, resetConstitution } from "./constitution.js";
 import { vibeGateTool } from "./vibeGate.js";
 import { vibeLearnTool } from "./vibeLearn.js";
+
+// ── Terminal formatting helpers ────────────────────────────────────────────
 
 const sgr = (code: number) => (s: string) => `\x1b[${code}m${s}\x1b[0m`;
 const bold = sgr(1);
@@ -15,9 +28,12 @@ const magenta = sgr(35);
 
 const HEADER_WIDTH = 62;
 
+/** Write a line to stdout (no trailing newline added by caller). */
 const ln = (s = "") => process.stdout.write(`${s}\n`);
+/** Write raw text to stdout without a trailing newline. */
 const wr = (s: string) => process.stdout.write(s);
 
+/** Render a bordered step header with the step number, title, and echo of the equivalent CLI command. */
 function stepHeader(n: number, total: number, title: string, cmd: string) {
   ln();
   ln(bold(cyan(`  ┌── Step ${n}/${total}: ${title}`)));
@@ -26,10 +42,12 @@ function stepHeader(n: number, total: number, title: string, cmd: string) {
   ln();
 }
 
+/** Pretty-print a JSON value indented two spaces. */
 function indentJSON(data: unknown) {
   return JSON.stringify(data, null, 2).replace(/^/gm, "  ");
 }
 
+/** Print each non-empty line of `text` in yellow. */
 function printQuestions(text: string) {
   for (const line of text.split("\n")) {
     if (line.trim()) ln(`  ${yellow(line)}`);
@@ -38,6 +56,7 @@ function printQuestions(text: string) {
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/** Run `fn` while displaying a terminal spinner with `label`; clears the spinner line on completion. */
 async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   let i = 0;
   const id = setInterval(() => {
@@ -51,10 +70,32 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Options for the interactive demo walkthrough. */
 export interface DemoOptions {
+  /** Optional provider/model override forwarded to the vibe gate LLM call. */
   modelOverride?: { provider?: string; model?: string };
 }
 
+/**
+ * Run the three-step interactive demo in the current terminal.
+ *
+ * Steps:
+ * 1. **Constitution** – set a sample safety rule and display it.
+ * 2. **Vibe check** – submit a risky migration plan for metacognitive
+ *    review and print the LLM feedback.
+ * 3. **Learn** – record the identified mistake pattern and print the
+ *    stored learning entry.
+ *
+ * All demo data (constitution rules, learning entries tagged with a
+ * unique `demoId`) is cleaned up in a `finally` block so the user's
+ * session state is fully restored on return.
+ *
+ * @param opts - Optional demo configuration.
+ * @param opts.modelOverride - Provider/model pair forwarded to the gate LLM.
+ *
+ * @throws Re-throws any error from the vibe-gate or vibe-learn LLM calls
+ *   after cleanup has completed.
+ */
 export async function runDemo({ modelOverride }: DemoOptions = {}) {
   const demoId = `demo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const sessionId = resolveAutosession().id;

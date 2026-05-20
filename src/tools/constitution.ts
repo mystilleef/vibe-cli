@@ -1,3 +1,9 @@
+/**
+ * Per-session constitution rule storage.
+ *
+ * Rules persist to `~/.vibe-cli/constitution.json`, keyed by autosession id.
+ * Each session holds at most 50 rules; oldest rules drop first when full.
+ */
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -75,7 +81,11 @@ export function getConstitution(): string[] {
   return read()[resolveSessionId()] ?? [];
 }
 
-/** Return the autosession id used as the constitution storage key. */
+/**
+ * Return the autosession id used as the constitution storage key.
+ *
+ * Returns an empty string when no autosession can be resolved.
+ */
 export function getCurrentConstitutionSessionId(): string {
   return resolveAutosession().id;
 }

@@ -2,12 +2,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDataDir, getDataRoot } from "./autosession.js";
 
+/** Return the absolute path to the learning log (`~/.vibe-cli/vibe-log.json`). */
 function getLogFile(): string {
   return path.join(getDataRoot(), "vibe-log.json");
 }
 
+/** Discriminator for the kind of learning entry. */
 export type LearningType = "mistake" | "preference" | "success";
 
+/**
+ * A single persisted learning record.
+ *
+ * @property type - Entry kind; defaults to `mistake` when callers omit it.
+ * @property category - Grouping label (may be normalized by the caller).
+ * @property mistake - One-sentence description of the pattern or error.
+ * @property solution - Resolution text; required for mistake/success, optional for preference.
+ * @property timestamp - Epoch-ms when the entry was written.
+ * @property demoId - Optional identifier linking the entry to a demo session.
+ */
 export interface LearningEntry {
   type: LearningType;
   category: string;
@@ -17,6 +29,13 @@ export interface LearningEntry {
   demoId?: string;
 }
 
+/**
+ * Top-level on-disk schema for `vibe-log.json`.
+ *
+ * `mistakes` is keyed by category; each value holds a running `count`, the
+ * full `examples` array, and a `lastUpdated` epoch-ms.  The root
+ * `lastUpdated` tracks the most recent write to any category.
+ */
 interface VibeLog {
   mistakes: Record<
     string,
@@ -25,10 +44,17 @@ interface VibeLog {
   lastUpdated: number;
 }
 
+/** Produce a blank log used when no file exists or the file is corrupt. */
 function freshLog(): VibeLog {
   return { mistakes: {}, lastUpdated: Date.now() };
 }
 
+/**
+ * Read and parse the log file, creating it on first access.
+ *
+ * Returns a fresh log without writing back when the file contains invalid
+ * JSON, so callers always receive a valid structure even on corruption.
+ */
 function readLogFile(): VibeLog {
   ensureDataDir();
   const logFile = getLogFile();
@@ -44,6 +70,12 @@ function readLogFile(): VibeLog {
   }
 }
 
+/**
+ * Serialize the log to disk.
+ *
+ * Swallows write errors (logs to stderr) so callers never throw on disk
+ * failures.
+ */
 function writeLogFile(data: VibeLog): void {
   ensureDataDir();
   try {
@@ -53,6 +85,19 @@ function writeLogFile(data: VibeLog): void {
   }
 }
 
+/**
+ * Append a learning entry to the log under `category`.
+ *
+ * Increments the category counter and returns the persisted entry.  Creates
+ * the category if it does not yet exist.
+ *
+ * @param mistake - One-sentence pattern description.
+ * @param category - Grouping label (callers should normalize beforehand).
+ * @param solution - Resolution text; omit for preference entries.
+ * @param type - Entry kind; defaults to `"mistake"`.
+ * @param demoId - Optional demo-session identifier.
+ * @returns The entry as written, including its `timestamp`.
+ */
 export function addLearningEntry(
   mistake: string,
   category: string,
@@ -82,6 +127,12 @@ export function addLearningEntry(
   return entry;
 }
 
+/**
+ * Return every learning entry grouped by category.
+ *
+ * Keys are category names; values are the full entry arrays.  Returns `{}`
+ * when the log is empty or was just created.
+ */
 export function getLearningEntries(): Record<string, LearningEntry[]> {
   const log = readLogFile();
   return Object.fromEntries(
@@ -89,6 +140,12 @@ export function getLearningEntries(): Record<string, LearningEntry[]> {
   );
 }
 
+/**
+ * Return a summary of each category sorted by count descending.
+ *
+ * Each item exposes the category name, its total count, and the most recent
+ * example entry.  Empty categories (no examples after removal) are omitted.
+ */
 export function getLearningCategorySummary(): Array<{
   category: string;
   count: number;
@@ -111,6 +168,13 @@ export function getLearningCategorySummary(): Array<{
     .sort((a, b) => b.count - a.count);
 }
 
+/**
+ * Rewrite the log keeping only entries that satisfy `filterEntry`.
+ *
+ * Deletes categories that become empty and recalculates `count` and
+ * `lastUpdated` for survivors.  Used internally by the public removal
+ * functions.
+ */
 function rewriteLearningLog(
   filterEntry: (entry: LearningEntry) => boolean,
 ): void {
@@ -130,14 +194,43 @@ function rewriteLearningLog(
   writeLogFile(log);
 }
 
+/**
+ * Remove all entries whose `timestamp` is >= the given cutoff.
+ *
+ * Intended for rolling back entries written after a known-good point.
+ * Empty categories are pruned automatically.
+ *
+ * @param timestamp - Epoch-ms cutoff; entries at or after this value are removed.
+ */
 export function removeLearningEntriesAfter(timestamp: number): void {
   rewriteLearningLog((entry) => entry.timestamp < timestamp);
 }
 
+/**
+ * Remove all entries associated with a specific demo session.
+ *
+ * Entries without a `demoId` or with a different `demoId` are kept.
+ * Empty categories are pruned automatically.
+ *
+ * @param demoId - The demo identifier whose entries should be removed.
+ */
 export function removeLearningEntriesForDemo(demoId: string): void {
   rewriteLearningLog((entry) => entry.demoId !== demoId);
 }
 
+/**
+ * Format the learning log as plain text suitable for LLM context injection.
+ *
+ * Each category becomes a block headed by `Category: <name> (count: N)`
+ * followed by bullet entries labeled `[Mistake]`, `[Preference]`, or
+ * `[Success]`.  Solution text is appended when present.
+ *
+ * Categories are separated by blank lines.  Returns `""` when the log is
+ * empty.
+ *
+ * @param maxPerCategory - Maximum entries per category (most recent first);
+ *   defaults to 5.
+ */
 export function getLearningContextText(maxPerCategory = 5): string {
   const log = readLogFile();
   return Object.entries(log.mistakes)

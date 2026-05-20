@@ -4,13 +4,19 @@ import { getConstitution } from "../tools/constitution.js";
 import { buildAnthropicHeaders, resolveAnthropicConfig } from "./anthropic.js";
 import { getLearningContextText } from "./storage.js";
 
+/** Lazily-initialized Gemini client; created on first use when GEMINI_API_KEY is set. */
 let genAI: GoogleGenerativeAI | null = null;
+/** Lazily-initialized OpenAI client; created on first use when OPENAI_API_KEY is set. */
 let openaiClient: OpenAI | null = null;
 
+/** OpenRouter chat completions endpoint. */
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+/** DeepSeek OpenAI-compatible base URL. */
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+/** OpenCode Go-compatible base URL. */
 const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 
+/** System prompt injected into every metacognitive question generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
 
 Scan (weight by blast radius — severity × irreversibility):
@@ -30,28 +36,42 @@ Intervene:
 Output: feedback only — no narration, no preamble, no hedging.
 Minimum words. Maximum signal.`;
 
+/** Static fallback questions returned when the LLM call fails. */
 export const FALLBACK_QUESTIONS = [
   "1. Are you directly addressing the user's goal, or has the plan drifted toward a different problem?",
   "2. If any step is irreversible, what rollback or safe-stop check will protect the work?",
   "3. What unstated assumptions need verification before proceeding?",
 ].join("\n");
 
+/** Input payload for metacognitive question generation and gate decisions. */
 interface QuestionInput {
+  /** Desired outcome the agent wants to achieve. */
   goal: string;
+  /** Proposed approach the agent wants reviewed. */
   plan: string;
+  /** Optional explicit provider/model override; falls back to env-based detection. */
   modelOverride?: { provider?: string; model?: string };
+  /** Original caller request that prompted the check. */
   userPrompt?: string;
+  /** Work already completed or current task status. */
   progress?: string;
+  /** Known risks, unknowns, or decisions needing scrutiny. */
   uncertainties?: string[];
+  /** Additional repository, session, or task details for the reviewer. */
   taskContext?: string;
+  /** Active autosession identifier for history correlation. */
   sessionId?: string;
+  /** Condensed prior check history for the active session. */
   historySummary?: string;
 }
 
+/** Output payload from question generation. */
 interface QuestionOutput {
+  /** Metacognitive questions or feedback text from the LLM. */
   questions: string;
 }
 
+/** Lazily initialize the Gemini SDK client from GEMINI_API_KEY. */
 async function ensureGemini() {
   if (!genAI && process.env.GEMINI_API_KEY) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
@@ -59,6 +79,7 @@ async function ensureGemini() {
   }
 }
 
+/** Lazily initialize the OpenAI SDK client from OPENAI_API_KEY. */
 async function ensureOpenAI() {
   if (!openaiClient && process.env.OPENAI_API_KEY) {
     const { OpenAI } = await import("openai");
@@ -66,6 +87,7 @@ async function ensureOpenAI() {
   }
 }
 
+/** Detect the active LLM provider from environment variables. Priority: DEFAULT_LLM_PROVIDER > ANTHROPIC > GEMINI > OPENAI > OPENROUTER > DEEPSEEK > OPENCODE > gemini (fallback). */
 export function detectProvider(): string {
   if (process.env.DEFAULT_LLM_PROVIDER) return process.env.DEFAULT_LLM_PROVIDER;
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN)
@@ -78,6 +100,7 @@ export function detectProvider(): string {
   return "gemini";
 }
 
+/** Default model identifier for each supported provider. Empty string means the provider requires an explicit --model. */
 export const DEFAULT_MODELS: Record<string, string> = {
   gemini: "gemini-2.5-flash",
   openai: "gpt-4o-mini",
@@ -87,6 +110,12 @@ export const DEFAULT_MODELS: Record<string, string> = {
   opencode: "kimi-k2.6",
 };
 
+/**
+ * Resolve the effective provider and model from overrides, env vars, and defaults.
+ *
+ * Provider resolution order: `modelOverride.provider` → `detectProvider()`.
+ * Model resolution order: `modelOverride.model` → `DEFAULT_MODEL` env → `DEFAULT_MODELS[provider]` → "".
+ */
 function resolveProviderAndModel(modelOverride?: {
   provider?: string;
   model?: string;
@@ -100,6 +129,7 @@ function resolveProviderAndModel(modelOverride?: {
   return { provider, model };
 }
 
+/** Call the Gemini API. Falls back to gemini-2.5-flash if the primary model fails. */
 async function callGemini(model: string, combined: string): Promise<string> {
   await ensureGemini();
   if (!genAI) throw new Error("GEMINI_API_KEY not set.");
@@ -117,6 +147,7 @@ async function callGemini(model: string, combined: string): Promise<string> {
   }
 }
 
+/** Call the OpenAI chat completions API. */
 async function callOpenAI(model: string, combined: string): Promise<string> {
   await ensureOpenAI();
   if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
@@ -127,6 +158,7 @@ async function callOpenAI(model: string, combined: string): Promise<string> {
   return res.choices[0]?.message.content || "";
 }
 
+/** Call the OpenRouter API via direct fetch. Requires an explicit --model. */
 async function callOpenRouter(
   model: string,
   combined: string,
@@ -153,6 +185,7 @@ async function callOpenRouter(
   return data.choices[0]?.message.content || "";
 }
 
+/** Call DeepSeek via its OpenAI-compatible endpoint. */
 async function callDeepSeek(model: string, combined: string): Promise<string> {
   if (!process.env.DEEPSEEK_API_KEY)
     throw new Error("DEEPSEEK_API_KEY not set.");
@@ -164,6 +197,7 @@ async function callDeepSeek(model: string, combined: string): Promise<string> {
   });
 }
 
+/** Call OpenCode via its OpenAI-compatible endpoint. */
 async function callOpenCode(model: string, combined: string): Promise<string> {
   const apiKey = process.env.OPENCODE_API_KEY;
   if (!apiKey) throw new Error("OPENCODE_API_KEY not set.");
@@ -175,6 +209,7 @@ async function callOpenCode(model: string, combined: string): Promise<string> {
   });
 }
 
+/** Adapter wrapping `callAnthropic` with the `callProvider`-compatible signature. */
 async function callAnthropicProvider(
   model: string,
   systemPrompt: string,
@@ -189,6 +224,13 @@ async function callAnthropicProvider(
   });
 }
 
+/**
+ * Dispatch an LLM call to the resolved provider.
+ *
+ * Combines system and user prompts into a single string for providers that do not
+ * separate them natively (all except Anthropic, which passes them independently).
+ * Throws on unknown provider names.
+ */
 async function callProvider(
   provider: string,
   model: string,
@@ -223,6 +265,13 @@ async function callProvider(
   }
 }
 
+/**
+ * Assemble the full context block sent to the metacognitive LLM.
+ *
+ * Includes goal, plan, optional progress/uncertainties/task context, active constitution
+ * rules, prior session history, and learning-pattern history. Learning context is
+ * controlled by the USE_LEARNING_HISTORY env var (default: "true").
+ */
 function buildContextSection(input: QuestionInput): string {
   const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
   const learningContext = useLearning ? getLearningContextText() : "";
@@ -247,6 +296,7 @@ function buildContextSection(input: QuestionInput): string {
     .join("\n");
 }
 
+/** Core question-generation call: resolves provider, builds context, and returns the LLM response. */
 async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
   const responseText = await callProvider(
@@ -258,11 +308,18 @@ async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
   return { questions: responseText };
 }
 
+/** System prompt for the plan-revision LLM call. */
 const PLAN_REVISION_SYSTEM_PROMPT = `AI agent plan reviser.
 
 Address every safety concern; preserve everything else. Prioritize goal alignment when feedback conflicts.
 Output ONLY the revised plan — no preamble, no extra text. One paragraph or short numbered list.`;
 
+/**
+ * Revise a plan to address safety feedback from a prior gate decision.
+ *
+ * Returns only the revised plan text. Called by `vibeGateTool` when the gate blocks
+ * and a retry with revision is warranted.
+ */
 export async function revisePlan(input: {
   goal: string;
   plan: string;
@@ -280,6 +337,7 @@ export async function revisePlan(input: {
   );
 }
 
+/** System prompt for the gate go/no-go decision LLM call. */
 const GATE_SYSTEM_PROMPT = `Go/no-go decision engine for AI agent plans.
 
 Output ONLY one line of valid JSON — no markdown, no extra text:
@@ -290,12 +348,22 @@ Output ONLY one line of valid JSON — no markdown, no extra text:
 - mixed feedback: block unless safety concerns are minor, resolved, or irrelevant to the goal
 - confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
 
+/** Structured gate verdict returned by `getGateDecision`. */
 interface GateDecision {
+  /** Whether the caller may proceed with the plan. */
   proceed: boolean;
+  /** Model-reported confidence in the verdict (0.0–1.0). */
   confidence: number;
+  /** One-sentence explanation for the verdict. */
   reason: string;
 }
 
+/**
+ * Parse a raw LLM response into a structured `GateDecision`.
+ *
+ * Strips markdown fences, extracts the first JSON object, and validates required fields.
+ * Returns a blocking default (`proceed: false`, confidence 0.5) when parsing fails.
+ */
 export function parseGateDecision(raw: string): GateDecision {
   const stripped = raw
     .replace(/^```(?:json)?\n?/m, "")
@@ -323,6 +391,12 @@ export function parseGateDecision(raw: string): GateDecision {
   };
 }
 
+/**
+ * Request a go/no-go gate decision from the configured LLM.
+ *
+ * Uses low temperature (0.1) for deterministic verdicts. The returned `GateDecision`
+ * always has valid fields — `parseGateDecision` applies a blocking default on parse failure.
+ */
 export async function getGateDecision(input: {
   goal: string;
   plan: string;
@@ -341,15 +415,28 @@ export async function getGateDecision(input: {
   return parseGateDecision(raw);
 }
 
+/** Result of an LLM connectivity probe. */
 interface VerifyResult {
+  /** Whether the probe succeeded. */
   ok: boolean;
+  /** Provider that was tested. */
   provider: string;
+  /** Model that was tested (or "(default)"). */
   model: string;
+  /** Round-trip latency in milliseconds (present on success). */
   latency_ms?: number;
+  /** First 200 chars of the LLM response (present on success). */
   response?: string;
+  /** Error message (present on failure). */
   error?: string;
 }
 
+/**
+ * Probe LLM connectivity with a simple echo prompt.
+ *
+ * Returns latency and a truncated response preview on success, or the error
+ * message on failure. Used by `vibe verify` to validate configuration.
+ */
 export async function verifyConnection(opts?: {
   provider?: string;
   model?: string;
@@ -383,6 +470,12 @@ export async function verifyConnection(opts?: {
   }
 }
 
+/**
+ * Generate metacognitive review questions for a plan.
+ *
+ * Returns LLM-generated feedback on success, or the static `FALLBACK_QUESTIONS`
+ * on any error. Never throws — callers always receive a usable result.
+ */
 export async function getMetacognitiveQuestions(
   input: QuestionInput,
 ): Promise<QuestionOutput> {
@@ -393,6 +486,7 @@ export async function getMetacognitiveQuestions(
   }
 }
 
+/** Generic OpenAI-compatible caller for providers sharing the OpenAI chat completions schema. */
 async function callOpenAICompat({
   baseURL,
   apiKey,
@@ -413,22 +507,31 @@ async function callOpenAICompat({
   return response.choices[0]?.message.content || "";
 }
 
+/** Options for the raw Anthropic Messages API call. */
 interface AnthropicCallOptions {
+  /** Model identifier (e.g. "claude-haiku-4-5-20251001"). */
   model: string;
+  /** User-role message content. */
   compiledPrompt: string;
+  /** Optional system prompt passed as a top-level `system` field. */
   systemPrompt?: string;
+  /** Maximum tokens in the response (default: 1024). */
   maxTokens?: number;
+  /** Sampling temperature (default: 0.2). */
   temperature?: number;
 }
 
+/** Extract a human-readable message from an unknown thrown value. */
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Type guard: value is a non-null object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** Safely read a string property from an object, returning undefined if absent or non-string. */
 function getStringProperty(
   value: Record<string, unknown> | undefined,
   key: string,
@@ -437,6 +540,7 @@ function getStringProperty(
   return typeof property === "string" ? property : undefined;
 }
 
+/** Type guard: value is an Anthropic text content block. */
 function isAnthropicTextBlock(
   value: unknown,
 ): value is { type: "text"; text: string } {
@@ -445,6 +549,12 @@ function isAnthropicTextBlock(
   );
 }
 
+/**
+ * Throw a descriptive error for a failed Anthropic API response.
+ *
+ * Includes the Anthropic request ID when available and maps common status codes
+ * (401/403 → auth error, 429 → rate limit with retry-after) to specific messages.
+ */
 function throwAnthropicError(
   response: Response,
   parsedObject: Record<string, unknown> | undefined,
@@ -478,6 +588,7 @@ function throwAnthropicError(
   );
 }
 
+/** Extract the first text block from a successful Anthropic Messages API response. */
 function extractAnthropicText(
   parsedObject: Record<string, unknown> | undefined,
 ): string {
@@ -492,6 +603,13 @@ function extractAnthropicText(
   );
 }
 
+/**
+ * Call the Anthropic Messages API directly via fetch.
+ *
+ * Uses `resolveAnthropicConfig` for base URL and auth, and `buildAnthropicHeaders`
+ * for the required headers. System prompt is passed as a top-level field, not
+ * embedded in the user message. Throws on non-2xx responses.
+ */
 async function callAnthropic({
   model,
   compiledPrompt,
