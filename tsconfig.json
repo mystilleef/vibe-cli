@@ -9,7 +9,12 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "skipLibCheck": true,
-    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "strictBuiltinIteratorReturn": true,
+    "rewriteRelativeImportExtensions": true,
     "types": ["bun-types"]
   },
   "include": ["src/**/*", "tests/**/*"]
