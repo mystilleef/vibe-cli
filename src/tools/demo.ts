@@ -13,7 +13,7 @@ import { resolveAutosession } from "../utils/autosession.js";
 import { loadHistory } from "../utils/state.js";
 import { removeLearningEntriesForDemo } from "../utils/storage.js";
 import { getConstitution, resetConstitution } from "./constitution.js";
-import { vibeGateTool } from "./vibeGate.js";
+import { type VibeGateOutput, vibeGateTool } from "./vibeGate.js";
 import { vibeLearnTool } from "./vibeLearn.js";
 
 // ── Terminal formatting helpers ────────────────────────────────────────────
@@ -54,6 +54,24 @@ function printQuestions(text: string) {
   }
 }
 
+function printGateResult(result: VibeGateOutput) {
+  ln(bold("  Feedback:"));
+  ln();
+  printQuestions(result.questions);
+  ln();
+  ln(
+    dim("  Decision: ") +
+      (result.proceed ? "✓ proceed" : "✗ blocked") +
+      dim("  confidence=") +
+      result.confidence.toFixed(2) +
+      dim("  reason=") +
+      result.reason,
+  );
+  ln(
+    `${dim("  JSON:")} ${JSON.stringify({ proceed: result.proceed, confidence: result.confidence, reason: result.reason })}`,
+  );
+}
+
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** Run `fn` while displaying a terminal spinner with `label`; clears the spinner line on completion. */
@@ -77,13 +95,14 @@ export interface DemoOptions {
 }
 
 /**
- * Run the three-step interactive demo in the current terminal.
+ * Run the four-step interactive demo in the current terminal.
  *
  * Steps:
  * 1. **Constitution** – set a sample safety rule and display it.
  * 2. **Vibe check** – submit a risky migration plan for metacognitive
  *    review and print the LLM feedback.
- * 3. **Learn** – record the identified mistake pattern and print the
+ * 3. **Vibe check** – submit a safe migration plan for approval.
+ * 4. **Learn** – record the identified success pattern and print the
  *    stored learning entry.
  *
  * All demo data (constitution rules, learning entries tagged with a
@@ -105,7 +124,41 @@ export async function runDemo({ modelOverride }: DemoOptions = {}) {
   ln();
   ln(bold(magenta("  ▸ vibe demo")));
   ln(dim("  Metacognitive AI agent oversight — live walkthrough"));
-  ln(dim("  Three steps: constitution → check → learn"));
+  ln(
+    dim(
+      "  Four steps: constitution → check (blocked) → check (approved) → learn",
+    ),
+  );
+
+  const checkVibe = async (
+    step: number,
+    title: string,
+    cmd: string,
+    input: {
+      goal: string;
+      plan: string;
+      progress: string;
+      uncertainties: string[];
+    },
+  ) => {
+    stepHeader(step, 4, title, cmd);
+    ln(dim("  Goal:     ") + input.goal);
+    ln(dim("  Plan:     ") + input.plan);
+    ln(dim("  Progress: ") + input.progress);
+    ln(
+      dim("  Unknowns: ") +
+        (input.uncertainties.length
+          ? input.uncertainties.join(" / ")
+          : "(none)"),
+    );
+    ln();
+    return withSpinner("Asking LLM for metacognitive feedback", () =>
+      vibeGateTool({
+        ...input,
+        ...(modelOverride !== undefined && { modelOverride }),
+      }),
+    );
+  };
 
   try {
     // ── Step 1: Constitution ──────────────────────────────────────────────
@@ -114,7 +167,7 @@ export async function runDemo({ modelOverride }: DemoOptions = {}) {
 
     stepHeader(
       1,
-      3,
+      4,
       "Set a constitution rule",
       `vibe constitution set --rule "..."`,
     );
@@ -125,68 +178,56 @@ export async function runDemo({ modelOverride }: DemoOptions = {}) {
     ln(indentJSON({ session: sessionId, rules: getConstitution() }));
 
     // ── Step 2: Vibe Check ────────────────────────────────────────────────
-    const checkInput = {
-      goal: "Migrate 50M user records to the new schema before Monday deployment",
-      plan: "Run ALTER TABLE to add columns, backfill all rows with UPDATE statements, then DROP the legacy columns to finalize the schema.",
-      progress:
-        "Schema analysis complete. Migration scripts written. Dry-run tested on 1k rows.",
-      uncertainties: [
-        "No rollback plan if the migration fails mid-way through the 50M rows",
-        "Production data volume untested — dry-run covered only 1k rows",
-      ],
-      ...(modelOverride !== undefined && { modelOverride }),
-    };
-
-    stepHeader(
+    const checkResult = await checkVibe(
       2,
-      3,
       "Run a vibe check on a risky plan",
       'vibe check --goal "..." --plan "..." --uncertainty "..."',
+      {
+        goal: "Migrate 50M user records to the new schema before Monday deployment",
+        plan: "Run ALTER TABLE to add columns, backfill all rows with UPDATE statements, then DROP the legacy columns to finalize the schema.",
+        progress:
+          "Schema analysis complete. Migration scripts written. Dry-run tested on 1k rows.",
+        uncertainties: [
+          "No rollback plan if the migration fails mid-way through the 50M rows",
+          "Production data volume untested — dry-run covered only 1k rows",
+        ],
+      },
     );
 
-    ln(dim("  Goal:     ") + checkInput.goal);
-    ln(dim("  Plan:     ") + checkInput.plan);
-    ln(dim("  Progress: ") + checkInput.progress);
-    ln(dim("  Unknowns: ") + checkInput.uncertainties.join(" / "));
-    ln();
+    printGateResult(checkResult);
 
-    const checkResult = await withSpinner(
-      "Asking LLM for metacognitive feedback",
-      () => vibeGateTool(checkInput),
+    // ── Step 3: Vibe Check (approved) ─────────────────────────────────────
+    const safeResult = await checkVibe(
+      3,
+      "Run a vibe check on a safe plan",
+      'vibe check --goal "..." --plan "..."',
+      {
+        goal: "Migrate 50M user records to the new schema",
+        plan: "Write and test a rollback script, dry-run on 1k rows, validate rollback on a 1M-row shadow copy, then execute migration in batches of 100k rows with staged rollout (1% → 10% → 100%) and monitoring.",
+        progress:
+          "Schema analysis complete. Migration scripts written. Dry-run tested on 1k rows. Rollback script validated on 1M-row shadow copy — full revert confirmed in <30s.",
+        uncertainties: [],
+      },
     );
 
-    ln(bold("  Feedback:"));
-    ln();
-    printQuestions(checkResult.questions);
-    ln();
-    ln(
-      dim("  Decision: ") +
-        (checkResult.proceed ? "✓ proceed" : "✗ blocked") +
-        dim("  confidence=") +
-        checkResult.confidence.toFixed(2) +
-        dim("  reason=") +
-        checkResult.reason,
-    );
-    ln(
-      `${dim("  JSON:")} ${JSON.stringify({ proceed: checkResult.proceed, confidence: checkResult.confidence, reason: checkResult.reason })}`,
-    );
+    printGateResult(safeResult);
 
-    // ── Step 3: Learn ─────────────────────────────────────────────────────
+    // ── Step 4: Learn ─────────────────────────────────────────────────────
     const learnInput = {
       mistake:
-        "Agent planned a 50M-row schema migration with DROP operations and no rollback strategy.",
+        "Safe migration pattern: rollback script, dry-run, staged rollout with monitoring.",
       solution:
-        "Write and test a rollback script before executing any irreversible schema change on production data.",
-      category: "Premature Implementation",
-      type: "mistake" as const,
+        "Always write and test a rollback script, dry-run on a small batch, then execute in staged batches with monitoring.",
+      category: "Safe Migration",
+      type: "success" as const,
       demoId,
     };
 
     stepHeader(
-      3,
-      3,
+      4,
+      4,
       "Record the pattern for future sessions",
-      `vibe learn --mistake "..." --category "${learnInput.category}" --solution "..."`,
+      `vibe learn --mistake "..." --category "${learnInput.category}" --solution "..." --type success`,
     );
 
     const learnResult = await vibeLearnTool(learnInput);

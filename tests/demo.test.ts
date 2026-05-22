@@ -125,6 +125,8 @@ describe("runDemo", () => {
     responseQueue.push(
       "Question one\n\nQuestion two",
       gateDecision(false, 0.42, "missing rollback"),
+      "Safe plan feedback",
+      gateDecision(true, 0.95, "safe migration plan"),
     );
     const legacyEntry = addLearningEntry(
       "Legacy user learning",
@@ -145,10 +147,11 @@ describe("runDemo", () => {
 
     const output = visibleOutput();
     expect(output).toContain("▸ vibe demo");
-    expect(output).toContain("Step 1/3: Set a constitution rule");
-    expect(output).toContain("Step 2/3: Run a vibe check on a risky plan");
+    expect(output).toContain("Step 1/4: Set a constitution rule");
+    expect(output).toContain("Step 2/4: Run a vibe check on a risky plan");
+    expect(output).toContain("Step 3/4: Run a vibe check on a safe plan");
     expect(output).toContain(
-      "Step 3/3: Record the pattern for future sessions",
+      "Step 4/4: Record the pattern for future sessions",
     );
     expect(output).toContain("Question one");
     expect(output).toContain("Question two");
@@ -194,7 +197,7 @@ describe("runDemo", () => {
     expect(summary[0]?.recentExample.timestamp).toBeGreaterThanOrEqual(
       legacyEntry.timestamp,
     );
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(4);
     expect(requests[0]?.model).toBe("default-demo-model");
     expect(requests[1]?.messages?.[0]?.content).toContain(
       "Feedback: Question one\n\nQuestion two",
@@ -205,6 +208,8 @@ describe("runDemo", () => {
     responseQueue.push(
       "Override provider questions",
       gateDecision(true, 0.91, "safe enough"),
+      "Override safe plan feedback",
+      gateDecision(true, 0.97, "safe migration"),
     );
 
     await runDemo({
@@ -212,6 +217,8 @@ describe("runDemo", () => {
     });
 
     expect(requests.map((request) => request.model)).toEqual([
+      "demo-llm",
+      "demo-llm",
       "demo-llm",
       "demo-llm",
     ]);
@@ -234,11 +241,60 @@ describe("runDemo", () => {
     ).rejects.toThrow(/Unknown provider/);
 
     expect(requests).toHaveLength(0);
-    expect(visibleOutput()).toContain("Step 1/3: Set a constitution rule");
+    expect(visibleOutput()).toContain("Step 1/4: Set a constitution rule");
     expect(visibleOutput()).toContain(
-      "Step 2/3: Run a vibe check on a risky plan",
+      "Step 2/4: Run a vibe check on a risky plan",
     );
     expect(getConstitution()).toEqual(["Preserve provider failure rules"]);
+    expect(getLearningEntries()).toEqual({});
+  });
+
+  test("propagates safe plan check failure and restores state", async () => {
+    resetConstitution(["Keep pre-demo rules"]);
+    responseQueue.push(
+      "Risky questions",
+      gateDecision(false, 0.3, "missing rollback"),
+      "Safe fallback questions",
+    );
+    let fetchCount = 0;
+    onFetchRequest = (count) => {
+      fetchCount = count;
+      if (count === 4) {
+        throw new Error("Simulated LLM failure on safe plan");
+      }
+    };
+
+    await expect(runDemo()).rejects.toThrow(
+      "Simulated LLM failure on safe plan",
+    );
+
+    const output = visibleOutput();
+    expect(output).toContain("Step 2/4: Run a vibe check on a risky plan");
+    expect(output).toContain("Step 3/4: Run a vibe check on a safe plan");
+    expect(output).toContain("✗ blocked");
+    expect(output).not.toContain("✓ Demo complete.");
+    expect(getConstitution()).toEqual(["Keep pre-demo rules"]);
+    expect(getLearningEntries()).toEqual({});
+    expect(fetchCount).toBe(4);
+  });
+
+  test("prints safe plan questions and proceed decision JSON", async () => {
+    responseQueue.push(
+      "Risky feedback",
+      gateDecision(false, 0.4, "no rollback"),
+      "Safe question A\nSafe question B",
+      gateDecision(true, 0.97, "thorough plan"),
+    );
+
+    await runDemo();
+
+    const output = visibleOutput();
+    expect(output).toContain("Safe question A");
+    expect(output).toContain("Safe question B");
+    expect(output).toContain(
+      'JSON: {"proceed":true,"confidence":0.97,"reason":"thorough plan"}',
+    );
+    expect(getConstitution()).toEqual([]);
     expect(getLearningEntries()).toEqual({});
   });
 });
