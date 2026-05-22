@@ -4,16 +4,18 @@
   "description": "Metacognitive AI agent oversight — pure CLI with JSON I/O",
   "type": "module",
   "bin": {
-    "vibe": "dist/cli.js"
+    "vibe": "dist/vibe"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --outfile dist/cli.js --target bun --minify && chmod +x dist/cli.js",
-    "dev": "bun run src/cli.ts",
-    "verify": "bun fix && bun check && bun run build && bun coverage",
-    "coverage": "bun test --coverage",
-    "check": "biome check --error-on-warnings . && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --error-on-warnings .",
     "fix": "biome check --write --unsafe .",
-    "migrate": "biome migrate --write"
+    "migrate": "biome migrate --write",
+    "coverage": "bun test --coverage",
+    "dev": "bun run src/cli.ts",
+    "build": "bun build --compile --minify src/cli.ts --outfile dist/vibe",
+    "check": "bun lint && bun typecheck",
+    "verify": "bun migrate && bun fix && bun typecheck && bun run build && bun coverage"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
