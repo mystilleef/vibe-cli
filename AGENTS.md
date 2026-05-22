@@ -31,15 +31,10 @@ project.
 
 ### Key commands
 
-- `bun install`: Install project dependencies.
-- `bun run build`: Compile TypeScript to `dist/cli.js` and set
-  executable permissions.
-- `bun dev`: Run the CLI directly from source.
 - `bun verify`: Execute full verification suite (lint, type-check,
   build, tests).
 - `bun coverage`: Run tests and generate coverage reports.
 - `bun check`: Run non-mutating lint and type-checks.
-- `bun fix`: Apply automated lint and formatting fixes.
 
 ### CLI usage
 
