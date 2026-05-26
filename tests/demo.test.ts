@@ -249,6 +249,30 @@ describe("runDemo", () => {
     expect(fetchCount).toBe(4);
   });
 
+  test("clears stale demo entries from a previous crashed run before writing", async () => {
+    // Seed a stale entry that matches the demo's mistake text — simulates a
+    // crashed prior run whose finally block never executed.
+    addLearningEntry(
+      "Safe migration pattern: rollback script, dry-run, staged rollout with monitoring.",
+      "Safe Migration",
+      "Use staged rollout.",
+      "success",
+      "demo-stale-crashed-run",
+    );
+    responseQueue.push(
+      "Risky feedback",
+      gateDecision(false, 0.4, "no rollback"),
+      "Safe feedback",
+      gateDecision(true, 0.96, "safe plan"),
+    );
+
+    await runDemo();
+
+    // Stale entry gone and no demo entry leaked into user state.
+    expect(getLearningEntries()["Safe Migration"]).toBeUndefined();
+    expect(getLearningEntries()).toEqual({});
+  });
+
   test("prints safe plan questions and proceed decision JSON", async () => {
     responseQueue.push(
       "Risky feedback",

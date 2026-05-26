@@ -11,7 +11,10 @@
 
 import { resolveAutosession } from "../utils/autosession.js";
 import { loadHistory } from "../utils/state.js";
-import { removeLearningEntriesForDemo } from "../utils/storage.js";
+import {
+  removeLearningEntriesForDemo,
+  removeStaleDemoEntries,
+} from "../utils/storage.js";
 import { getConstitution, resetConstitution } from "./constitution.js";
 import { type VibeGateOutput, vibeGateTool } from "./vibeGate.js";
 import { vibeLearnTool } from "./vibeLearn.js";
@@ -161,6 +164,9 @@ export async function runDemo({ modelOverride }: DemoOptions = {}) {
   };
 
   try {
+    // Clean up stale demo entries from crashed runs to prevent isSimilar() suppression.
+    removeStaleDemoEntries();
+
     // ── Step 1: Constitution ──────────────────────────────────────────────
     const rule =
       "Never execute irreversible operations without a tested rollback plan.";

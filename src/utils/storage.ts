@@ -161,6 +161,18 @@ export function removeLearningEntriesForDemo(demoId: string): void {
 }
 
 /**
+ * Remove all demo entries from crashed runs.
+ *
+ * Clears stale entries whose `demo_id` is non-null, preventing
+ * `isSimilar()` suppression in subsequent demo executions.
+ */
+export function removeStaleDemoEntries(): void {
+  withDatabase((db) =>
+    db.prepare("DELETE FROM learning_entries WHERE demo_id IS NOT NULL").run(),
+  );
+}
+
+/**
  * Format the learning log as plain text suitable for LLM context injection.
  *
  * Each category becomes a block headed by `Category: <name> (count: N)`
