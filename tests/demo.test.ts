@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,11 +80,6 @@ function visibleOutput(): string {
     output += stdout[i];
   }
   return output;
-}
-
-function learningLogPath(): string {
-  if (home === undefined) throw new Error("temp home not initialized");
-  return join(home.dataRoot, "vibe-log.json");
 }
 
 beforeEach(async () => {
@@ -172,23 +166,6 @@ describe("runDemo", () => {
         (entry) => entry.demoId === undefined,
       ),
     ).toBe(true);
-    const persisted = JSON.parse(readFileSync(learningLogPath(), "utf8")) as {
-      mistakes: Record<
-        string,
-        { count: number; examples: Array<{ mistake: string; demoId?: string }> }
-      >;
-    };
-    expect(persisted.mistakes["Premature Implementation"]?.count).toBe(2);
-    expect(
-      persisted.mistakes["Premature Implementation"]?.examples.map(
-        (entry) => entry.mistake,
-      ),
-    ).toEqual(["Legacy user learning", "Concurrent user learning"]);
-    expect(
-      persisted.mistakes["Premature Implementation"]?.examples.every(
-        (entry) => entry.demoId === undefined,
-      ),
-    ).toBe(true);
     const summary = getLearningCategorySummary();
     expect(summary).toHaveLength(1);
     expect(summary[0]?.category).toBe("Premature Implementation");
@@ -225,12 +202,6 @@ describe("runDemo", () => {
     expect(visibleOutput()).toContain("✓ proceed");
     expect(getConstitution()).toEqual([]);
     expect(getLearningEntries()).toEqual({});
-    const logPath = learningLogPath();
-    expect(existsSync(logPath)).toBe(true);
-    const persisted = JSON.parse(readFileSync(logPath, "utf8")) as {
-      mistakes: Record<string, unknown>;
-    };
-    expect(persisted.mistakes).toEqual({});
   });
 
   test("propagates provider failures after the constitution step", async () => {

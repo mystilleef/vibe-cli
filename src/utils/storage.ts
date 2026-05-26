@@ -1,11 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { ensureDataDir, getDataRoot } from "./autosession.js";
-
-/** Return the absolute path to the learning log (`~/.vibe-cli/vibe-log.json`). */
-function getLogFile(): string {
-  return path.join(getDataRoot(), "vibe-log.json");
-}
+import { withDatabase } from "./database.js";
 
 /** Discriminator for the kind of learning entry. */
 export type LearningType = "mistake" | "preference" | "success";
@@ -29,60 +22,35 @@ export interface LearningEntry {
   demoId?: string;
 }
 
-/**
- * Top-level on-disk schema for `vibe-log.json`.
- *
- * `mistakes` is keyed by category; each value holds a running `count`, the
- * full `examples` array, and a `lastUpdated` epoch-ms.  The root
- * `lastUpdated` tracks the most recent write to any category.
- */
-interface VibeLog {
-  mistakes: Record<
-    string,
-    { count: number; examples: LearningEntry[]; lastUpdated: number }
-  >;
-  lastUpdated: number;
+interface LearningRow {
+  type: LearningType;
+  category: string;
+  mistake: string;
+  solution: string | null;
+  timestamp: number;
+  demo_id: string | null;
 }
 
-/** Produce a blank log used when no file exists or the file is corrupt. */
-function freshLog(): VibeLog {
-  return { mistakes: {}, lastUpdated: Date.now() };
+function rowToEntry(row: LearningRow): LearningEntry {
+  return {
+    type: row.type,
+    category: row.category,
+    mistake: row.mistake,
+    ...(row.solution !== null && { solution: row.solution }),
+    timestamp: row.timestamp,
+    ...(row.demo_id !== null && { demoId: row.demo_id }),
+  };
 }
 
-/**
- * Read and parse the log file, creating it on first access.
- *
- * Returns a fresh log without writing back when the file contains invalid
- * JSON, so callers always receive a valid structure even on corruption.
- */
-function readLogFile(): VibeLog {
-  ensureDataDir();
-  const logFile = getLogFile();
-  if (!fs.existsSync(logFile)) {
-    const log = freshLog();
-    writeLogFile(log);
-    return log;
-  }
-  try {
-    return JSON.parse(fs.readFileSync(logFile, "utf8")) as VibeLog;
-  } catch {
-    return freshLog();
-  }
-}
-
-/**
- * Serialize the log to disk.
- *
- * Swallows write errors (logs to stderr) so callers never throw on disk
- * failures.
- */
-function writeLogFile(data: VibeLog): void {
-  ensureDataDir();
-  try {
-    fs.writeFileSync(getLogFile(), JSON.stringify(data, null, 2), "utf8");
-  } catch (error) {
-    console.error("Error writing vibe log:", error);
-  }
+function readLearningEntries(): LearningEntry[] {
+  return withDatabase((db) =>
+    db
+      .query<LearningRow, []>(
+        "SELECT type, category, mistake, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
+      )
+      .all()
+      .map(rowToEntry),
+  );
 }
 
 /**
@@ -105,9 +73,15 @@ export function addLearningEntry(
   type: LearningType = "mistake",
   demoId?: string,
 ): LearningEntry {
-  const log = readLogFile();
   const now = Date.now();
-  const entry: LearningEntry = {
+  withDatabase((db) =>
+    db
+      .prepare(
+        "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(type, category, mistake, solution ?? null, now, demoId ?? null),
+  );
+  return {
     type,
     category,
     mistake,
@@ -115,16 +89,6 @@ export function addLearningEntry(
     timestamp: now,
     ...(demoId !== undefined && { demoId }),
   };
-
-  if (!log.mistakes[category]) {
-    log.mistakes[category] = { count: 0, examples: [], lastUpdated: now };
-  }
-  log.mistakes[category].count += 1;
-  log.mistakes[category].examples.push(entry);
-  log.mistakes[category].lastUpdated = now;
-  log.lastUpdated = now;
-  writeLogFile(log);
-  return entry;
 }
 
 /**
@@ -134,9 +98,13 @@ export function addLearningEntry(
  * when the log is empty or was just created.
  */
 export function getLearningEntries(): Record<string, LearningEntry[]> {
-  const log = readLogFile();
-  return Object.fromEntries(
-    Object.entries(log.mistakes).map(([cat, data]) => [cat, data.examples]),
+  return readLearningEntries().reduce<Record<string, LearningEntry[]>>(
+    (grouped, entry) => {
+      if (!grouped[entry.category]) grouped[entry.category] = [];
+      grouped[entry.category]?.push(entry);
+      return grouped;
+    },
+    {},
   );
 }
 
@@ -151,47 +119,15 @@ export function getLearningCategorySummary(): Array<{
   count: number;
   recentExample: LearningEntry;
 }> {
-  const log = readLogFile();
-  return Object.entries(log.mistakes)
-    .flatMap(([category, data]) => {
-      const recentExample = data.examples.at(-1);
+  const grouped = getLearningEntries();
+  return Object.entries(grouped)
+    .flatMap(([category, examples]) => {
+      const recentExample = examples.at(-1);
       return recentExample === undefined
         ? []
-        : [
-            {
-              category,
-              count: data.count,
-              recentExample,
-            },
-          ];
+        : [{ category, count: examples.length, recentExample }];
     })
     .sort((a, b) => b.count - a.count);
-}
-
-/**
- * Rewrite the log keeping only entries that satisfy `filterEntry`.
- *
- * Deletes categories that become empty and recalculates `count` and
- * `lastUpdated` for survivors.  Used internally by the public removal
- * functions.
- */
-function rewriteLearningLog(
-  filterEntry: (entry: LearningEntry) => boolean,
-): void {
-  const log = readLogFile();
-  for (const cat of Object.keys(log.mistakes)) {
-    const data = log.mistakes[cat];
-    if (!data) continue;
-    data.examples = data.examples.filter(filterEntry);
-    if (data.examples.length === 0) {
-      delete log.mistakes[cat];
-    } else {
-      data.count = data.examples.length;
-      data.lastUpdated = Math.max(...data.examples.map((e) => e.timestamp));
-    }
-  }
-  log.lastUpdated = Date.now();
-  writeLogFile(log);
 }
 
 /**
@@ -203,7 +139,11 @@ function rewriteLearningLog(
  * @param timestamp - Epoch-ms cutoff; entries at or after this value are removed.
  */
 export function removeLearningEntriesAfter(timestamp: number): void {
-  rewriteLearningLog((entry) => entry.timestamp < timestamp);
+  withDatabase((db) =>
+    db
+      .prepare("DELETE FROM learning_entries WHERE timestamp >= ?")
+      .run(timestamp),
+  );
 }
 
 /**
@@ -215,7 +155,9 @@ export function removeLearningEntriesAfter(timestamp: number): void {
  * @param demoId - The demo identifier whose entries should be removed.
  */
 export function removeLearningEntriesForDemo(demoId: string): void {
-  rewriteLearningLog((entry) => entry.demoId !== demoId);
+  withDatabase((db) =>
+    db.prepare("DELETE FROM learning_entries WHERE demo_id = ?").run(demoId),
+  );
 }
 
 /**
@@ -232,10 +174,9 @@ export function removeLearningEntriesForDemo(demoId: string): void {
  *   defaults to 5.
  */
 export function getLearningContextText(maxPerCategory = 5): string {
-  const log = readLogFile();
-  return Object.entries(log.mistakes)
-    .map(([category, data]) => {
-      const examples = [...data.examples]
+  return Object.entries(getLearningEntries())
+    .map(([category, examples]) => {
+      const text = [...examples]
         .sort((a, b) => a.timestamp - b.timestamp)
         .slice(-maxPerCategory)
         .map((ex) => {
@@ -249,7 +190,7 @@ export function getLearningContextText(maxPerCategory = 5): string {
           return `- [${label}] ${ex.mistake}${sol}`;
         })
         .join("\n");
-      return `Category: ${category} (count: ${data.count})\n${examples}`;
+      return `Category: ${category} (count: ${examples.length})\n${text}`;
     })
     .join("\n\n")
     .trim();

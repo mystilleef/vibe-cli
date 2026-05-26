@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openVibeDatabase } from "../src/utils/database";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;
@@ -74,8 +76,20 @@ describe("addToHistory", () => {
     for (let i = 0; i < 11; i++) {
       await addToHistory("cap", { goal: `g${i}`, plan: `p${i}` }, `out${i}`);
     }
-    // After 11 pushes, oldest (g0) should have been shifted out
-    // Verify by checking summary only shows 5 of the last 10 but not the 11th oldest
+
+    const handle = openVibeDatabase({ legacyImports: "none" });
+    const count = handle.db
+      .query("SELECT count(*) AS count FROM interactions WHERE session_id = ?")
+      .get("cap") as { count: number };
+    const oldest = handle.db
+      .query(
+        "SELECT goal FROM interactions WHERE session_id = ? ORDER BY timestamp ASC, id ASC LIMIT 1",
+      )
+      .get("cap") as { goal: string };
+
+    expect(count.count).toBe(10);
+    expect(oldest.goal).toBe("g1");
+
     const { getHistorySummary } = await getState();
     const summary = getHistorySummary("cap");
     expect(summary).not.toContain("g0");
@@ -87,10 +101,25 @@ describe("addToHistory", () => {
     await loadHistory();
     await addToHistory("persist", { goal: "persist-goal", plan: "pp" }, "out");
 
-    // Re-load simulates a fresh process read
     await loadHistory();
     const summary = getHistorySummary("persist");
     expect(summary).toContain("persist-goal");
+  });
+
+  test("writes interactions to SQLite without recreating history.json", async () => {
+    const { addToHistory, loadHistory } = await getState();
+    await loadHistory();
+    await addToHistory("sqlite", { goal: "sqlite-goal", plan: "p" }, "out");
+
+    const handle = openVibeDatabase({ legacyImports: "none" });
+    const row = handle.db
+      .query(
+        "SELECT goal, output FROM interactions WHERE session_id = ? LIMIT 1",
+      )
+      .get("sqlite") as { goal: string; output: string };
+
+    expect(row).toEqual({ goal: "sqlite-goal", output: "out" });
+    expect(existsSync(join(home.dataRoot, "history.json"))).toBe(false);
   });
 });
 
@@ -101,6 +130,11 @@ describe("clearSession", () => {
     await loadHistory();
     await addToHistory("del", { goal: "g", plan: "p" }, "o");
     await clearSession("del");
+    const handle = openVibeDatabase({ legacyImports: "none" });
+    const count = handle.db
+      .query("SELECT count(*) AS count FROM interactions WHERE session_id = ?")
+      .get("del") as { count: number };
+    expect(count.count).toBe(0);
     expect(getHistorySummary("del")).toBe("");
   });
 

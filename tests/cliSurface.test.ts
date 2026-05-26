@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -90,6 +91,24 @@ function expectHelpWithoutSession(command: string[]): void {
 }
 
 describe("CLI autosession surface", () => {
+  test("production storage modules do not import legacy migration helpers", async () => {
+    const productionModules = [
+      "src/utils/autosession.ts",
+      "src/utils/storage.ts",
+      "src/utils/state.ts",
+      "src/tools/constitution.ts",
+      "src/cli.ts",
+    ];
+
+    for (const modulePath of productionModules) {
+      const source = await readFile(join(originalCwd, modulePath), "utf8");
+      expect(source).not.toContain("legacyMigration");
+      expect(source).not.toContain("vibe-log.json");
+      expect(source).not.toContain("constitution.json");
+      expect(source).not.toContain("history.json");
+    }
+  });
+
   test("affected help output omits public --session options", () => {
     expectHelpWithoutSession(["check"]);
     expectHelpWithoutSession(["learn"]);
@@ -118,27 +137,31 @@ describe("CLI autosession surface", () => {
   test("session command emits JSON and refreshes lastAccessedAt", async () => {
     const home = await useTempHome();
     const cwd = await createCwd();
-    const file = join(home.dataRoot, "sessions", `${getCwdKey(cwd)}.json`);
+    const cwdKey = getCwdKey(cwd);
 
     const first = runCli(["session"], { cwd, home: home.home });
     const firstJson = JSON.parse(first.stdout) as { session: string };
+    const db = new Database(join(home.dataRoot, "vibe.db"));
     const oldTimestamp = new Date(Date.now() - 1000).toISOString();
-    const record = JSON.parse(await readFile(file, "utf8"));
-    await mkdir(join(home.dataRoot, "sessions"), { recursive: true });
-    await writeFile(
-      file,
-      JSON.stringify({ ...record, lastAccessedAt: oldTimestamp }),
-    );
+    db.prepare(
+      "UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?",
+    ).run(oldTimestamp, cwdKey);
 
     const second = runCli(["session"], { cwd, home: home.home });
     const secondJson = JSON.parse(second.stdout) as { session: string };
-    const touched = JSON.parse(await readFile(file, "utf8"));
+    const touched = db
+      .query<{ last_accessed_at: string }, [string]>(
+        "SELECT last_accessed_at FROM sessions WHERE cwd_key = ?",
+      )
+      .get(cwdKey);
+    db.close();
 
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
     expect(firstJson.session).toMatch(/^[0-9a-f-]{36}$/);
     expect(secondJson.session).toBe(firstJson.session);
-    expect(Date.parse(touched.lastAccessedAt)).toBeGreaterThan(
+    expect(touched).not.toBeNull();
+    expect(Date.parse(touched?.last_accessed_at ?? "")).toBeGreaterThan(
       Date.parse(oldTimestamp),
     );
   });

@@ -224,33 +224,25 @@ describe("removeLearningEntriesAfter — edge cases", () => {
   });
 });
 
-describe("readLogFile corruption recovery", () => {
-  test("returns fresh log when JSON is corrupt without crashing", () => {
+describe("legacy log corruption recovery", () => {
+  test("ignores corrupt legacy JSON without crashing", () => {
     const logPath = path.join(home.dataRoot, "vibe-log.json");
     fs.mkdirSync(home.dataRoot, { recursive: true });
     fs.writeFileSync(logPath, "not valid json {{{", "utf8");
 
-    // Any operation that reads the log should recover gracefully
-    const entries = getLearningEntries();
-    expect(entries).toEqual({});
-
-    // The corrupt file remains on disk (catch returns freshLog without write-back)
-    const raw = fs.readFileSync(logPath, "utf8");
-    expect(raw).toBe("not valid json {{{");
+    expect(getLearningEntries()).toEqual({});
+    expect(fs.readFileSync(logPath, "utf8")).toBe("not valid json {{{");
   });
 
-  test("recovers on a subsequent write after corrupt log replacement", () => {
+  test("keeps later SQLite writes independent from corrupt legacy JSON", () => {
     const logPath = path.join(home.dataRoot, "vibe-log.json");
     fs.mkdirSync(home.dataRoot, { recursive: true });
     fs.writeFileSync(logPath, "garbage", "utf8");
 
-    // Write-through: addLearningEntry calls readLogFile → recovers → writes
     addLearningEntry("post-recovery", "recov");
 
-    const entries = getLearningEntries();
-    expect(entries.recov).toHaveLength(1);
-    const raw = JSON.parse(fs.readFileSync(logPath, "utf8"));
-    expect(raw.mistakes.recov.count).toBe(1);
+    expect(getLearningEntries().recov).toHaveLength(1);
+    expect(fs.readFileSync(logPath, "utf8")).toBe("garbage");
   });
 });
 
@@ -311,34 +303,15 @@ describe("getLearningContextText", () => {
   });
 });
 
-describe("writeLogFile error handling", () => {
-  test("logs error and does not throw when write fails", () => {
-    const originalWriteFileSync = fs.writeFileSync;
-    const errors: unknown[] = [];
-    const originalConsoleError = console.error;
-    console.error = (...args: unknown[]) => {
-      errors.push(...args);
-    };
+describe("SQLite write error handling", () => {
+  test("persists without writing legacy JSON", () => {
+    addLearningEntry("sqlite-only", "cat");
 
-    try {
-      // Write a valid log first so readLogFile succeeds
-      addLearningEntry("before-failure", "cat");
-
-      // Then mock writeFileSync to throw
-      fs.writeFileSync = () => {
-        throw new Error("disk full");
-      };
-
-      // Should not throw despite write failure
-      expect(() => {
-        addLearningEntry("during-failure", "cat");
-      }).not.toThrow();
-
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0]).toContain("Error writing vibe log:");
-    } finally {
-      fs.writeFileSync = originalWriteFileSync;
-      console.error = originalConsoleError;
-    }
+    expect(getLearningEntries().cat?.map((entry) => entry.mistake)).toEqual([
+      "sqlite-only",
+    ]);
+    expect(fs.existsSync(path.join(home.dataRoot, "vibe-log.json"))).toBe(
+      false,
+    );
   });
 });

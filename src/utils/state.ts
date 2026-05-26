@@ -1,82 +1,76 @@
-/**
- * In-memory interaction history persisted to `history.json` in the
- * data-root directory.  Each session accumulates up to 10 recent
- * interactions; older entries are evicted FIFO on append.
- */
-
-import fs from "node:fs/promises";
-import path from "node:path";
+import type Database from "bun:sqlite";
 import type { VibeCheckInput } from "../tools/vibeCheck.js";
-import { getDataRoot } from "./autosession.js";
+import { getCwdKey } from "./autosession.js";
+import { withDatabase } from "./database.js";
 
-function getHistoryFile(): string {
-  return path.join(getDataRoot(), "history.json");
-}
-
-interface Interaction {
-  input: VibeCheckInput;
+interface InteractionRow {
+  goal: string;
   output: string;
-  /** Epoch-ms when recorded. */
-  timestamp: number;
 }
 
-let history: Map<string, Interaction[]> = new Map();
-
-async function ensureDataDir() {
-  try {
-    await fs.mkdir(getDataRoot(), { recursive: true });
-  } catch {}
+function ensureSession(db: Database, sessionId: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
+  ).run(sessionId, `history:${getCwdKey(sessionId)}`, now, now);
 }
 
-/**
- * Load history from disk into memory.  Safe to call multiple times—
- * replaces the in-memory map each call.  Starts fresh when the file
- * is missing or corrupt.
- */
-export async function loadHistory() {
-  await ensureDataDir();
-  try {
-    const data = await fs.readFile(getHistoryFile(), "utf-8");
-    const parsed = JSON.parse(data);
-    history = new Map(
-      Object.entries(parsed).map(([k, v]) => [k, v as Interaction[]]),
-    );
-  } catch {
-    history = new Map();
-  }
+function pruneSession(db: Database, sessionId: string): void {
+  db.prepare(
+    `DELETE FROM interactions
+     WHERE session_id = ?
+       AND id NOT IN (
+         SELECT id FROM interactions
+         WHERE session_id = ?
+         ORDER BY timestamp DESC, id DESC
+         LIMIT 10
+       )`,
+  ).run(sessionId, sessionId);
 }
 
-async function saveHistory() {
-  await ensureDataDir();
-  const data = Object.fromEntries(history);
-  await fs.writeFile(getHistoryFile(), JSON.stringify(data));
+/** Initialize SQLite-backed history storage. Safe to call multiple times. */
+export async function loadHistory(): Promise<void> {
+  withDatabase(() => {});
 }
 
 /**
  * Return a truncated summary of the last 5 interactions for
- * `sessionId`, or empty string when none exist.  Intended for
+ * `sessionId`, or empty string when none exist. Intended for
  * injecting recent context into LLM prompts.
  */
 export function getHistorySummary(sessionId = "default"): string {
-  const sessHistory = history.get(sessionId) || [];
-  if (!sessHistory.length) return "";
-  const summary = sessHistory
-    .slice(-5)
+  const rows = withDatabase((db) =>
+    db
+      .query<InteractionRow, [string]>(
+        `SELECT goal, output FROM (
+           SELECT id, goal, output, timestamp
+           FROM interactions
+           WHERE session_id = ?
+           ORDER BY timestamp DESC, id DESC
+           LIMIT 5
+         )
+         ORDER BY timestamp ASC, id ASC`,
+      )
+      .all(sessionId),
+  );
+
+  if (!rows.length) return "";
+  const summary = rows
     .map(
-      (int, i) =>
-        `Interaction ${i + 1}: Goal ${int.input.goal}, Guidance: ${int.output.slice(0, 100)}...`,
+      (interaction, index) =>
+        `Interaction ${index + 1}: Goal ${interaction.goal}, Guidance: ${interaction.output.slice(0, 100)}...`,
     )
     .join("\n");
   return `History Context:\n${summary}\n`;
 }
 
 /**
- * Drop all history for `sessionId` and persist.  No-op if the
- * session does not exist.
+ * Drop all history for `sessionId`. No-op if the session has no rows.
  */
 export async function clearSession(sessionId: string): Promise<void> {
-  history.delete(sessionId);
-  await saveHistory();
+  withDatabase((db) =>
+    db.prepare("DELETE FROM interactions WHERE session_id = ?").run(sessionId),
+  );
 }
 
 /**
@@ -87,10 +81,12 @@ export async function addToHistory(
   sessionId: string,
   input: VibeCheckInput,
   output: string,
-) {
-  const sessHistory = history.get(sessionId) ?? [];
-  history.set(sessionId, sessHistory);
-  sessHistory.push({ input, output, timestamp: Date.now() });
-  if (sessHistory.length > 10) sessHistory.shift();
-  await saveHistory();
+): Promise<void> {
+  withDatabase((db) => {
+    ensureSession(db, sessionId);
+    db.prepare(
+      "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
+    ).run(sessionId, input.goal, output, Date.now());
+    pruneSession(db, sessionId);
+  });
 }

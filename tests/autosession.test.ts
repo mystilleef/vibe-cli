@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AUTOSESSION_TTL_MS,
-  getAutosessionDir,
+  deleteInactiveAutosessions,
   getCwdKey,
   getDataRoot,
   resolveAutosession,
 } from "../src/utils/autosession";
+import { openVibeDatabase } from "../src/utils/database";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 const homes: TempHomeContext[] = [];
@@ -35,8 +36,15 @@ async function createCwd(name: string): Promise<string> {
   return dir;
 }
 
-function sessionFile(cwd = process.cwd()): string {
-  return join(getAutosessionDir(), `${getCwdKey(cwd)}.json`);
+function updateLastAccessed(cwd: string, lastAccessedAt: string): void {
+  const handle = openVibeDatabase();
+  try {
+    handle.db
+      .prepare("UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?")
+      .run(lastAccessedAt, getCwdKey(cwd));
+  } finally {
+    handle.close();
+  }
 }
 
 describe("autosession resolver", () => {
@@ -46,13 +54,7 @@ describe("autosession resolver", () => {
     process.chdir(cwd);
 
     const first = resolveAutosession();
-    await writeFile(
-      sessionFile(),
-      JSON.stringify({
-        ...first,
-        lastAccessedAt: new Date(Date.now() - 1000).toISOString(),
-      }),
-    );
+    updateLastAccessed(cwd, new Date(Date.now() - 1000).toISOString());
 
     const second = resolveAutosession();
 
@@ -75,36 +77,72 @@ describe("autosession resolver", () => {
     expect(first.id).not.toBe(second.id);
   });
 
-  test("missing, invalid, unreadable, and expired records create new sessions", async () => {
+  test("missing and expired records create new sessions", async () => {
     await useTempHome();
     const missingCwd = await createCwd("missing");
     const missing = resolveAutosession(missingCwd);
     expect(missing.id).toMatch(/^[0-9a-f-]{36}$/);
 
-    const invalidCwd = await createCwd("invalid");
-    await mkdir(getAutosessionDir(), { recursive: true });
-    await writeFile(sessionFile(invalidCwd), "not-json");
-    const invalid = resolveAutosession(invalidCwd);
-    expect(invalid.id).not.toBe("not-json");
-
-    const unreadableCwd = await createCwd("unreadable");
-    await rm(sessionFile(unreadableCwd), { recursive: true, force: true });
-    await mkdir(sessionFile(unreadableCwd), { recursive: true });
-    const unreadable = resolveAutosession(unreadableCwd);
-    expect(unreadable.id).toMatch(/^[0-9a-f-]{36}$/);
-
     const expiredCwd = await createCwd("expired");
     const expired = resolveAutosession(expiredCwd);
-    await writeFile(
-      sessionFile(expiredCwd),
-      JSON.stringify({
-        ...expired,
-        lastAccessedAt: new Date(
-          Date.now() - AUTOSESSION_TTL_MS - 1,
-        ).toISOString(),
-      }),
+    updateLastAccessed(
+      expiredCwd,
+      new Date(Date.now() - AUTOSESSION_TTL_MS - 1).toISOString(),
     );
     const renewed = resolveAutosession(expiredCwd);
     expect(renewed.id).not.toBe(expired.id);
+  });
+
+  test("inactive cleanup deletes session rows and cascades dependent data", async () => {
+    await useTempHome();
+    const cwd = await createCwd("cleanup");
+    const session = resolveAutosession(cwd);
+    const staleTimestamp = new Date(Date.now() - AUTOSESSION_TTL_MS - 1);
+    updateLastAccessed(cwd, staleTimestamp.toISOString());
+
+    const handle = openVibeDatabase();
+    try {
+      handle.db
+        .prepare(
+          "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(session.id, "Keep changes minimal.", 0, new Date().toISOString());
+      handle.db
+        .prepare(
+          "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
+        )
+        .run(session.id, "goal", "output", Date.now());
+    } finally {
+      handle.close();
+    }
+
+    expect(deleteInactiveAutosessions(staleTimestamp)).toBeGreaterThanOrEqual(
+      1,
+    );
+
+    const checked = openVibeDatabase();
+    try {
+      const deletedSession = checked.db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM sessions WHERE id = ?",
+        )
+        .get(session.id);
+      const rules = checked.db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM constitution_rules WHERE session_id = ?",
+        )
+        .get(session.id);
+      const interactions = checked.db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM interactions WHERE session_id = ?",
+        )
+        .get(session.id);
+
+      expect(deletedSession?.count).toBe(0);
+      expect(rules?.count).toBe(0);
+      expect(interactions?.count).toBe(0);
+    } finally {
+      checked.close();
+    }
   });
 });

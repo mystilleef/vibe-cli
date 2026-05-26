@@ -1,44 +1,48 @@
 /**
  * Per-session constitution rule storage.
  *
- * Rules persist to `~/.vibe-cli/constitution.json`, keyed by autosession id.
- * Each session holds at most 50 rules; oldest rules drop first when full.
+ * Rules persist to SQLite, keyed by autosession id. Each session holds at most
+ * 50 rules; oldest rules drop first when full.
  */
-import fs from "node:fs";
-import path from "node:path";
-import {
-  ensureDataDir,
-  getDataRoot,
-  resolveAutosession,
-} from "../utils/autosession.js";
+import { resolveAutosession } from "../utils/autosession.js";
+import { withDatabase } from "../utils/database.js";
 
-function getConstitutionFile(): string {
-  return path.join(getDataRoot(), "constitution.json");
-}
 const MAX_RULES = 50;
 
-type Store = Record<string, string[]>;
-
-function read(): Store {
-  ensureDataDir();
-  try {
-    return JSON.parse(fs.readFileSync(getConstitutionFile(), "utf8")) as Store;
-  } catch {
-    return {};
-  }
-}
-
-function write(store: Store): void {
-  ensureDataDir();
-  fs.writeFileSync(
-    getConstitutionFile(),
-    JSON.stringify(store, null, 2),
-    "utf8",
-  );
+interface RuleRow {
+  rule: string;
 }
 
 function resolveSessionId(): string {
   return resolveAutosession().id;
+}
+
+function getSessionRules(sessionId: string): string[] {
+  return withDatabase((db) =>
+    db
+      .query<RuleRow, [string]>(
+        "SELECT rule FROM constitution_rules WHERE session_id = ? ORDER BY position ASC",
+      )
+      .all(sessionId)
+      .map((row) => row.rule),
+  );
+}
+
+function replaceSessionRules(sessionId: string, rules: string[]): void {
+  withDatabase((db) =>
+    db.transaction(() => {
+      db.prepare("DELETE FROM constitution_rules WHERE session_id = ?").run(
+        sessionId,
+      );
+      const insert = db.prepare(
+        "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
+      );
+      const timestamp = new Date().toISOString();
+      rules.slice(0, MAX_RULES).forEach((rule, position) => {
+        insert.run(sessionId, rule, position, timestamp);
+      });
+    })(),
+  );
 }
 
 /**
@@ -50,12 +54,10 @@ function resolveSessionId(): string {
 export function updateConstitution(rule: string): void {
   const resolvedSessionId = resolveSessionId();
   if (!resolvedSessionId || !rule) return;
-  const store = read();
-  const rules = store[resolvedSessionId] ?? [];
+  const rules = getSessionRules(resolvedSessionId);
   if (rules.length >= MAX_RULES) rules.shift();
   rules.push(rule);
-  store[resolvedSessionId] = rules;
-  write(store);
+  replaceSessionRules(resolvedSessionId, rules);
 }
 
 /**
@@ -67,25 +69,15 @@ export function updateConstitution(rule: string): void {
 export function resetConstitution(rules: string[]): void {
   const resolvedSessionId = resolveSessionId();
   if (!resolvedSessionId) return;
-  const store = read();
-  store[resolvedSessionId] = rules.slice(0, MAX_RULES);
-  write(store);
+  replaceSessionRules(resolvedSessionId, rules);
 }
 
-/**
- * Return the active autosession constitution rules.
- *
- * Missing, unreadable, or malformed storage resolves to an empty rule list.
- */
+/** Return the active autosession constitution rules. */
 export function getConstitution(): string[] {
-  return read()[resolveSessionId()] ?? [];
+  return getSessionRules(resolveSessionId());
 }
 
-/**
- * Return the autosession id used as the constitution storage key.
- *
- * Returns an empty string when no autosession can be resolved.
- */
+/** Return the autosession id used as the constitution storage key. */
 export function getCurrentConstitutionSessionId(): string {
   return resolveAutosession().id;
 }
