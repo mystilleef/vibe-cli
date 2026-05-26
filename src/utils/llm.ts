@@ -28,9 +28,9 @@ Scan (weight by blast radius — severity × irreversibility):
 
 Report only the highest-weight finding. If none, confirm sound and name one latent risk.
 
-Intervene:
-- Hard risk (constitution, irreversibility): state directly, ask one focused follow-up.
-- Soft risk (misalignment, assumption, pattern): ask one Socratic question that externalizes the unexamined premise.
+Intervene — output must be self-resolvable by the agent; never request user input or confirmation:
+- Hard risk (constitution, irreversibility): state the violation; specify what the revised plan must include to resolve it.
+- Soft risk (misalignment, assumption, pattern): state the unverified premise; specify what the agent must verify within the revised plan.
 - Sound: one phrase confirming what's working, one latent risk worth watching.
 
 Output: feedback only — no narration, no preamble, no hedging.
@@ -38,9 +38,9 @@ Minimum words. Maximum signal.`;
 
 /** Static fallback questions returned when the LLM call fails. */
 export const FALLBACK_QUESTIONS = [
-  "1. Are you directly addressing the user's goal, or has the plan drifted toward a different problem?",
-  "2. If any step is irreversible, what rollback or safe-stop check will protect the work?",
-  "3. What unstated assumptions need verification before proceeding?",
+  "1. Goal alignment: confirm the plan directly addresses the stated goal — no scope drift.",
+  "2. Irreversible steps: each must have a tested rollback or safe-stop defined in the plan.",
+  "3. Load-bearing assumptions: enumerate each and verify within the plan before proceeding.",
 ].join("\n");
 
 /** Input payload for metacognitive question generation and gate decisions. */

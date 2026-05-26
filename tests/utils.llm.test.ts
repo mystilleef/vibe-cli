@@ -392,9 +392,9 @@ describe("FALLBACK_QUESTIONS", () => {
   });
 
   test("covers goal alignment, reversibility, and unstated assumptions", () => {
-    expect(FALLBACK_QUESTIONS).toContain("user's goal");
+    expect(FALLBACK_QUESTIONS).toContain("stated goal");
     expect(FALLBACK_QUESTIONS).toMatch(/rollback|safe-stop/);
-    expect(FALLBACK_QUESTIONS).toContain("unstated assumptions");
+    expect(FALLBACK_QUESTIONS).toContain("assumptions");
   });
 });
 
@@ -599,14 +599,14 @@ describe("resolveProviderAndModel via verifyConnection", () => {
 describe("getGateDecision error propagation", () => {
   test("throws when provider config is missing", async () => {
     process.env.DEFAULT_LLM_PROVIDER = "anthropic";
-    await expect(
+    expect(
       getGateDecision({ goal: "g", plan: "p", feedback: "f" }),
     ).rejects.toThrow(/ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN/);
   });
 
   test("throws with unknown provider", async () => {
     process.env.DEFAULT_LLM_PROVIDER = "nonexistent";
-    await expect(
+    expect(
       getGateDecision({ goal: "g", plan: "p", feedback: "f" }),
     ).rejects.toThrow(/Unknown provider/);
   });
@@ -666,7 +666,7 @@ describe("provider success paths", () => {
     expect(content).toContain("rollback");
     expect(content).toContain("Hard risk");
     expect(content).toContain("Soft risk");
-    expect(content).toContain("Socratic");
+    expect(content).toContain("self-resolvable");
     expect(content).toContain("highest-weight");
     expect(content).toContain("blast radius");
     expect(content.indexOf("Goal: goal text")).toBeLessThan(
