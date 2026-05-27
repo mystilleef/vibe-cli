@@ -164,6 +164,7 @@ Extra environment variables:
 | `DEEPSEEK_API_KEY` | DeepSeek API key. |
 | `OPENCODE_API_KEY` | OpenCode-compatible API key. |
 | `USE_LEARNING_HISTORY` | Skip stored entries when set to `false`. |
+| `VIBE_MAX_ATTEMPTS` | Default max refinement attempts for `check` (default `10`). |
 <!-- prettier-ignore-end -->
 
 ## Usage
