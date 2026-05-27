@@ -84,7 +84,7 @@ const checkCmd = program
   .option(
     "--max-attempts <n>",
     "Max refinement attempts before giving up",
-    "10",
+    process.env.VIBE_MAX_ATTEMPTS ?? "10",
   );
 addModelOptions(checkCmd);
 checkCmd.action(async (opts) => {

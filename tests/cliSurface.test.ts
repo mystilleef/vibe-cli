@@ -90,6 +90,42 @@ function expectHelpWithoutSession(command: string[]): void {
   expect(result.stdout).not.toContain("--session");
 }
 
+/** Shared check-runner — reduces boilerplate across max-attempts tests. */
+async function runVibeCheck(
+  extraArgs: string[] = [],
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<{
+  result: CliResult;
+  payload: Record<string, unknown>;
+}> {
+  const home = await useTempHome();
+  const result = runCli(
+    [
+      "check",
+      "--goal",
+      "ship safely",
+      "--plan",
+      "run targeted tests",
+      "--provider",
+      "anthropic",
+      ...extraArgs,
+    ],
+    {
+      home: home.home,
+      preload: mockAnthropicFetch,
+      env: {
+        ANTHROPIC_API_KEY: "ak",
+        DEFAULT_MODEL: undefined,
+        ...extraEnv,
+      },
+    },
+  );
+  return {
+    result,
+    payload: JSON.parse(result.stdout) as Record<string, unknown>,
+  };
+}
+
 describe("CLI autosession surface", () => {
   test("production storage modules do not import legacy migration helpers", async () => {
     const productionModules = [
@@ -264,15 +300,10 @@ describe("CLI autosession surface", () => {
   });
 
   test("check emits approval JSON and exits 0 with mocked Anthropic", async () => {
-    const home = await useTempHome();
-
-    const result = runCli(
+    const { result, payload } = await runVibeCheck(
       [
-        "check",
-        "--goal",
-        "ship safely",
-        "--plan",
-        "run targeted tests",
+        "--model",
+        "mock-claude",
         "--progress",
         "implementation done",
         "--uncertainty",
@@ -281,28 +312,9 @@ describe("CLI autosession surface", () => {
         "release prep",
         "--prompt",
         "please verify",
-        "--provider",
-        "anthropic",
-        "--model",
-        "mock-claude",
       ],
-      {
-        home: home.home,
-        preload: mockAnthropicFetch,
-        env: {
-          ANTHROPIC_API_KEY: "ak",
-          DEFAULT_MODEL: undefined,
-          VIBE_TEST_ANTHROPIC_MODE: "proceed",
-        },
-      },
+      { VIBE_TEST_ANTHROPIC_MODE: "proceed" },
     );
-    const payload = JSON.parse(result.stdout) as {
-      proceed: boolean;
-      confidence: number;
-      reason: string;
-      questions: string;
-      attempts: number;
-    };
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -315,37 +327,37 @@ describe("CLI autosession surface", () => {
     expect(payload.questions).toContain("questions:mock-claude");
   });
 
-  test("check emits exhausted block JSON and exits 2 at attempt boundary", async () => {
-    const home = await useTempHome();
+  test("VIBE_MAX_ATTEMPTS env var sets default max attempts", async () => {
+    const { result, payload } = await runVibeCheck([], {
+      VIBE_MAX_ATTEMPTS: "1",
+      VIBE_TEST_ANTHROPIC_MODE: "block",
+    });
 
-    const result = runCli(
-      [
-        "check",
-        "--goal",
-        "ship safely",
-        "--plan",
-        "skip rollback",
-        "--provider",
-        "anthropic",
-        "--max-attempts",
-        "1",
-      ],
+    expect(result.exitCode).toBe(2);
+    expect(payload).toMatchObject({
+      proceed: false,
+      exhausted: true,
+      attempts: 1,
+    });
+  });
+
+  test("--max-attempts flag overrides VIBE_MAX_ATTEMPTS env var", async () => {
+    const { result, payload } = await runVibeCheck(
+      ["--model", "mock-claude", "--max-attempts", "5"],
       {
-        home: home.home,
-        preload: mockAnthropicFetch,
-        env: {
-          ANTHROPIC_API_KEY: "ak",
-          DEFAULT_MODEL: undefined,
-          VIBE_TEST_ANTHROPIC_MODE: "block",
-        },
+        VIBE_MAX_ATTEMPTS: "1",
+        VIBE_TEST_ANTHROPIC_MODE: "proceed",
       },
     );
-    const payload = JSON.parse(result.stdout) as {
-      proceed: boolean;
-      exhausted?: boolean;
-      attempts: number;
-      reason: string;
-    };
+
+    expect(result.exitCode).toBe(0);
+    expect(payload).toMatchObject({ proceed: true, attempts: 1 });
+  });
+
+  test("check emits exhausted block JSON and exits 2 at attempt boundary", async () => {
+    const { result, payload } = await runVibeCheck(["--max-attempts", "1"], {
+      VIBE_TEST_ANTHROPIC_MODE: "block",
+    });
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toBe("");
@@ -355,6 +367,37 @@ describe("CLI autosession surface", () => {
       attempts: 1,
       reason: "block:claude-haiku-4-5-20251001",
     });
+  });
+
+  test("VIBE_MAX_ATTEMPTS non-numeric env var silently falls back to 10", async () => {
+    const { result, payload } = await runVibeCheck(["--model", "mock-claude"], {
+      VIBE_MAX_ATTEMPTS: "abc",
+      VIBE_TEST_ANTHROPIC_MODE: "proceed",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(payload).toMatchObject({ proceed: true, attempts: 1 });
+  });
+
+  test("--max-attempts 0 flag falls back to 10 due to falsy default", async () => {
+    const { result, payload } = await runVibeCheck(["--max-attempts", "0"], {
+      VIBE_TEST_ANTHROPIC_MODE: "block",
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(payload.exhausted).toBe(true);
+    expect(payload.attempts).toBeGreaterThanOrEqual(1);
+  });
+
+  test("VIBE_MAX_ATTEMPTS=0 env var falls back to 10 due to falsy default", async () => {
+    const { result, payload } = await runVibeCheck([], {
+      VIBE_MAX_ATTEMPTS: "0",
+      VIBE_TEST_ANTHROPIC_MODE: "block",
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(payload.exhausted).toBe(true);
+    expect(payload.attempts).toBeGreaterThanOrEqual(1);
   });
 
   test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
