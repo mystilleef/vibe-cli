@@ -1,6 +1,6 @@
 {
   "name": "vibe-cli",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Metacognitive AI agent oversight — pure CLI with JSON I/O",
   "type": "module",
   "bin": {
