@@ -645,6 +645,7 @@ describe("CLI autosession surface", () => {
       goal: string;
       output: string;
       timestamp: number;
+      displayCwd: string | null;
     }>;
 
     expect(json.exitCode).toBe(0);
@@ -656,13 +657,14 @@ describe("CLI autosession surface", () => {
         goal: "Deploy carefully",
         output: JSON.stringify({ reason: longReason }),
         timestamp: base + 2000,
+        displayCwd: "/tmp/alpha",
       },
     ]);
     expect(pretty.exitCode).toBe(0);
     expect(pretty.stderr).toBe("");
     expect(pretty.stdout).toContain("Interactions");
-    expect(pretty.stdout).toContain("Session: session-alpha");
-    expect(pretty.stdout).toContain("Session: session-beta");
+    expect(pretty.stdout).toContain("Session: /tmp/alpha");
+    expect(pretty.stdout).toContain("Session: /tmp/beta");
     expect(pretty.stdout.indexOf("Deploy carefully")).toBeLessThan(
       pretty.stdout.indexOf("Review history"),
     );
@@ -828,7 +830,7 @@ describe("CLI autosession surface", () => {
       learnings: unknown[];
       constitution: { rules: string[] };
       sessions: unknown[];
-      providers: Record<string, string>;
+      providers: { activeProvider: string; providers: Record<string, string> };
       interactions: unknown[];
       categories: unknown[];
       stats: unknown;
@@ -860,7 +862,7 @@ describe("CLI autosession surface", () => {
     expect(all.learnings).toHaveLength(3);
     expect(all.constitution.rules).toEqual(["Prefer local reads"]);
     expect(all.sessions).toHaveLength(2);
-    expect(all.providers.deepseek).toBe("deepseek-v4-pro");
+    expect(all.providers.providers.deepseek).toBe("deepseek-v4-pro");
     expect(all.interactions).toHaveLength(3);
     expect(all.categories).toHaveLength(2);
     expect(all.stats).toEqual(stats);

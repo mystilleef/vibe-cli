@@ -1,7 +1,6 @@
 import { resolveAutosession } from "./autosession.js";
 import { withDatabase } from "./database.js";
 import type {
-  LearningRow,
   ListAllData,
   ListCategorySummary,
   ListConstitution,
@@ -11,11 +10,25 @@ import type {
   ListProviderState,
   ListSession,
   ListStats,
-  RuleRow,
 } from "./listDataTypes.js";
+
 import { applyListLimit, compareListText, groupBy } from "./listDataUtils.js";
 import { DEFAULT_MODELS, detectProvider } from "./llm.js";
 import type { LearningEntry, LearningType } from "./storage.js";
+
+interface LearningRow {
+  id: number;
+  type: LearningType;
+  category: string;
+  mistake: string;
+  solution: string | null;
+  timestamp: number;
+  demo_id: string | null;
+}
+
+interface RuleRow {
+  rule: string;
+}
 
 function toLearningDto(row: LearningRow): LearningEntry {
   return {
@@ -132,9 +145,11 @@ export function readListInteractions(
   const rows = withDatabase((db) =>
     db
       .query<ListInteraction, []>(
-        `SELECT id, session_id, goal, output, timestamp
-         FROM interactions
-         ORDER BY session_id ASC, timestamp DESC, id DESC`,
+        `SELECT i.id, i.session_id, i.goal, i.output, i.timestamp,
+                COALESCE(s.cwd, s.cwd_key) AS displayCwd
+         FROM interactions i
+         LEFT JOIN sessions s ON s.id = i.session_id
+         ORDER BY i.session_id ASC, i.timestamp DESC, i.id DESC`,
       )
       .all(),
   );
@@ -196,7 +211,7 @@ export function readListAll(): ListAllData {
     learnings,
     constitution,
     sessions,
-    providers: toProvidersJson(providerState),
+    providers: providerState,
     interactions,
     categories,
     stats: buildListStats(learnings, sessions, constitution, interactions),

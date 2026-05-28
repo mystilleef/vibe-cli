@@ -53,6 +53,7 @@ export interface ListInteraction {
   goal: string;
   output: string;
   timestamp: number;
+  displayCwd: string | null;
 }
 
 export interface ListCategorySummary {
@@ -84,22 +85,8 @@ export interface ListAllData {
   learnings: LearningEntry[];
   constitution: ListConstitution;
   sessions: ListSession[];
-  providers: Record<string, string>;
+  providers: ListProviderState;
   interactions: ListInteraction[];
   categories: ListCategorySummary[];
   stats: ListStats;
-}
-
-export interface LearningRow {
-  id: number;
-  type: LearningType;
-  category: string;
-  mistake: string;
-  solution: string | null;
-  timestamp: number;
-  demo_id: string | null;
-}
-
-export interface RuleRow {
-  rule: string;
 }

@@ -107,7 +107,10 @@ describe("list data foundations", () => {
     expect(parseListLimit("2")).toBe(2);
     expect(applyListLimit([1, 2, 3], 2)).toEqual([1, 2]);
     expect(() => parseListLimit("-1")).toThrow(
-      "--limit must be a non-negative integer",
+      "--limit must be a positive integer",
+    );
+    expect(() => parseListLimit("0")).toThrow(
+      "--limit must be a positive integer",
     );
     expect(() => parseLearningType("other")).toThrow(
       "--type must be mistake, preference, or success",
@@ -167,8 +170,22 @@ describe("list data foundations", () => {
 
     // Interaction count tiebreaker → last_accessed_at → id
     const tiedInteractions = [
-      { id: 1, session_id: "s1", goal: "g1", output: "o1", timestamp: 1000 },
-      { id: 2, session_id: "s2", goal: "g2", output: "o2", timestamp: 2000 },
+      {
+        id: 1,
+        session_id: "s1",
+        goal: "g1",
+        output: "o1",
+        timestamp: 1000,
+        displayCwd: null,
+      },
+      {
+        id: 2,
+        session_id: "s2",
+        goal: "g2",
+        output: "o2",
+        timestamp: 2000,
+        displayCwd: null,
+      },
     ];
     const tiedStats = buildListStats(
       [],
@@ -202,6 +219,7 @@ describe("list data foundations", () => {
         goal: "g1",
         output: "o1",
         timestamp: 1000,
+        displayCwd: null,
       },
       {
         id: 2,
@@ -209,6 +227,7 @@ describe("list data foundations", () => {
         goal: "g2",
         output: "o2",
         timestamp: 2000,
+        displayCwd: null,
       },
     ];
     const tripleTied = buildListStats(
@@ -305,7 +324,10 @@ describe("list data foundations", () => {
     });
     expect(readListAll()).toMatchObject({
       constitution: { session: active.session },
-      providers: expect.objectContaining({ deepseek: "deepseek-v4-pro" }),
+      providers: expect.objectContaining({
+        activeProvider: "deepseek",
+        providers: expect.objectContaining({ deepseek: "deepseek-v4-pro" }),
+      }),
       stats: { interactions: { total: 3 } },
     });
   });
@@ -487,6 +509,7 @@ describe("list data foundations", () => {
         goal: "Goal A",
         output: JSON.stringify({ reason: "Because A" }),
         timestamp: base,
+        displayCwd: "/tmp/project-a",
       },
       {
         id: 2,
@@ -494,6 +517,7 @@ describe("list data foundations", () => {
         goal: "Goal B",
         output: "Raw output reason.",
         timestamp: base + 1000,
+        displayCwd: "/tmp/project-a",
       },
       {
         id: 3,
@@ -501,12 +525,13 @@ describe("list data foundations", () => {
         goal: "Goal C",
         output: "X".repeat(130),
         timestamp: base + 2000,
+        displayCwd: null,
       },
     ];
     const result = formatListInteractions(interactions, { now: base + 60_000 });
 
     expect(result).toContain("Interactions");
-    expect(result).toContain("Session: s1");
+    expect(result).toContain("Session: /tmp/project-a");
     expect(result).toContain("Session: s2");
     expect(result).toContain("Goal: Goal A");
     expect(result).toContain("Reason: Because A");
@@ -565,9 +590,19 @@ describe("list data foundations", () => {
           last_accessed_at: "b",
         },
       ],
-      providers: { gemini: "gemini-2.5-flash" },
+      providers: {
+        activeProvider: "gemini",
+        providers: { gemini: "gemini-2.5-flash" },
+      },
       interactions: [
-        { id: 1, session_id: "s", goal: "g", output: "o", timestamp: 1000 },
+        {
+          id: 1,
+          session_id: "s",
+          goal: "g",
+          output: "o",
+          timestamp: 1000,
+          displayCwd: "/tmp",
+        },
       ],
       categories: [
         {
@@ -588,14 +623,7 @@ describe("list data foundations", () => {
         interactions: { total: 1 },
       },
     };
-    const result = formatListAll(
-      data,
-      { now: 0 },
-      {
-        activeProvider: "gemini",
-        providers: data.providers,
-      },
-    );
+    const result = formatListAll(data, { now: 0 });
 
     for (const heading of [
       "Learnings",

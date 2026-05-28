@@ -18,7 +18,6 @@ import {
   parseInteractionReason,
   truncateText,
 } from "./listDataUtils.js";
-import { detectProvider } from "./llm.js";
 import type { LearningEntry } from "./storage.js";
 
 /** Pretty overview used by the root `vibe list` group. */
@@ -122,8 +121,10 @@ export function formatListInteractions(
   interactions: readonly ListInteraction[],
   options: ListClock = {},
 ): string {
-  const body = [...groupBy(interactions, (i) => i.session_id).entries()]
-    .map(([sessionId, entries]) => {
+  const body = [
+    ...groupBy(interactions, (i) => i.displayCwd ?? i.session_id).entries(),
+  ]
+    .map(([sessionLabel, entries]) => {
       const rows = entries.flatMap((interaction) => {
         const reason =
           parseInteractionReason(interaction.output).trim() || "(none)";
@@ -132,7 +133,7 @@ export function formatListInteractions(
           `  Reason: ${truncateText(reason, 120)}`,
         ];
       });
-      return [`Session: ${sessionId}`, ...rows].join("\n");
+      return [`Session: ${sessionLabel}`, ...rows].join("\n");
     })
     .join("\n\n");
 
@@ -157,10 +158,7 @@ export function formatListStats(stats: ListStats): string {
 export function formatListAll(
   data: ListAllData,
   options: ListClock = {},
-  providerState: ListProviderState = {
-    activeProvider: detectProvider(),
-    providers: data.providers,
-  },
+  providerState: ListProviderState = data.providers,
 ): string {
   return [
     formatListLearnings(data.learnings, options),

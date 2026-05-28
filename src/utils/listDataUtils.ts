@@ -22,8 +22,8 @@ export function groupBy<T>(
 export function parseListLimit(value?: number | string): number | undefined {
   if (value === undefined || value === "") return undefined;
   const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isInteger(numeric) || numeric < 0) {
-    throw new Error("--limit must be a non-negative integer");
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    throw new Error("--limit must be a positive integer");
   }
   return numeric;
 }
