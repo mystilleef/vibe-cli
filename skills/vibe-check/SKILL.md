@@ -49,7 +49,9 @@ constraints, partial-failure risks, and plan quality before action.
    - `--plan`: ordered, concrete, execution-ready.
    - `--uncertainty`: one per material risk, assumption, or open
      concern.
-   - `--context`: grounding needed to judge the plan only.
+   - `--context`: constraints and grounding the mentor needs to judge
+     the plan. Pass text verbatim—the mentor has no file access, tools,
+     or external context.
    - `--progress`: include when resuming after partial work.
 4. **Run** `vibe check` before execution.
 5. **Handle returned state**:
@@ -57,8 +59,8 @@ constraints, partial-failure risks, and plan quality before action.
      original.
    - `proceed=false` without exhaustion: revise from `reason`,
      `questions`, and returned `plan`; resubmit.
-   - `exhausted=true`: stop; report that the plan could not be safely
-     approved within the attempt limit.
+   - `exhausted=true`: stop; report that the mentor failed to safely
+     approve the plan within the attempt limit.
 6. **Record notable outcomes**—after task completion, run `vibe learn`
    when work revealed a mistake, reusable success, or durable
    correction.
@@ -81,6 +83,8 @@ constraints, partial-failure risks, and plan quality before action.
   unless the user explicitly requests a bounded attempt count.
 - Never duplicate `vibe schema` output in this skill.
 - Abort rather than guessing when the mentor exhausts attempts.
+- Never pass file paths, URLs, or references to `--context`; the mentor
+  can't read or resolve them.
 
 ## Verification
 
