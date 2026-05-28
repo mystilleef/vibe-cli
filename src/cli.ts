@@ -21,6 +21,30 @@ import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
 import {
+  formatListAll,
+  formatListCategories,
+  formatListCommandOverview,
+  formatListConstitution,
+  formatListInteractions,
+  formatListLearnings,
+  formatListProviders,
+  formatListSessions,
+  formatListStats,
+  LIST_COMMAND_NAMES,
+  parseLearningType,
+  parseListLimit,
+  readListAll,
+  readListCategories,
+  readListConstitution,
+  readListInteractions,
+  readListLearnings,
+  readListProviders,
+  readListSessions,
+  readListStats,
+  toListOverviewJson,
+  toProvidersJson,
+} from "./utils/listData.js";
+import {
   DEFAULT_MODELS,
   detectProvider,
   verifyConnection,
@@ -62,6 +86,156 @@ function resolveModelOverride(opts: { provider?: string; model?: string }) {
       }
     : {};
 }
+
+/** Write pretty list output without changing existing JSON emit behavior. */
+function writePretty(text: string): void {
+  process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+}
+
+function emitListResult<T>(command: Command, data: T, pretty: string): void {
+  if ((command.optsWithGlobals() as { json?: boolean }).json) {
+    emit(data);
+    return;
+  }
+  writePretty(pretty);
+}
+
+/**
+ * Register a list subcommand with consistent `--json` option handling.
+ *
+ * The action receives the parsed Commander options and the command instance,
+ * then calls `emitListResult` with the JSON data and pretty-formatted text.
+ */
+function registerListCommand(
+  parent: Command,
+  name: string,
+  description: string,
+  extraOptions: Array<{ flags: string; description: string }> = [],
+  action: (
+    opts: Record<string, string | undefined>,
+    command: Command,
+  ) => { data: unknown; pretty: string },
+): Command {
+  const cmd = parent.command(name).description(description);
+  for (const opt of extraOptions) {
+    cmd.option(opt.flags, opt.description);
+  }
+  cmd.option("--json", "Emit machine-readable JSON instead of pretty text");
+  cmd.action((opts: Record<string, string | undefined>, command: Command) => {
+    const { data, pretty } = action(opts, command);
+    emitListResult(command, data, pretty);
+  });
+  return cmd;
+}
+
+/**
+ * Build a list command action from read and format functions.
+ *
+ * @param readFn - Function that retrieves data, optionally with parsed options.
+ * @param formatFn - Function that formats data for pretty output.
+ * @param parseOpts - Optional function to parse Commander options into read function params.
+ * @param transformFn - Optional function to transform data for JSON output.
+ */
+function buildListAction<T, P = void>(
+  readFn: (params?: P) => T,
+  formatFn: (data: T) => string,
+  parseOpts?: (opts: Record<string, string | undefined>) => P,
+  transformFn?: (data: T) => unknown,
+) {
+  return (opts: Record<string, string | undefined>) => {
+    const params = parseOpts ? parseOpts(opts) : undefined;
+    const data = readFn(params);
+    return {
+      data: transformFn ? transformFn(data) : data,
+      pretty: formatFn(data),
+    };
+  };
+}
+
+/** Configuration for list subcommands. */
+const LIST_COMMANDS = [
+  {
+    name: "learnings",
+    description: "List stored learning entries",
+    options: [
+      {
+        flags: "--type <type>",
+        description: "Filter by type: mistake | preference | success",
+      },
+      { flags: "--category <name>", description: "Filter by category" },
+      { flags: "--limit <n>", description: "Limit rows after filtering" },
+    ],
+    action: buildListAction(readListLearnings, formatListLearnings, (opts) => {
+      const type = parseLearningType(opts.type);
+      const limit = parseListLimit(opts.limit);
+      return {
+        ...(type !== undefined && { type }),
+        ...(opts.category !== undefined && { category: opts.category }),
+        ...(limit !== undefined && { limit }),
+      };
+    }),
+  },
+  {
+    name: "constitution",
+    description: "List active constitution rules",
+    options: [],
+    action: buildListAction(readListConstitution, formatListConstitution),
+  },
+  {
+    name: "sessions",
+    description: "List local autosessions",
+    options: [],
+    action: buildListAction(readListSessions, formatListSessions),
+  },
+  {
+    name: "providers",
+    description: "List static provider model defaults",
+    options: [],
+    action: buildListAction(
+      readListProviders,
+      (state) => formatListProviders(state),
+      undefined,
+      toProvidersJson,
+    ),
+  },
+  {
+    name: "interactions",
+    description: "List stored vibe-check interactions",
+    options: [
+      { flags: "--session <id>", description: "Filter by session id" },
+      { flags: "--limit <n>", description: "Limit rows after filtering" },
+    ],
+    action: buildListAction(
+      readListInteractions,
+      formatListInteractions,
+      (opts) => {
+        const limit = parseListLimit(opts.limit);
+        return {
+          ...(opts.session !== undefined && { session: opts.session }),
+          ...(limit !== undefined && { limit }),
+        };
+      },
+    ),
+  },
+  {
+    name: "categories",
+    description: "List learning category counts",
+    options: [],
+    action: buildListAction(readListCategories, formatListCategories),
+  },
+  {
+    name: "stats",
+    description: "List aggregate local data stats",
+    options: [],
+    action: buildListAction(readListStats, formatListStats),
+  },
+  {
+    name: "all",
+    description: "List every local data surface",
+    options: [],
+    action: buildListAction(readListAll, formatListAll),
+  },
+] as const;
 
 const program = new Command();
 
@@ -194,6 +368,25 @@ demoCmd.action(async (opts) => {
   await runDemo(resolveModelOverride(opts));
 });
 
+const list = program
+  .command("list")
+  .description("List local stored data and static provider configuration")
+  .option("--json", "Emit machine-readable JSON instead of pretty text");
+list.action(() => {
+  emitListResult(list, toListOverviewJson(), formatListCommandOverview());
+});
+
+// Register list subcommands from configuration.
+for (const cmd of LIST_COMMANDS) {
+  registerListCommand(
+    list,
+    cmd.name,
+    cmd.description,
+    [...cmd.options],
+    cmd.action,
+  );
+}
+
 /**
  * Build the compact agent-facing schema for commands, outputs, and exits.
  *
@@ -281,6 +474,75 @@ function buildSchema() {
           response: "str?",
           error: "str?",
         },
+      },
+      list: {
+        when: "inspect locally stored data and static provider configuration",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        subcommands: [...LIST_COMMAND_NAMES],
+        out: { commands: "[str]" },
+      },
+      "list learnings": {
+        when: "inspect stored learning entries",
+        req: {},
+        opt: {
+          "--type": "mistake|preference|success",
+          "--category": "str",
+          "--limit": "int",
+          "--json": "bool (emit machine-readable JSON)",
+        },
+        out: "[{type,category,mistake,solution?,timestamp,demoId?}]",
+      },
+      "list categories": {
+        when: "inspect learning category counts",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: "[{category,count,recentExample}]",
+      },
+      "list constitution": {
+        when: "inspect active autosession constitution rules",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: { session: "str", rules: "[str]" },
+      },
+      "list sessions": {
+        when: "inspect local autosessions",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: "[{id,cwd_key,cwd,created_at,last_accessed_at}]",
+      },
+      "list providers": {
+        when: "inspect static provider model defaults",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: "{provider:model}",
+      },
+      "list interactions": {
+        when: "inspect stored vibe-check interactions",
+        req: {},
+        opt: {
+          "--session": "str",
+          "--limit": "int",
+          "--json": "bool (emit machine-readable JSON)",
+        },
+        out: "[{id,session_id,goal,output,timestamp}]",
+      },
+      "list stats": {
+        when: "inspect aggregate local data stats",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: {
+          learnings: "{total,mistake,preference,success}",
+          sessions: "{total,mostActiveCwd}",
+          constitution: "{activeRules}",
+          interactions: "{total}",
+        },
+      },
+      "list all": {
+        when: "inspect all local data and static provider configuration",
+        req: {},
+        opt: { "--json": "bool (emit machine-readable JSON)" },
+        out: "{learnings,constitution,sessions,providers,interactions,categories,stats}",
       },
       "constitution get": {
         when: "inspect active rules before acting",

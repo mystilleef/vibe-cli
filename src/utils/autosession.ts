@@ -11,6 +11,8 @@ export const AUTOSESSION_TTL_MS = 4 * 60 * 60 * 1000;
 export interface AutosessionRecord {
   /** Unique session identifier (UUID v4). */
   id: string;
+  /** Original working-directory path for display, when available. */
+  cwd: string | null;
   /** ISO-8601 timestamp when the session was first created. */
   createdAt: string;
   /** ISO-8601 timestamp of the most recent access; used for TTL expiry. */
@@ -19,6 +21,7 @@ export interface AutosessionRecord {
 
 interface SessionRow {
   id: string;
+  cwd: string | null;
   created_at: string;
   last_accessed_at: string;
 }
@@ -52,10 +55,11 @@ function isExpired(record: AutosessionRecord, now: number): boolean {
   return now - Date.parse(record.lastAccessedAt) >= AUTOSESSION_TTL_MS;
 }
 
-function createRecord(now: Date): AutosessionRecord {
+function createRecord(now: Date, cwd: string): AutosessionRecord {
   const timestamp = now.toISOString();
   return {
     id: randomUUID(),
+    cwd,
     createdAt: timestamp,
     lastAccessedAt: timestamp,
   };
@@ -64,6 +68,7 @@ function createRecord(now: Date): AutosessionRecord {
 function toRecord(row: SessionRow): AutosessionRecord {
   return {
     id: row.id,
+    cwd: row.cwd,
     createdAt: row.created_at,
     lastAccessedAt: row.last_accessed_at,
   };
@@ -96,7 +101,7 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
   return withDatabase((db) => {
     const existing = db
       .query<SessionRow, [string]>(
-        "SELECT id, created_at, last_accessed_at FROM sessions WHERE cwd_key = ? LIMIT 1",
+        "SELECT id, cwd, created_at, last_accessed_at FROM sessions WHERE cwd_key = ? LIMIT 1",
       )
       .get(cwdKey);
 
@@ -113,10 +118,16 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
       db.prepare("DELETE FROM sessions WHERE cwd_key = ?").run(cwdKey);
     }
 
-    const record = createRecord(now);
+    const record = createRecord(now, cwd);
     db.prepare(
-      "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
-    ).run(record.id, cwdKey, record.createdAt, record.lastAccessedAt);
+      "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      record.id,
+      cwdKey,
+      record.cwd,
+      record.createdAt,
+      record.lastAccessedAt,
+    );
     return record;
   });
 }

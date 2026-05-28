@@ -120,7 +120,10 @@ describe("openVibeDatabase", () => {
       .query("SELECT id FROM schema_migrations ORDER BY id")
       .all() as Array<{ id: string }>;
 
-    expect(initial).toEqual([{ id: "001_initial_schema" }]);
+    expect(initial).toEqual([
+      { id: "001_initial_schema" },
+      { id: "002_sessions_display_cwd" },
+    ]);
     expect(repeated).toEqual(initial);
   });
 
@@ -149,7 +152,10 @@ describe("openVibeDatabase", () => {
       .all() as Array<{ id: string }>;
 
     expect(sessions).toEqual([{ id: "session-a" }]);
-    expect(migrations).toEqual([{ id: "001_initial_schema" }]);
+    expect(migrations).toEqual([
+      { id: "001_initial_schema" },
+      { id: "002_sessions_display_cwd" },
+    ]);
   });
 
   test("enforces one session per CWD key", () => {

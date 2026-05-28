@@ -89,6 +89,10 @@ const MIGRATIONS = [
         ON interactions(session_id, timestamp);
     `,
   },
+  {
+    id: "002_sessions_display_cwd",
+    sql: "ALTER TABLE sessions ADD COLUMN cwd TEXT;",
+  },
 ] as const;
 
 export function getDatabasePath(): string {
