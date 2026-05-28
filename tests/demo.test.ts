@@ -292,4 +292,37 @@ describe("runDemo", () => {
     expect(getConstitution()).toEqual([]);
     expect(getLearningEntries()).toEqual({});
   });
+
+  test("spinner tick fires and clears when LLM call takes longer than 80ms", async () => {
+    // Replace the fetch mock with a delayed version so the spinner interval
+    // (80ms) fires at least once before the promise resolves.
+    globalThis.fetch = (async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as AnthropicBody;
+      requests.push(body);
+      // Delay first two calls (the two vibeGateTool calls inside withSpinner)
+      // past one spinner tick so the interval callback on line 84 executes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const text = responseQueue.shift() ?? "fallback-demo-response";
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    responseQueue.push(
+      "Spinner risky feedback",
+      gateDecision(false, 0.35, "no rollback plan"),
+      "Spinner safe feedback",
+      gateDecision(true, 0.98, "staged rollout with monitoring"),
+    );
+
+    await runDemo();
+
+    const output = visibleOutput();
+    // Spinner writes \r sequences — verify they appeared in the raw stdout.
+    expect(stdout).toContain("\r");
+    expect(output).toContain("✓ Demo complete.");
+    expect(getConstitution()).toEqual([]);
+    expect(getLearningEntries()).toEqual({});
+  });
 });
