@@ -19,15 +19,12 @@ argument-hint: "<goal and proposed plan>"
 
 Skip trivial, reversible, single-step plans.
 
-## Role
-
-Pre-execution validation gate: sends the current goal and plan to
-`vibe check`, then follows the returned decision exactly.
-
 ## Goal
 
-Prevent overconfident execution by validating assumptions, missing
-constraints, partial-failure risks, and plan quality before action.
+- Check assumptions, missing constraints, partial-failure risks, and
+  plan quality before action as a pre-execution validation gate.
+- Send the current goal and plan to `vibe check`, then follow the
+  returned decision exactly.
 
 ## Input
 
