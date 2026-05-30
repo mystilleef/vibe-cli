@@ -30,7 +30,6 @@ import {
   formatListProviders,
   formatListSessions,
   formatListStats,
-  LIST_COMMAND_NAMES,
   parseLearningType,
   parseListLimit,
   readListAll,
@@ -143,7 +142,7 @@ function buildListAction<T, P = void>(
   transformFn?: (data: T) => unknown,
 ) {
   return (opts: Record<string, string | undefined>) => {
-    const params = parseOpts ? parseOpts(opts) : undefined;
+    const params = parseOpts?.(opts);
     const data = readFn(params);
     return {
       data: transformFn ? transformFn(data) : data,
@@ -474,75 +473,6 @@ function buildSchema() {
           response: "str?",
           error: "str?",
         },
-      },
-      list: {
-        when: "inspect locally stored data and static provider configuration",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        subcommands: [...LIST_COMMAND_NAMES],
-        out: { commands: "[str]" },
-      },
-      "list learnings": {
-        when: "inspect stored learning entries",
-        req: {},
-        opt: {
-          "--type": "mistake|preference|success",
-          "--category": "str",
-          "--limit": "int",
-          "--json": "bool (emit machine-readable JSON)",
-        },
-        out: "[{type,category,mistake,solution?,timestamp,demoId?}]",
-      },
-      "list categories": {
-        when: "inspect learning category counts",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: "[{category,count,recentExample}]",
-      },
-      "list constitution": {
-        when: "inspect active autosession constitution rules",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: { session: "str", rules: "[str]" },
-      },
-      "list sessions": {
-        when: "inspect local autosessions",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: "[{id,cwd_key,cwd,created_at,last_accessed_at}]",
-      },
-      "list providers": {
-        when: "inspect static provider model defaults",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: "{provider:model}",
-      },
-      "list interactions": {
-        when: "inspect stored vibe-check interactions",
-        req: {},
-        opt: {
-          "--session": "str",
-          "--limit": "int",
-          "--json": "bool (emit machine-readable JSON)",
-        },
-        out: "[{id,session_id,goal,output,timestamp}]",
-      },
-      "list stats": {
-        when: "inspect aggregate local data stats",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: {
-          learnings: "{total,mistake,preference,success}",
-          sessions: "{total,mostActiveCwd}",
-          constitution: "{activeRules}",
-          interactions: "{total}",
-        },
-      },
-      "list all": {
-        when: "inspect all local data and static provider configuration",
-        req: {},
-        opt: { "--json": "bool (emit machine-readable JSON)" },
-        out: "{learnings,constitution,sessions,providers,interactions,categories,stats}",
       },
       "constitution get": {
         when: "inspect active rules before acting",

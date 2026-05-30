@@ -1051,49 +1051,35 @@ describe("CLI autosession surface", () => {
     );
   });
 
-  test("schema reflects session and list commands with removed public session flags", () => {
+  test("schema excludes list commands and preserves metadata", () => {
     const result = runCli(["schema"]);
     const schema = JSON.parse(result.stdout) as {
-      commands: Record<
-        string,
-        { opt?: Record<string, string>; subcommands?: string[]; out?: unknown }
-      >;
+      v?: unknown;
+      data?: unknown;
+      errors?: unknown;
+      config?: unknown;
+      commands: Record<string, { opt?: Record<string, string>; out?: unknown }>;
     };
 
-    expect(Object.keys(schema.commands)).toContain("session");
-    expect(schema.commands.list?.opt).toHaveProperty("--json");
-    expect(schema.commands.list?.subcommands).toEqual([
-      "learnings",
-      "constitution",
-      "sessions",
-      "providers",
-      "interactions",
-      "categories",
-      "stats",
-      "all",
-    ]);
-    expect(schema.commands["list learnings"]?.opt).toHaveProperty("--type");
-    expect(schema.commands["list learnings"]?.opt).toHaveProperty("--category");
-    expect(schema.commands["list learnings"]?.opt).toHaveProperty("--limit");
-    expect(schema.commands["list learnings"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list categories"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list constitution"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list sessions"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list providers"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list interactions"]?.opt).toHaveProperty(
-      "--session",
+    const commandKeys = Object.keys(schema.commands);
+
+    for (const key of ["v", "data", "errors", "config"]) {
+      expect(schema).toHaveProperty(key);
+    }
+    expect(commandKeys).not.toContain("list");
+    expect(commandKeys.some((command) => command.startsWith("list "))).toBe(
+      false,
     );
-    expect(schema.commands["list interactions"]?.opt).toHaveProperty("--limit");
-    expect(schema.commands["list interactions"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list stats"]?.opt).toHaveProperty("--json");
-    expect(schema.commands["list all"]?.opt).toHaveProperty("--json");
     for (const command of [
       "check",
       "learn",
       "constitution set",
       "constitution get",
       "constitution reset",
+      "session",
+      "verify",
     ]) {
+      expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
         "--session",
       );
