@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,14 +294,14 @@ describe("runDemo", () => {
   });
 
   test("spinner tick fires and clears when LLM call takes longer than 80ms", async () => {
+    jest.useFakeTimers();
     // Replace the fetch mock with a delayed version so the spinner interval
     // (80ms) fires at least once before the promise resolves.
     globalThis.fetch = (async (_input, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as AnthropicBody;
       requests.push(body);
-      // Delay first two calls (the two vibeGateTool calls inside withSpinner)
-      // past one spinner tick so the interval callback on line 84 executes.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Advance fake timers by 100ms to trigger the spinner tick
+      jest.advanceTimersByTime(100);
       const text = responseQueue.shift() ?? "fallback-demo-response";
       return new Response(
         JSON.stringify({ content: [{ type: "text", text }] }),
@@ -324,5 +324,6 @@ describe("runDemo", () => {
     expect(output).toContain("✓ Demo complete.");
     expect(getConstitution()).toEqual([]);
     expect(getLearningEntries()).toEqual({});
+    jest.useRealTimers();
   });
 });
