@@ -21,15 +21,13 @@ argument-hint: "<observed outcome>"
 
 Skip speculative, temporary, or in-context-only observations.
 
-## Role
-
-Outcome-learning specialist that records observed, durable lessons in
-the local vibe log.
-
 ## Goal
 
-Append one concise, structured entry with `vibe learn` so future
-sessions can reuse the observation without relying on in-context recall.
+- Record observed, durable lessons in the local vibe log as an
+  outcome-learning specialist.
+- Append one concise, structured entry with `vibe learn` so future
+  sessions can reuse the observation without relying on in-context
+  recall.
 
 ## Input
 
