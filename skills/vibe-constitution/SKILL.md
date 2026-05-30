@@ -24,60 +24,51 @@ argument-hint: "<rule intent, constraint, or reset reason>"
 
 Skip when no concrete rule-management need exists.
 
-## Role
-
-Persistent rule maintainer for the vibe constitution.
-
 ## Goal
 
-Keep `~/.vibe-cli/constitution.json` aligned with the user's current
-standing constraints.
+- Maintain the active vibe constitution rules aligned with user
+  constraints.
 
 ## Input
 
-- Rule text from the user or task context.
-- Reset reason when stale or conflicting rules require replacement.
-- Optional scope notes from current project, repository, or session.
+- Rule text.
+- Reset reason (for stale/conflicting rules).
+- Scope notes (optional).
 
 ## Workflow
 
-1. **Confirm need**—proceed only when a concrete rule-management need
-   exists; don't run on every session start.
-2. **Load CLI schema once per session**—run `vibe schema`; treat output
-   as authoritative for commands, options, outputs, and exit codes.
-3. **Inspect rules**—run `vibe constitution get` before adding,
-   replacing, or clearing rules.
-4. **Classify state**:
-   - Rules match required constraints: make no change.
-   - Rules missing: add with `vibe constitution set`.
-   - Rules stale or conflicting: replace with `vibe constitution reset`.
-   - Rules need clearing: `vibe constitution reset` without rule flags.
-5. **Apply changes**—one constraint per rule flag; preserve still-
-   relevant rules when resetting; avoid broad, vague, or task-only
-   rules.
-6. **Verify**—run `vibe constitution get` after any modification;
-   confirm returned rules match intended standing constraints.
+1. **Confirm need**: Proceed only for concrete rule changes; avoid
+   running on every session start.
+2. **Load schema**: Run `vibe schema` once per session to get commands
+   and flags.
+3. **Inspect rules**: Run `vibe constitution get` before any
+   modification.
+4. **Classify actions**:
+   - Constraints match: Make no change.
+   - Rules absent: Run `vibe constitution set`.
+   - Rules stale/conflicting/clearing: Run `vibe constitution reset`.
+5. **Apply**: Set one constraint per rule flag; avoid broad, temporary,
+   or vague rules.
+6. **Verify**: Run `vibe constitution get` to confirm updates.
 
 ## Directives
 
-- Prefer minimal rule sets that encode durable constraints only.
-- Name and phrase rules so later agents can understand exact intent.
+- Limit rules to durable constraints only.
+- Phrase rules for later agents.
 
 ## Constraints
 
-- Never duplicate live schema output in this skill.
-- Inspect existing rules before mutation.
-- Use reset for stale or conflicting rules; don't stack replacement
-  rules with `set`.
-- Keep rules atomic: one standing constraint per rule flag.
-- Don't add transient task instructions unless they must persist across
-  future checks.
-- Don't call `vibe check` or `vibe learn` from this skill.
+- Avoid duplicating schema output in this skill.
+- Inspect existing rules before modification.
+- Use `reset` to clear or replace rules; don't stack rules via `set`.
+- Keep rules atomic (one constraint per flag).
+- Exclude transient task instructions.
+- Don't call `vibe check` or `vibe learn` within this skill.
 
 ## Verification
 
-- `vibe schema` ran before other `vibe` commands this session.
-- Existing rules inspected before mutation.
-- Final `vibe constitution get` matches intended standing constraints.
-- No stale or conflicting rules remain after reset.
-- No `vibe check` or `vibe learn` call occurred from this skill.
+- Loaded schema before running commands.
+- Inspected existing rules before modification.
+- Verified that final rules match target constraints.
+- Removed all stale/conflicting rules.
+- Avoided `vibe check` and `vibe learn` calls.
