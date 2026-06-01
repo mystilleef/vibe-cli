@@ -1542,6 +1542,66 @@ describe("CLI autosession surface", () => {
     );
   });
 
+  test("prune accepts --category with mixed compatible and incompatible targets", async () => {
+    const cases = [
+      {
+        args: [
+          "prune",
+          "--learnings",
+          "--demos",
+          "--category",
+          "test-category",
+          "--dry-run",
+        ],
+        expectedTargets: ["learnings", "demos"],
+      },
+      {
+        args: [
+          "prune",
+          "--duplicates",
+          "--sessions",
+          "--category",
+          "test-category",
+          "--dry-run",
+        ],
+        expectedTargets: ["duplicates", "sessions"],
+      },
+    ] as const;
+
+    for (const { args, expectedTargets } of cases) {
+      const home = await useTempHome();
+
+      const result = runCli([...args], { home: home.home });
+      const payload = JSON.parse(result.stdout) as {
+        dryRun: boolean;
+        targets: string[];
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(payload.dryRun).toBe(true);
+      expect(payload.targets).toEqual(expect.arrayContaining(expectedTargets));
+      expect(payload.targets).toHaveLength(expectedTargets.length);
+    }
+  });
+
+  test("prune omits negated boolean option variants from its CLI contract", () => {
+    const help = runCli(["prune", "--help"]);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).not.toContain("--no-dry-run");
+    expect(help.stdout).not.toContain("--no-yes");
+
+    for (const option of ["--no-dry-run", "--no-yes"]) {
+      const result = runCli(["prune", option]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("unknown option");
+      expect(result.stderr).toContain(option);
+    }
+  });
+
   test("prune commands never perform provider network calls", async () => {
     const home = await useTempHome();
     const env = {
@@ -1718,6 +1778,35 @@ describe("CLI autosession surface", () => {
     expect(captured).not.toHaveProperty("duplicates");
     expect(captured).not.toHaveProperty("demos");
     expect(captured).not.toHaveProperty("sessions");
+    expect(captured).not.toHaveProperty("dryRun");
+    expect(captured).not.toHaveProperty("yes");
+  });
+
+  test("prune boolean flags include true in runPrune input when provided", async () => {
+    const cases = [
+      { args: ["prune", "--dry-run"], expected: "dryRun" },
+      { args: ["prune", "--yes"], expected: "yes" },
+      { args: ["prune", "-y"], expected: "yes" },
+    ] as const;
+
+    for (const [index, { args, expected }] of cases.entries()) {
+      const home = await useTempHome();
+      const capturePath = join(home.home, `prune-input-${index}.json`);
+
+      const result = runCli([...args], {
+        home: home.home,
+        preload: capturePruneInput,
+        env: { VIBE_PRUNE_CAPTURE: capturePath },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+
+      const captured = JSON.parse(
+        await readFile(capturePath, "utf-8"),
+      ) as Record<string, unknown>;
+      expect(captured[expected]).toBe(true);
+    }
   });
 
   test("prune --learnings includes only learnings:true in runPrune input", async () => {

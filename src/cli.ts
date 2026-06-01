@@ -529,8 +529,8 @@ program
       ...(opts.overlap !== undefined && {
         overlap: parseFloat(opts.overlap),
       }),
-      ...(opts.dryRun !== undefined && { dryRun: opts.dryRun }),
-      ...(opts.yes !== undefined && { yes: opts.yes }),
+      ...(opts.dryRun && { dryRun: opts.dryRun }),
+      ...(opts.yes && { yes: opts.yes }),
     });
     emit(result);
   });
