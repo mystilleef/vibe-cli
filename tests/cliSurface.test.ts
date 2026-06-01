@@ -1078,12 +1078,42 @@ describe("CLI autosession surface", () => {
       "constitution reset",
       "session",
       "verify",
+      "prune",
     ]) {
       expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
         "--session",
       );
     }
+    expect(schema.commands.prune).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: expect.objectContaining({
+        "--learnings": expect.any(String),
+        "--duplicates": expect.any(String),
+        "--demos": expect.any(String),
+        "--sessions": expect.any(String),
+        "--age": expect.any(String),
+        "--category": expect.any(String),
+        "--overlap": expect.any(String),
+        "--dry-run": expect.any(String),
+        "--yes, -y": expect.any(String),
+      }),
+      out: expect.objectContaining({
+        dryRun: expect.any(String),
+        targets: expect.any(String),
+        candidateCounts: expect.any(String),
+        representativeDetails: expect.any(String),
+        backupPath: expect.any(String),
+        deletedCounts: expect.any(String),
+        skippedTargets: expect.any(String),
+        failedTargets: expect.any(String),
+      }),
+      exit: expect.objectContaining({
+        "0": expect.any(String),
+        "1": expect.any(String),
+      }),
+    });
   });
 
   test("schema loads home env file without overriding shell env vars", async () => {
@@ -1337,5 +1367,227 @@ describe("CLI autosession surface", () => {
       rules: ["Prefer tests", "Prefer rollbacks"],
     });
     expect(JSON.parse(reset.stdout)).toMatchObject({ rules: [] });
+  });
+
+  test("prune help output shows all options", () => {
+    const result = runCli(["prune", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("--learnings");
+    expect(result.stdout).toContain("--duplicates");
+    expect(result.stdout).toContain("--demos");
+    expect(result.stdout).toContain("--sessions");
+    expect(result.stdout).toContain("--age <days>");
+    expect(result.stdout).toContain("--category <name>");
+    expect(result.stdout).toContain("--overlap <float>");
+    expect(result.stdout).toContain("--dry-run");
+    expect(result.stdout).toContain("--yes, -y");
+  });
+
+  test("prune dry-run mode works without providers", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      [
+        "prune",
+        "--learnings",
+        "--duplicates",
+        "--demos",
+        "--sessions",
+        "--dry-run",
+      ],
+      {
+        home: home.home,
+        preload: failOnFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_LLM_PROVIDER: "anthropic",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      targets: string[];
+      candidateCounts: Record<string, number>;
+      backupPath: string | null;
+      deletedCounts: Record<string, number>;
+      skippedTargets: string[];
+      failedTargets: unknown[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.targets).toEqual(
+      expect.arrayContaining(["learnings", "duplicates", "demos", "sessions"]),
+    );
+    expect(payload.candidateCounts).toBeDefined();
+    expect(payload.backupPath).toBeNull();
+    expect(payload.deletedCounts).toEqual({
+      learnings: 0,
+      duplicates: 0,
+      demos: 0,
+      sessions: 0,
+    });
+    expect(payload.failedTargets).toEqual([]);
+  });
+
+  test("prune with no targets defaults to dry-run summary", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune"], { home: home.home });
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      targets: string[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.targets).toEqual(
+      expect.arrayContaining(["learnings", "duplicates", "demos", "sessions"]),
+    );
+  });
+
+  test("prune rejects invalid --age", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune", "--learnings", "--age", "-5"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain("--age must be a positive integer");
+  });
+
+  test("prune rejects invalid --overlap", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune", "--duplicates", "--overlap", "1.5"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain(
+      "--overlap must be a float between 0 and 1",
+    );
+  });
+
+  test("prune rejects --category with --demos", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      ["prune", "--demos", "--category", "test-category", "--dry-run"],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain(
+      "--category is only allowed with --learnings or --duplicates",
+    );
+  });
+
+  test("prune rejects --category with --sessions", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      ["prune", "--sessions", "--category", "test-category", "--dry-run"],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain(
+      "--category is only allowed with --learnings or --duplicates",
+    );
+  });
+
+  test("prune commands never perform provider network calls", async () => {
+    const home = await useTempHome();
+    const env = {
+      ANTHROPIC_API_KEY: "ak",
+      DEFAULT_LLM_PROVIDER: "anthropic",
+    };
+    const commands = [
+      ["prune"],
+      ["prune", "--learnings", "--dry-run"],
+      ["prune", "--duplicates", "--dry-run"],
+      ["prune", "--demos", "--dry-run"],
+      ["prune", "--sessions", "--dry-run"],
+      [
+        "prune",
+        "--learnings",
+        "--duplicates",
+        "--demos",
+        "--sessions",
+        "--dry-run",
+      ],
+    ];
+
+    for (const args of commands) {
+      const result = runCli(args, {
+        home: home.home,
+        preload: failOnFetch,
+        env,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toBe("");
+      expect(() => JSON.parse(result.stdout)).not.toThrow();
+    }
+  });
+
+  test("prune destructive requires --yes and emits backup path", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    await seedLearningEntries(home, [
+      {
+        type: "mistake",
+        category: "test",
+        mistake: "Old entry.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const dryRun = runCli(
+      ["prune", "--learnings", "--age", "90", "--dry-run"],
+      { home: home.home },
+    );
+    const dryPayload = JSON.parse(dryRun.stdout) as {
+      dryRun: boolean;
+      candidateCounts: { learnings: number };
+    };
+
+    expect(dryPayload.dryRun).toBe(true);
+    expect(dryPayload.candidateCounts.learnings).toBeGreaterThanOrEqual(1);
+
+    const destructive = runCli(
+      ["prune", "--learnings", "--age", "90", "--yes"],
+      { home: home.home },
+    );
+    const destructivePayload = JSON.parse(destructive.stdout) as {
+      dryRun: boolean;
+      backupPath: string | null;
+      deletedCounts: { learnings: number };
+    };
+
+    expect(destructive.exitCode).toBe(0);
+    expect(destructive.stderr).toBe("");
+    expect(destructivePayload.dryRun).toBe(false);
+    expect(destructivePayload.backupPath).toBeDefined();
+    expect(destructivePayload.backupPath).not.toBeNull();
+    expect(destructivePayload.deletedCounts.learnings).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 });
