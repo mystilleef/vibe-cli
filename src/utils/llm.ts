@@ -209,21 +209,6 @@ async function callOpenCode(model: string, combined: string): Promise<string> {
   });
 }
 
-/** Adapter wrapping `callAnthropic` with the `callProvider`-compatible signature. */
-async function callAnthropicProvider(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature: number,
-): Promise<string> {
-  return callAnthropic({
-    model: model || "claude-haiku-4-5-20251001",
-    systemPrompt,
-    compiledPrompt: userContent,
-    temperature,
-  });
-}
-
 /**
  * Dispatch an LLM call to the resolved provider.
  *
@@ -252,12 +237,12 @@ async function callProvider(
     case "opencode":
       return callOpenCode(model, combined);
     case "anthropic":
-      return callAnthropicProvider(
-        model,
+      return callAnthropic({
+        model: model || "claude-haiku-4-5-20251001",
         systemPrompt,
-        userContent,
+        compiledPrompt: userContent,
         temperature,
-      );
+      });
     default:
       throw new Error(
         `Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`,
@@ -465,7 +450,7 @@ export async function verifyConnection(opts?: {
       ok: false,
       provider,
       model: model || "(default)",
-      error: getErrorMessage(err),
+      error: err instanceof Error ? err.message : String(err),
     };
   }
 }
@@ -519,11 +504,6 @@ interface AnthropicCallOptions {
   maxTokens?: number;
   /** Sampling temperature (default: 0.2). */
   temperature?: number;
-}
-
-/** Extract a human-readable message from an unknown thrown value. */
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Type guard: value is a non-null object. */
