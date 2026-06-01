@@ -519,16 +519,21 @@ program
   .option("--dry-run", "Report candidates without deleting")
   .option("-y, --yes", "Confirm destructive deletion")
   .action((opts) => {
+    const age = opts.age !== undefined ? parseInt(opts.age, 10) : undefined;
+    if (age !== undefined && Number.isNaN(age))
+      fatal("--age must be a valid integer");
+    const overlap =
+      opts.overlap !== undefined ? parseFloat(opts.overlap) : undefined;
+    if (overlap !== undefined && Number.isNaN(overlap))
+      fatal("--overlap must be a valid number between 0 and 1");
     const result = runPrune({
       ...(opts.learnings && { learnings: opts.learnings }),
       ...(opts.duplicates && { duplicates: opts.duplicates }),
       ...(opts.demos && { demos: opts.demos }),
       ...(opts.sessions && { sessions: opts.sessions }),
-      ...(opts.age !== undefined && { age: parseInt(opts.age, 10) }),
+      ...(age !== undefined && { age }),
       ...(opts.category !== undefined && { category: opts.category }),
-      ...(opts.overlap !== undefined && {
-        overlap: parseFloat(opts.overlap),
-      }),
+      ...(overlap !== undefined && { overlap }),
       ...(opts.dryRun && { dryRun: opts.dryRun }),
       ...(opts.yes && { yes: opts.yes }),
     });
