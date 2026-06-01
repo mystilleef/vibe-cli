@@ -14,37 +14,21 @@ import type {
 
 import { applyListLimit, compareListText, groupBy } from "./listDataUtils.js";
 import { DEFAULT_MODELS, detectProvider } from "./llm.js";
-import type { LearningEntry, LearningType } from "./storage.js";
-
-interface LearningRow {
-  id: number;
-  type: LearningType;
-  category: string;
-  mistake: string;
-  solution: string | null;
-  timestamp: number;
-  demo_id: string | null;
-}
+import {
+  type LearningEntry,
+  type LearningEntryStorageRow,
+  type LearningType,
+  learningRowToEntry,
+} from "./storage.js";
 
 interface RuleRow {
   rule: string;
 }
 
-function toLearningDto(row: LearningRow): LearningEntry {
-  return {
-    type: row.type,
-    category: row.category,
-    mistake: row.mistake,
-    ...(row.solution !== null && { solution: row.solution }),
-    timestamp: row.timestamp,
-    ...(row.demo_id !== null && { demoId: row.demo_id }),
-  };
-}
-
-function readLearningRows(): LearningRow[] {
+function readLearningRows(): LearningEntryStorageRow[] {
   return withDatabase((db) =>
     db
-      .query<LearningRow, []>(
+      .query<LearningEntryStorageRow, []>(
         `SELECT id, type, category, mistake, solution, timestamp, demo_id
          FROM learning_entries
          ORDER BY category ASC, timestamp ASC, id ASC`,
@@ -58,7 +42,7 @@ export function readListLearnings(
   filters: ListLearningFilters = {},
 ): LearningEntry[] {
   const filtered = readLearningRows()
-    .map(toLearningDto)
+    .map(learningRowToEntry)
     .filter(
       (entry) => filters.type === undefined || entry.type === filters.type,
     )

@@ -482,7 +482,7 @@ function buildSchema() {
           "--category": "str (filter by learning category)",
           "--overlap": "float=0.6 (0..1 duplicate threshold)",
           "--dry-run": "report candidates without deleting",
-          "--yes, -y": "confirm destructive deletion",
+          "-y, --yes": "confirm destructive deletion",
         },
         out: {
           dryRun: "bool",
@@ -517,20 +517,20 @@ program
     "Duplicate overlap threshold (0..1, default: 0.6)",
   )
   .option("--dry-run", "Report candidates without deleting")
-  .option("--yes, -y", "Confirm destructive deletion")
+  .option("-y, --yes", "Confirm destructive deletion")
   .action((opts) => {
     const result = runPrune({
-      ...(opts.learnings !== undefined && { learnings: true }),
-      ...(opts.duplicates !== undefined && { duplicates: true }),
-      ...(opts.demos !== undefined && { demos: true }),
-      ...(opts.sessions !== undefined && { sessions: true }),
+      ...(opts.learnings && { learnings: opts.learnings }),
+      ...(opts.duplicates && { duplicates: opts.duplicates }),
+      ...(opts.demos && { demos: opts.demos }),
+      ...(opts.sessions && { sessions: opts.sessions }),
       ...(opts.age !== undefined && { age: parseInt(opts.age, 10) }),
       ...(opts.category !== undefined && { category: opts.category }),
       ...(opts.overlap !== undefined && {
         overlap: parseFloat(opts.overlap),
       }),
-      ...(opts.dryRun !== undefined && { dryRun: true }),
-      ...(opts.yes !== undefined && { yes: true }),
+      ...(opts.dryRun !== undefined && { dryRun: opts.dryRun }),
+      ...(opts.yes !== undefined && { yes: opts.yes }),
     });
     emit(result);
   });

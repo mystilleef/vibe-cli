@@ -1,14 +1,16 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEFAULT_PRUNE_AGE_DAYS,
   DEFAULT_PRUNE_OVERLAP_THRESHOLD,
+  type PruneSuccessPayload,
   runPrune,
 } from "../src/tools/prune";
 import { initializeSchema } from "../src/utils/database";
 import type { LearningType } from "../src/utils/storage";
+import { requireBackupPath } from "./helpers/requireBackupPath";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,6 +54,20 @@ function seedLearningEntries(rows: SeedLearningRow[]): number[] {
   });
   db.close();
   return ids;
+}
+
+function readLearningMistakes(category: string): string[] {
+  const db = new Database(join(home.dataRoot, "vibe.db"));
+  try {
+    return db
+      .query<{ mistake: string }, [string]>(
+        "SELECT mistake FROM learning_entries WHERE category = ? ORDER BY id",
+      )
+      .all(category)
+      .map((row) => row.mistake);
+  } finally {
+    db.close();
+  }
 }
 
 type SeedSessionRow = {
@@ -255,6 +271,42 @@ describe("runPrune — validateOverlap (internal)", () => {
     expect(result.candidateCounts.duplicates).toBe(1);
   });
 
+  test("includes exact default-threshold overlaps", () => {
+    seedLearningEntries([
+      {
+        category: "threshold",
+        mistake: "alpha beta gamma delta epsilon",
+        timestamp: 10,
+      },
+      {
+        category: "threshold",
+        mistake: "alpha beta gamma zeta eta",
+        timestamp: 20,
+      },
+    ]);
+
+    const result = runPrune({ duplicates: true, dryRun: true });
+    expect(result.candidateCounts.duplicates).toBe(1);
+  });
+
+  test("excludes below default-threshold overlaps", () => {
+    seedLearningEntries([
+      {
+        category: "threshold",
+        mistake: "alpha beta gamma delta epsilon",
+        timestamp: 10,
+      },
+      {
+        category: "threshold",
+        mistake: "alpha beta zeta eta theta",
+        timestamp: 20,
+      },
+    ]);
+
+    const result = runPrune({ duplicates: true, dryRun: true });
+    expect(result.candidateCounts.duplicates).toBe(0);
+  });
+
   test("rejects overlap below 0", () => {
     expect(() =>
       runPrune({ duplicates: true, overlap: -0.1, dryRun: true }),
@@ -277,16 +329,16 @@ describe("runPrune — validateOverlap (internal)", () => {
     ).toThrow("--overlap must be a float between 0 and 1 inclusive");
   });
 
-  test("accepts overlap of exactly 0", () => {
+  test("accepts overlap of exactly 0 for zero-score pairs", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta",
+        mistake: "alpha beta",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta gamma omega",
+        mistake: "gamma delta",
         timestamp: 20,
       },
     ]);
@@ -383,17 +435,10 @@ describe("runPrune — validateCategory (internal)", () => {
     ).toThrow("--category is only allowed with --learnings or --duplicates");
   });
 
-  test("allows --category with no explicit targets (default dry-run)", () => {
-    // No explicit targets → dry-run with all targets → validateCategory sees empty explicitTargets
-    // which means no disallowed target check triggers
-    const result = runPrune({ category: "scope" });
-    expect(result.dryRun).toBe(true);
-    expect(result.targets).toEqual([
-      "learnings",
-      "duplicates",
-      "demos",
-      "sessions",
-    ]);
+  test("rejects --category with no explicit targets", () => {
+    expect(() => runPrune({ category: "scope" })).toThrow(
+      "--category is only allowed with --learnings or --duplicates",
+    );
   });
 });
 
@@ -474,6 +519,18 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
       mistake: "Demo mistake.",
       demoId: "demo-1",
     });
+  });
+
+  test("permits demos representative details without demoId", () => {
+    const detail: PruneSuccessPayload["representativeDetails"]["demos"][number] =
+      {
+        id: 1,
+        category: "demo-cat",
+        mistake: "Demo mistake.",
+      };
+
+    expect(detail.demoId).toBeUndefined();
+    expect(Object.hasOwn(detail, "demoId")).toBe(false);
   });
 
   test("populates sessions representative details", () => {
@@ -558,21 +615,33 @@ describe("runPrune — dry-run mode", () => {
     expect(result.deletedCounts.learnings).toBe(0);
   });
 
-  test("dryRun=true with yes=true still runs dry-run (dry-run wins)", () => {
-    const now = Date.now();
-    seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
-    ]);
+  test("dryRun=true with yes=true rejects the conflicting modes", () => {
+    expect(() =>
+      runPrune({
+        learnings: true,
+        age: 90,
+        dryRun: true,
+        yes: true,
+      }),
+    ).toThrow("--dry-run cannot be combined with --yes");
+  });
 
+  test("false target flags behave like absent target flags", () => {
     const result = runPrune({
-      learnings: true,
-      age: 90,
+      learnings: false,
+      duplicates: false,
+      demos: false,
+      sessions: false,
       dryRun: true,
-      yes: true,
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.deletedCounts.learnings).toBe(0);
+    expect(result.targets).toEqual([
+      "learnings",
+      "duplicates",
+      "demos",
+      "sessions",
+    ]);
   });
 });
 
@@ -580,7 +649,7 @@ describe("runPrune — dry-run mode", () => {
 // runPrune — destructive mode
 // ---------------------------------------------------------------------------
 describe("runPrune — destructive mode", () => {
-  test("deletes stale learning entries with --yes", () => {
+  test("creates a backup and deletes stale learning entries with --yes", () => {
     const now = Date.now();
     const oldMs = now - 100 * DAY_MS;
     const recentMs = now - 10 * DAY_MS;
@@ -596,11 +665,42 @@ describe("runPrune — destructive mode", () => {
     });
 
     expect(result.dryRun).toBe(false);
+    const backupPath = requireBackupPath(result);
+    expect(backupPath).toContain("backups");
     // Only the entry older than 90 days should be deleted
     expect(result.deletedCounts.learnings).toBe(1);
-    expect(result.backupPath).toBeDefined();
-    expect(result.backupPath).not.toBeNull();
     expect(result.failedTargets).toEqual([]);
+  });
+
+  test("reports backup failure and preserves rows with --yes", () => {
+    const now = Date.now();
+    seedLearningEntries([
+      {
+        category: "old",
+        mistake: "kept after backup failure",
+        timestamp: now - 100 * DAY_MS,
+      },
+    ]);
+    writeFileSync(join(home.dataRoot, "backups"), "not a directory", "utf8");
+
+    const result = runPrune({
+      learnings: true,
+      age: 90,
+      yes: true,
+    });
+
+    expect(result.dryRun).toBe(false);
+    expect(result.backupPath).toBeNull();
+    expect(result.failedTargets).toEqual([
+      { target: "backup", message: expect.any(String) },
+    ]);
+    expect(result.deletedCounts).toEqual({
+      learnings: 0,
+      duplicates: 0,
+      demos: 0,
+      sessions: 0,
+    });
+    expect(readLearningMistakes("old")).toEqual(["kept after backup failure"]);
   });
 
   test("deletes duplicate learning entries with --yes", () => {

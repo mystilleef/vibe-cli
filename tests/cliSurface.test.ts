@@ -19,6 +19,12 @@ const mockAnthropicFetch = join(
   "mockAnthropicFetch.ts",
 );
 const failOnFetch = join(originalCwd, "tests", "helpers", "failOnFetch.ts");
+const capturePruneInput = join(
+  originalCwd,
+  "tests",
+  "helpers",
+  "capturePruneInput.ts",
+);
 
 interface CliResult {
   stdout: string;
@@ -1085,6 +1091,17 @@ describe("CLI autosession surface", () => {
         "--session",
       );
     }
+    expect(Object.keys(schema.commands.prune?.opt ?? {})).toEqual([
+      "--learnings",
+      "--duplicates",
+      "--demos",
+      "--sessions",
+      "--age",
+      "--category",
+      "--overlap",
+      "--dry-run",
+      "-y, --yes",
+    ]);
     expect(schema.commands.prune).toMatchObject({
       when: expect.any(String),
       req: {},
@@ -1097,7 +1114,7 @@ describe("CLI autosession surface", () => {
         "--category": expect.any(String),
         "--overlap": expect.any(String),
         "--dry-run": expect.any(String),
-        "--yes, -y": expect.any(String),
+        "-y, --yes": expect.any(String),
       }),
       out: expect.objectContaining({
         dryRun: expect.any(String),
@@ -1382,7 +1399,7 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toContain("--category <name>");
     expect(result.stdout).toContain("--overlap <float>");
     expect(result.stdout).toContain("--dry-run");
-    expect(result.stdout).toContain("--yes, -y");
+    expect(result.stdout).toContain("-y, --yes");
   });
 
   test("prune dry-run mode works without providers", async () => {
@@ -1475,6 +1492,21 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toBe("");
     expect(payload.error).toContain(
       "--overlap must be a float between 0 and 1",
+    );
+  });
+
+  test("prune rejects --category with no explicit targets", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune", "--category", "scope", "--dry-run"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain(
+      "--category is only allowed with --learnings or --duplicates",
     );
   });
 
@@ -1589,5 +1621,163 @@ describe("CLI autosession surface", () => {
     expect(destructivePayload.deletedCounts.learnings).toBeGreaterThanOrEqual(
       1,
     );
+  });
+
+  test("prune destructive accepts -y short flag", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    await seedLearningEntries(home, [
+      {
+        type: "mistake",
+        category: "test",
+        mistake: "Old entry.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const result = runCli(["prune", "--learnings", "--age", "90", "-y"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      backupPath: string | null;
+      deletedCounts: { learnings: number };
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(false);
+    expect(payload.backupPath).not.toBeNull();
+    expect(payload.deletedCounts.learnings).toBeGreaterThanOrEqual(1);
+  });
+
+  test("prune rejects simultaneous --dry-run and --yes", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    await seedLearningEntries(home, [
+      {
+        type: "mistake",
+        category: "test",
+        mistake: "Old entry.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const result = runCli(
+      ["prune", "--learnings", "--age", "90", "--dry-run", "--yes"],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain("--dry-run cannot be combined with --yes");
+
+    const dryRun = runCli(
+      ["prune", "--learnings", "--age", "90", "--dry-run"],
+      { home: home.home },
+    );
+    const dryPayload = JSON.parse(dryRun.stdout) as {
+      candidateCounts: { learnings: number };
+    };
+    expect(dryPayload.candidateCounts.learnings).toBeGreaterThanOrEqual(1);
+  });
+
+  test("prune with no flags excludes all four target flags from runPrune input", async () => {
+    const home = await useTempHome();
+    const capturePath = join(home.home, "prune-input.json");
+
+    const result = runCli(["prune"], {
+      home: home.home,
+      preload: capturePruneInput,
+      env: { VIBE_PRUNE_CAPTURE: capturePath },
+    });
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      targets: string[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.targets).toEqual([
+      "learnings",
+      "duplicates",
+      "demos",
+      "sessions",
+    ]);
+
+    // Verify the input to runPrune: unset flags must not appear at all
+    const captured = JSON.parse(await readFile(capturePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    expect(captured).not.toHaveProperty("learnings");
+    expect(captured).not.toHaveProperty("duplicates");
+    expect(captured).not.toHaveProperty("demos");
+    expect(captured).not.toHaveProperty("sessions");
+  });
+
+  test("prune --learnings includes only learnings:true in runPrune input", async () => {
+    const home = await useTempHome();
+    const capturePath = join(home.home, "prune-input.json");
+
+    const result = runCli(["prune", "--learnings"], {
+      home: home.home,
+      preload: capturePruneInput,
+      env: { VIBE_PRUNE_CAPTURE: capturePath },
+    });
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      targets: string[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.targets).toEqual(["learnings"]);
+
+    const captured = JSON.parse(await readFile(capturePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    expect(captured.learnings).toBe(true);
+    expect(captured).not.toHaveProperty("duplicates");
+    expect(captured).not.toHaveProperty("demos");
+    expect(captured).not.toHaveProperty("sessions");
+  });
+
+  test("prune --duplicates --demos includes only those two flags in runPrune input", async () => {
+    const home = await useTempHome();
+    const capturePath = join(home.home, "prune-input.json");
+
+    const result = runCli(["prune", "--duplicates", "--demos"], {
+      home: home.home,
+      preload: capturePruneInput,
+      env: { VIBE_PRUNE_CAPTURE: capturePath },
+    });
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      targets: string[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload.dryRun).toBe(true);
+    expect(payload.targets).toEqual(
+      expect.arrayContaining(["duplicates", "demos"]),
+    );
+    expect(payload.targets).toHaveLength(2);
+
+    const captured = JSON.parse(await readFile(capturePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    expect(captured.duplicates).toBe(true);
+    expect(captured.demos).toBe(true);
+    expect(captured).not.toHaveProperty("learnings");
+    expect(captured).not.toHaveProperty("sessions");
   });
 });

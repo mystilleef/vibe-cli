@@ -123,7 +123,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD = 0.6;
 
-interface LearningEntryStorageRow {
+export interface LearningEntryStorageRow {
   id: number;
   type: LearningType;
   category: string;
@@ -142,9 +142,9 @@ interface SessionPruneStorageRow {
   interactions_count: number;
 }
 
-type LearningRow = Omit<LearningEntryStorageRow, "id">;
-
-function rowToEntry(row: LearningRow): LearningEntry {
+export function learningRowToEntry(
+  row: LearningEntryStorageRow,
+): LearningEntry {
   return {
     type: row.type,
     category: row.category,
@@ -160,7 +160,7 @@ function rowToPruneCandidate(
 ): LearningPruneCandidate {
   return {
     id: row.id,
-    ...rowToEntry(row),
+    ...learningRowToEntry(row),
   };
 }
 
@@ -245,13 +245,18 @@ export function getLearningOverlapScore(left: string, right: string): number {
   return overlap.length / Math.min(leftWords.length, rightWords.length);
 }
 
+/**
+ * Return whether two learning descriptions meet the duplicate threshold.
+ *
+ * `overlapThreshold === 0` includes zero-score pairs because every overlap
+ * score satisfies `score >= 0`.
+ */
 export function isLearningOverlapDuplicate(
   left: string,
   right: string,
   overlapThreshold = DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
 ): boolean {
-  const score = getLearningOverlapScore(left, right);
-  return score > 0 && score >= overlapThreshold;
+  return getLearningOverlapScore(left, right) >= overlapThreshold;
 }
 
 /**
@@ -301,11 +306,11 @@ export function addLearningEntry(
 export function getLearningEntries(): Record<string, LearningEntry[]> {
   return withDatabase((db) =>
     db
-      .query<LearningRow, []>(
-        "SELECT type, category, mistake, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
+      .query<LearningEntryStorageRow, []>(
+        "SELECT id, type, category, mistake, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
       )
       .all()
-      .map(rowToEntry),
+      .map(learningRowToEntry),
   ).reduce<Record<string, LearningEntry[]>>((grouped, entry) => {
     if (!grouped[entry.category]) grouped[entry.category] = [];
     grouped[entry.category]?.push(entry);
@@ -325,23 +330,21 @@ export function collectStaleLearningPruneCandidates({
   now = Date.now(),
 }: StaleLearningPruneOptions): LearningPruneCandidate[] {
   const cutoff = now - ageDays * DAY_MS;
-  return withDatabase((db) => {
-    if (category !== undefined) {
-      return db
-        .query<LearningEntryStorageRow, [number, string]>(
-          `${LEARNING_PRUNE_SELECT} WHERE timestamp < ? AND category = ? ${LEARNING_PRUNE_ORDER}`,
-        )
-        .all(cutoff, category)
-        .map(rowToPruneCandidate);
-    }
+  const where =
+    category !== undefined
+      ? "WHERE timestamp < ? AND category = ?"
+      : "WHERE timestamp < ?";
+  const params: (number | string)[] =
+    category !== undefined ? [cutoff, category] : [cutoff];
 
-    return db
-      .query<LearningEntryStorageRow, [number]>(
-        `${LEARNING_PRUNE_SELECT} WHERE timestamp < ? ${LEARNING_PRUNE_ORDER}`,
+  return withDatabase((db) =>
+    db
+      .query<LearningEntryStorageRow, (number | string)[]>(
+        `${LEARNING_PRUNE_SELECT} ${where} ${LEARNING_PRUNE_ORDER}`,
       )
-      .all(cutoff)
-      .map(rowToPruneCandidate);
-  });
+      .all(...params)
+      .map(rowToPruneCandidate),
+  );
 }
 
 /** Return demo-linked learning entries without applying age/category filters. */
@@ -358,8 +361,9 @@ export function collectDemoLearningPruneCandidates(): LearningPruneCandidate[] {
 
 /**
  * Build an undirected graph of duplicate-pair edges across rows within a single
- * category.  Each row starts with an empty adjacency set; an edge is added for
- * every pair whose overlap score meets the threshold.
+ * category. Each row starts with an empty adjacency set; an edge is added for
+ * every pair whose overlap score meets `score >= overlapThreshold`. A threshold
+ * of `0` includes zero-score pairs because every score satisfies `score >= 0`.
  *
  * @returns Adjacency map and the list of qualifying pairwise scores.
  */
@@ -386,7 +390,7 @@ function buildLearningOverlapGraph(
       const right = rows[rightIndex];
       if (right === undefined) continue;
       const score = getLearningOverlapScore(left.mistake, right.mistake);
-      if (score <= 0 || score < overlapThreshold) continue;
+      if (score < overlapThreshold) continue;
       edges.get(left.id)?.add(right.id);
       edges.get(right.id)?.add(left.id);
       scores.push({ firstId: left.id, secondId: right.id, score });
@@ -522,24 +526,21 @@ export function collectStaleSessionPruneCandidates({
   activeSessionId,
 }: StaleSessionPruneOptions): SessionPruneCandidate[] {
   const cutoff = new Date(now - ageDays * DAY_MS).toISOString();
+  const where =
+    activeSessionId !== undefined
+      ? "WHERE s.last_accessed_at < ? AND s.id <> ?"
+      : "WHERE s.last_accessed_at < ?";
+  const params: string[] =
+    activeSessionId !== undefined ? [cutoff, activeSessionId] : [cutoff];
 
-  return withDatabase((db) => {
-    if (activeSessionId !== undefined) {
-      return db
-        .query<SessionPruneStorageRow, [string, string]>(
-          `${SESSION_PRUNE_SELECT} WHERE s.last_accessed_at < ? AND s.id <> ? ${SESSION_PRUNE_ORDER}`,
-        )
-        .all(cutoff, activeSessionId)
-        .map(rowToSessionPruneCandidate);
-    }
-
-    return db
-      .query<SessionPruneStorageRow, [string]>(
-        `${SESSION_PRUNE_SELECT} WHERE s.last_accessed_at < ? ${SESSION_PRUNE_ORDER}`,
+  return withDatabase((db) =>
+    db
+      .query<SessionPruneStorageRow, string[]>(
+        `${SESSION_PRUNE_SELECT} ${where} ${SESSION_PRUNE_ORDER}`,
       )
-      .all(cutoff)
-      .map(rowToSessionPruneCandidate);
-  });
+      .all(...params)
+      .map(rowToSessionPruneCandidate),
+  );
 }
 
 function normalizePruneTargets(

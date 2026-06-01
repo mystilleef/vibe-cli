@@ -15,9 +15,11 @@ import {
   getLearningCategorySummary,
   getLearningContextText,
   getLearningEntries,
+  isLearningOverlapDuplicate,
   type LearningType,
   removeLearningEntriesForDemo,
 } from "../src/utils/storage";
+import { requireBackupPath } from "./helpers/requireBackupPath";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;
@@ -247,12 +249,6 @@ function readLearningRowIds(): number[] {
   );
 }
 
-function requireBackupPath(result: { backupPath: string | null }): string {
-  if (result.backupPath === null) throw new Error("missing backup path");
-  expect(fs.existsSync(result.backupPath)).toBe(true);
-  return result.backupPath;
-}
-
 describe("collectStaleLearningPruneCandidates", () => {
   test("returns empty candidates when no learning entries exist", () => {
     expect(
@@ -400,6 +396,32 @@ describe("collectDemoLearningPruneCandidates", () => {
   });
 });
 
+describe("isLearningOverlapDuplicate", () => {
+  test("includes exact default-threshold overlaps", () => {
+    expect(
+      isLearningOverlapDuplicate(
+        "alpha beta gamma delta epsilon",
+        "alpha beta gamma zeta eta",
+      ),
+    ).toBe(true);
+  });
+
+  test("excludes below-threshold overlaps", () => {
+    expect(
+      isLearningOverlapDuplicate(
+        "alpha beta gamma delta epsilon",
+        "alpha beta zeta eta theta",
+      ),
+    ).toBe(false);
+  });
+
+  test("includes zero-score pairs when threshold is zero", () => {
+    expect(isLearningOverlapDuplicate("alpha beta", "gamma delta", 0)).toBe(
+      true,
+    );
+  });
+});
+
 describe("collectDuplicateLearningPruneGroups", () => {
   test("groups duplicate learning entries within the same category", () => {
     const ids = insertLearningRows([
@@ -469,6 +491,67 @@ describe("collectDuplicateLearningPruneGroups", () => {
       ),
     ).toEqual([
       { keptId: idAt(ids, 1), prunableIds: [idAt(ids, 0)], scores: [0.75] },
+    ]);
+  });
+
+  test("includes exact-threshold duplicate candidates", () => {
+    const ids = insertLearningRows([
+      {
+        category: "boundary",
+        mistake: "alpha beta gamma delta epsilon",
+        timestamp: 10,
+      },
+      {
+        category: "boundary",
+        mistake: "alpha beta gamma zeta eta",
+        timestamp: 20,
+      },
+    ]);
+
+    expect(
+      collectDuplicateLearningPruneGroups().map((group) => ({
+        keptId: group.kept.id,
+        prunableIds: group.prunable.map((candidate) => candidate.id),
+        scores: group.overlapScores.map((score) => score.score),
+      })),
+    ).toEqual([
+      { keptId: idAt(ids, 1), prunableIds: [idAt(ids, 0)], scores: [0.6] },
+    ]);
+  });
+
+  test("excludes below-threshold duplicate candidates", () => {
+    insertLearningRows([
+      {
+        category: "boundary",
+        mistake: "alpha beta gamma delta epsilon",
+        timestamp: 10,
+      },
+      {
+        category: "boundary",
+        mistake: "alpha beta zeta eta theta",
+        timestamp: 20,
+      },
+    ]);
+
+    expect(collectDuplicateLearningPruneGroups()).toEqual([]);
+  });
+
+  test("includes zero-score candidates when overlap threshold is zero", () => {
+    const ids = insertLearningRows([
+      { category: "zero", mistake: "alpha beta", timestamp: 10 },
+      { category: "zero", mistake: "gamma delta", timestamp: 20 },
+    ]);
+
+    expect(
+      collectDuplicateLearningPruneGroups({ overlapThreshold: 0 }).map(
+        (group) => ({
+          keptId: group.kept.id,
+          prunableIds: group.prunable.map((candidate) => candidate.id),
+          scores: group.overlapScores.map((score) => score.score),
+        }),
+      ),
+    ).toEqual([
+      { keptId: idAt(ids, 1), prunableIds: [idAt(ids, 0)], scores: [0] },
     ]);
   });
 
@@ -981,13 +1064,9 @@ describe("createPruneDatabaseBackup", () => {
       backupTimestamp: new Date("2026-02-01T03:04:05.006Z"),
     });
 
-    expect(result.backupPath).toBeDefined();
-    expect(result.backupPath).not.toBeNull();
-    expect(result.backupPath).toContain("backups");
-    expect(result.backupPath).toContain("vibe-prune-");
-    const path = result.backupPath;
-    expect(path).not.toBeNull();
-    if (path !== null) expect(fs.existsSync(path)).toBe(true);
+    const backupPath = requireBackupPath(result);
+    expect(backupPath).toContain("backups");
+    expect(backupPath).toContain("vibe-prune-");
   });
 
   test("backs up with custom directory", () => {
@@ -1009,10 +1088,8 @@ describe("createPruneDatabaseBackup", () => {
       backupDirectory: customBackupDir,
     });
 
-    expect(result.backupPath).toContain("custom-backups");
-    const customPath = result.backupPath;
-    expect(customPath).not.toBeNull();
-    if (customPath !== null) expect(fs.existsSync(customPath)).toBe(true);
+    const customPath = requireBackupPath(result);
+    expect(customPath).toContain("custom-backups");
   });
 
   test("creates backup with readable file at default path", () => {
@@ -1073,6 +1150,30 @@ describe("collectPruneCandidates — overlapThreshold parameter", () => {
       overlapThreshold: 0.7,
     });
     expect(looseCandidates.duplicates).toHaveLength(1);
+  });
+
+  test("includes exact default-threshold duplicate groups", () => {
+    const now = 200 * DAY_MS;
+    insertLearningRows([
+      {
+        category: "candidate-boundary",
+        mistake: "alpha beta gamma delta epsilon",
+        timestamp: 10,
+      },
+      {
+        category: "candidate-boundary",
+        mistake: "alpha beta gamma zeta eta",
+        timestamp: 20,
+      },
+    ]);
+
+    const candidates = collectPruneCandidates({
+      targets: ["duplicates"],
+      ageDays: 90,
+      now,
+    });
+
+    expect(candidates.duplicates).toHaveLength(1);
   });
 
   test("uses default threshold when overlapThreshold is not provided", () => {

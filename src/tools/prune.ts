@@ -13,6 +13,11 @@ import {
 export const DEFAULT_PRUNE_AGE_DAYS = 90;
 export const DEFAULT_PRUNE_OVERLAP_THRESHOLD =
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD;
+const REPR_DETAIL_LIMIT = 5;
+
+function topN<T, U>(items: readonly T[], mapper: (item: T) => U): U[] {
+  return items.slice(0, REPR_DETAIL_LIMIT).map(mapper);
+}
 
 export interface PruneInput {
   learnings?: boolean;
@@ -46,7 +51,7 @@ export interface PruneSuccessPayload {
       id: number;
       category: string;
       mistake: string;
-      demoId: string;
+      demoId?: string;
     }>;
     sessions: Array<{
       sessionId: string;
@@ -81,7 +86,10 @@ function validateCategory(
   explicitTargets: PruneTarget[],
 ): string | undefined {
   if (category === undefined) return undefined;
-  if (explicitTargets.some((t) => t !== "learnings" && t !== "duplicates")) {
+  if (
+    explicitTargets.length === 0 ||
+    explicitTargets.some((t) => t !== "learnings" && t !== "duplicates")
+  ) {
     throw new Error(
       "--category is only allowed with --learnings or --duplicates",
     );
@@ -93,24 +101,24 @@ function extractRepresentativeDetails(
   candidates: PruneCandidateSets,
 ): PruneSuccessPayload["representativeDetails"] {
   return {
-    learnings: candidates.learnings.slice(0, 5).map((entry) => ({
+    learnings: topN(candidates.learnings, (entry) => ({
       id: entry.id,
       category: entry.category,
       mistake: entry.mistake,
       timestamp: entry.timestamp,
     })),
-    duplicates: candidates.duplicates.slice(0, 5).map((group) => ({
+    duplicates: topN(candidates.duplicates, (group) => ({
       category: group.category,
       keptId: group.kept.id,
       prunableIds: group.prunable.map((entry) => entry.id),
     })),
-    demos: candidates.demos.slice(0, 5).map((entry) => ({
+    demos: topN(candidates.demos, (entry) => ({
       id: entry.id,
       category: entry.category,
       mistake: entry.mistake,
-      demoId: entry.demoId ?? "",
+      ...(entry.demoId !== undefined && { demoId: entry.demoId }),
     })),
-    sessions: candidates.sessions.slice(0, 5).map((session) => ({
+    sessions: topN(candidates.sessions, (session) => ({
       sessionId: session.sessionId,
       cwd: session.cwd,
       lastAccessedAt: session.lastAccessedAt,
@@ -120,6 +128,9 @@ function extractRepresentativeDetails(
 
 export function runPrune(input: PruneInput): PruneSuccessPayload {
   const explicitTargets = PRUNE_TARGET_ORDER.filter((t) => input[t]);
+  if (input.dryRun === true && input.yes === true) {
+    throw new Error("--dry-run cannot be combined with --yes");
+  }
   const ageDays = validateAge(input.age);
   const overlapThreshold = validateOverlap(input.overlap);
   const category = validateCategory(input.category, explicitTargets);
@@ -130,13 +141,15 @@ export function runPrune(input: PruneInput): PruneSuccessPayload {
   const targets =
     explicitTargets.length > 0 ? explicitTargets : [...PRUNE_TARGET_ORDER];
 
+  const candidateOptions = {
+    targets,
+    ageDays,
+    ...(category !== undefined && { category }),
+    overlapThreshold,
+  };
+
   if (isDryRun) {
-    const candidates = collectPruneCandidates({
-      targets,
-      ageDays,
-      ...(category !== undefined && { category }),
-      overlapThreshold,
-    });
+    const candidates = collectPruneCandidates(candidateOptions);
 
     return {
       dryRun: true,
@@ -153,10 +166,7 @@ export function runPrune(input: PruneInput): PruneSuccessPayload {
   }
 
   const result: DestructivePruneResult = executeDestructivePrune({
-    targets,
-    ageDays,
-    ...(category !== undefined && { category }),
-    overlapThreshold,
+    ...candidateOptions,
     backupTimestamp: new Date(),
   });
 
