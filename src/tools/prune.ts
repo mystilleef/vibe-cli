@@ -88,7 +88,7 @@ function validateCategory(
   if (category === undefined) return undefined;
   if (
     explicitTargets.length === 0 ||
-    explicitTargets.some((t) => t !== "learnings" && t !== "duplicates")
+    !explicitTargets.some((t) => t === "learnings" || t === "duplicates")
   ) {
     throw new Error(
       "--category is only allowed with --learnings or --duplicates",

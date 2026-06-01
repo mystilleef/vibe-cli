@@ -413,26 +413,24 @@ describe("runPrune — validateCategory (internal)", () => {
     ).toThrow("--category is only allowed with --learnings or --duplicates");
   });
 
-  test("rejects --category with mixed targets including --demos", () => {
-    expect(() =>
-      runPrune({
-        learnings: true,
-        demos: true,
-        category: "scope",
-        dryRun: true,
-      }),
-    ).toThrow("--category is only allowed with --learnings or --duplicates");
+  test("accepts --category with --learnings and --demos together", () => {
+    const result = runPrune({
+      learnings: true,
+      demos: true,
+      category: "scope",
+      dryRun: true,
+    });
+    expect(result.targets).toEqual(["learnings", "demos"]);
   });
 
-  test("rejects --category with mixed targets including --sessions", () => {
-    expect(() =>
-      runPrune({
-        duplicates: true,
-        sessions: true,
-        category: "scope",
-        dryRun: true,
-      }),
-    ).toThrow("--category is only allowed with --learnings or --duplicates");
+  test("accepts --category with --duplicates and --sessions together", () => {
+    const result = runPrune({
+      duplicates: true,
+      sessions: true,
+      category: "scope",
+      dryRun: true,
+    });
+    expect(result.targets).toEqual(["duplicates", "sessions"]);
   });
 
   test("rejects --category with no explicit targets", () => {
