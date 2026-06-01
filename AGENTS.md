@@ -31,6 +31,7 @@ project.
 
 ### Key commands
 
+- `bun fix`: Fix formatting and lint issues with `Biome`.
 - `bun verify`: Execute full verification suite (lint, type-check,
   build, tests).
 - `bun coverage`: Run tests and generate coverage reports.
