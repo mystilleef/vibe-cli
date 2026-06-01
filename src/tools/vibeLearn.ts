@@ -2,6 +2,7 @@ import {
   addLearningEntry,
   getLearningCategorySummary,
   getLearningEntries,
+  isLearningOverlapDuplicate,
   type LearningEntry,
   type LearningType,
 } from "../utils/storage.js";
@@ -63,7 +64,9 @@ export async function vibeLearnTool(
     const category = normalizeCategory(input.category);
 
     const existing = getLearningEntries()[category] || [];
-    const alreadyKnown = existing.some((e) => isSimilar(e.mistake, mistake));
+    const alreadyKnown = existing.some((e) =>
+      isLearningOverlapDuplicate(e.mistake, mistake),
+    );
 
     if (!alreadyKnown) {
       addLearningEntry(mistake, category, solution, entryType, input.demoId);
@@ -95,34 +98,27 @@ function enforceOneSentence(text: string): string {
   return match?.[1] ?? `${cleaned}.`;
 }
 
-function isSimilar(a: string, b: string): boolean {
-  const aWords = a.toLowerCase().split(/\W+/).filter(Boolean);
-  const bWords = b.toLowerCase().split(/\W+/).filter(Boolean);
-  if (!aWords.length || !bWords.length) return false;
-  const overlap = aWords.filter((w) => bWords.includes(w));
-  return overlap.length / Math.min(aWords.length, bWords.length) >= 0.6;
-}
+const CATEGORY_ALIASES: Record<string, string[]> = {
+  "Complex Solution Bias": [
+    "complex",
+    "complicated",
+    "over-engineered",
+    "complexity",
+  ],
+  "Feature Creep": ["feature", "extra", "additional", "scope creep"],
+  "Premature Implementation": ["premature", "early", "jumping", "too quick"],
+  Misalignment: [
+    "misaligned",
+    "wrong direction",
+    "off target",
+    "misunderstood",
+  ],
+  Overtooling: ["overtool", "too many tools", "unnecessary tools"],
+};
 
 function normalizeCategory(category: string): string {
-  const standard: Record<string, string[]> = {
-    "Complex Solution Bias": [
-      "complex",
-      "complicated",
-      "over-engineered",
-      "complexity",
-    ],
-    "Feature Creep": ["feature", "extra", "additional", "scope creep"],
-    "Premature Implementation": ["premature", "early", "jumping", "too quick"],
-    Misalignment: [
-      "misaligned",
-      "wrong direction",
-      "off target",
-      "misunderstood",
-    ],
-    Overtooling: ["overtool", "too many tools", "unnecessary tools"],
-  };
   const lower = category.toLowerCase();
-  for (const [name, keywords] of Object.entries(standard)) {
+  for (const [name, keywords] of Object.entries(CATEGORY_ALIASES)) {
     if (keywords.some((k) => lower.includes(k))) return name;
   }
   return category;
