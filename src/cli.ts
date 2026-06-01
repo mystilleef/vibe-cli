@@ -17,6 +17,7 @@ import {
   updateConstitution,
 } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
+import { runPrune } from "./tools/prune.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
@@ -61,20 +62,15 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
-const PROVIDER_OPTION = "--provider <name>" as const;
-const PROVIDER_DESC =
-  "LLM provider: gemini | openai | openrouter | anthropic | deepseek | opencode";
-const MODEL_OPTION = "--model <name>" as const;
-const MODEL_DESC = "Model name override";
-
-/** Add shared provider and model overrides to commands that call an LLM. */
 function addModelOptions(cmd: Command) {
   return cmd
-    .option(PROVIDER_OPTION, PROVIDER_DESC)
-    .option(MODEL_OPTION, MODEL_DESC);
+    .option(
+      "--provider <name>",
+      "LLM provider: gemini | openai | openrouter | anthropic | deepseek | opencode",
+    )
+    .option("--model <name>", "Model name override");
 }
 
-/** Return a model override payload only when callers supplied override flags. */
 function resolveModelOverride(opts: { provider?: string; model?: string }) {
   return opts.provider || opts.model
     ? {
@@ -86,17 +82,12 @@ function resolveModelOverride(opts: { provider?: string; model?: string }) {
     : {};
 }
 
-/** Write pretty list output without changing existing JSON emit behavior. */
-function writePretty(text: string): void {
-  process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
-}
-
 function emitListResult<T>(command: Command, data: T, pretty: string): void {
   if ((command.optsWithGlobals() as { json?: boolean }).json) {
     emit(data);
     return;
   }
-  writePretty(pretty);
+  process.stdout.write(pretty.endsWith("\n") ? pretty : `${pretty}\n`);
 }
 
 /**
@@ -479,9 +470,70 @@ function buildSchema() {
         req: {},
         out: { session: "str", rules: "[str]" },
       },
+      prune: {
+        when: "clean up stale or duplicate local data; always report candidates before deleting",
+        req: {},
+        opt: {
+          "--learnings": "target stale learning entries",
+          "--duplicates": "target duplicate learning entries",
+          "--demos": "target demo-linked learning entries",
+          "--sessions": "target stale sessions",
+          "--age": "int=90 (days cutoff)",
+          "--category": "str (filter by learning category)",
+          "--overlap": "float=0.6 (0..1 duplicate threshold)",
+          "--dry-run": "report candidates without deleting",
+          "--yes, -y": "confirm destructive deletion",
+        },
+        out: {
+          dryRun: "bool",
+          targets: "[str]",
+          candidateCounts:
+            "{learnings:int,duplicates:int,demos:int,sessions:int}",
+          representativeDetails:
+            "{learnings:[],duplicates:[],demos:[],sessions:[]}",
+          backupPath: "str|null",
+          deletedCounts:
+            "{learnings:int,duplicates:int,demos:int,sessions:int}",
+          skippedTargets: "[str]",
+          failedTargets: "[{target:str,error:str}]",
+        },
+        exit: { "0": "success", "1": "error" },
+      },
     },
   };
 }
+
+program
+  .command("prune")
+  .description("Report or delete local prune candidates with backup safeguards")
+  .option("--learnings", "Target stale learning entries")
+  .option("--duplicates", "Target duplicate learning entries")
+  .option("--demos", "Target demo-linked learning entries")
+  .option("--sessions", "Target stale sessions")
+  .option("--age <days>", "Age cutoff in days (default: 90)")
+  .option("--category <name>", "Filter by learning category")
+  .option(
+    "--overlap <float>",
+    "Duplicate overlap threshold (0..1, default: 0.6)",
+  )
+  .option("--dry-run", "Report candidates without deleting")
+  .option("--yes, -y", "Confirm destructive deletion")
+  .action((opts) => {
+    const result = runPrune({
+      ...(opts.learnings !== undefined && { learnings: true }),
+      ...(opts.duplicates !== undefined && { duplicates: true }),
+      ...(opts.demos !== undefined && { demos: true }),
+      ...(opts.sessions !== undefined && { sessions: true }),
+      ...(opts.age !== undefined && { age: parseInt(opts.age, 10) }),
+      ...(opts.category !== undefined && { category: opts.category }),
+      ...(opts.overlap !== undefined && {
+        overlap: parseFloat(opts.overlap),
+      }),
+      ...(opts.dryRun !== undefined && { dryRun: true }),
+      ...(opts.yes !== undefined && { yes: true }),
+    });
+    emit(result);
+  });
 
 program
   .command("schema")
