@@ -8,14 +8,13 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "biome check --error-on-warnings .",
-    "fix": "biome check --write --unsafe .",
+    "lint": "biome check --write --unsafe --error-on-warnings .",
     "migrate": "biome migrate --write",
     "coverage": "bun test --coverage",
     "dev": "bun run src/cli.ts",
     "build": "bun build --compile --minify src/cli.ts --outfile dist/vibe",
     "check": "bun lint && bun typecheck",
-    "verify": "bun migrate && bun fix && bun typecheck && bun run build && bun coverage"
+    "verify": "bun migrate && bun check && bun run build && bun coverage"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -15,7 +15,7 @@ migrate:
 	bun migrate
 
 install:
-	bun install
+	bun update --latest
 
 update:
 	bun update --latest
