@@ -3,7 +3,6 @@ import { type VibeCheckInput, vibeCheckTool } from "./vibeCheck.js";
 
 export type { VibeCheckInput };
 
-/** Contains the gate verdict, supporting feedback, and reviewed plan state. */
 export interface VibeGateOutput {
   /** Whether the caller may proceed with the reviewed plan. */
   proceed: boolean;
@@ -79,6 +78,7 @@ export async function vibeGateLoop(
         goal: input.goal,
         plan,
         feedback: last.questions,
+        blockReason: last.reason,
         ...(input.modelOverride !== undefined && {
           modelOverride: input.modelOverride,
         }),

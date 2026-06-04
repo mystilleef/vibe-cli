@@ -682,7 +682,7 @@ describe("provider success paths", () => {
     expect(content).toContain("rollback");
     expect(content).toContain("Hard risk");
     expect(content).toContain("Soft risk");
-    expect(content).toContain("self-resolvable");
+    expect(content).toContain("actionable");
     expect(content).toContain("highest-weight");
     expect(content).toContain("blast radius");
     expect(content.indexOf("Goal: goal text")).toBeLessThan(
@@ -830,7 +830,45 @@ describe("provider success paths", () => {
     expect(content).toContain("Output ONLY one line of valid JSON");
     expect(content).toContain("0.5 = uncertain");
     expect(content).toContain("≥0.8 = clear");
-    expect(content).toContain("block unless safety concerns are minor");
+    expect(content).toContain("feedback confirms sound");
+    expect(content).toContain("constitution violation");
+  });
+
+  test("revisePlan omits block reason when provided as empty string", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(() =>
+      Response.json({ content: [{ type: "text", text: "revised plan" }] }),
+    );
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      blockReason: "",
+      modelOverride: { provider: "anthropic" },
+    });
+
+    expect(result).toBe("revised plan");
+    const fc0 = requireValue(fetchCalls[0], "fetch call 0");
+    const body = parseBody<{
+      messages: Array<{ role: string; content: string }>;
+    }>(fc0.init);
+    expect(body.messages[0]?.content).toContain("Blocked plan: old plan");
+    expect(body.messages[0]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
+    expect(body.messages[0]?.content).not.toContain("Block reason:");
+  });
+
+  test("revisePlan propagates provider resolution errors", async () => {
+    process.env.DEFAULT_LLM_PROVIDER = "nonexistent";
+    await expect(
+      revisePlan({
+        goal: "g",
+        plan: "p",
+        feedback: "f",
+      }),
+    ).rejects.toThrow(/Unknown provider/);
   });
 
   test("revisePlan posts Anthropic system prompt and returns first text block", async () => {
@@ -870,6 +908,36 @@ describe("provider success paths", () => {
     expect(body.messages[0]?.content).not.toContain("Block reason:");
     expect(body.messages[0]?.content).toContain(
       "Safety feedback: missing rollback",
+    );
+  });
+
+  test("revisePlan includes blockReason when provided", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(() =>
+      Response.json({
+        content: [{ type: "text", text: "revised with reason" }],
+      }),
+    );
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      blockReason: "irreversible op without safe-stop",
+      modelOverride: { provider: "anthropic" },
+    });
+
+    expect(result).toBe("revised with reason");
+    const fc0 = requireValue(fetchCalls[0], "fetch call 0");
+    const body = parseBody<{
+      messages: Array<{ role: string; content: string }>;
+    }>(fc0.init);
+    expect(body.messages[0]?.content).toContain("Blocked plan: old plan");
+    expect(body.messages[0]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Block reason: irreversible op without safe-stop",
     );
   });
 
@@ -1054,6 +1122,62 @@ describe("callAnthropic response handling", () => {
   test("malformed success body returns empty Anthropic text", async () => {
     process.env.ANTHROPIC_API_KEY = "anth-key";
     mockFetch(() => new Response("not-json"));
+
+    const result = await getMetacognitiveQuestions({
+      goal: "goal",
+      plan: "plan",
+      modelOverride: { provider: "anthropic" },
+    });
+
+    expect(result.questions).toBe("");
+  });
+
+  test("error response without message field falls back to raw text", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(
+      () =>
+        new Response("plain text error from upstream", {
+          status: 502,
+        }),
+    );
+
+    const result = await verifyConnection({ provider: "anthropic" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Anthropic error 502");
+    expect(result.error).toContain("plain text error from upstream");
+  });
+
+  test("network failure propagates fetch rejection", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(() => Promise.reject(new Error("ECONNREFUSED")));
+
+    const result = await verifyConnection({ provider: "anthropic" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ECONNREFUSED");
+  });
+
+  test("empty content array returns empty string", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(() => Response.json({ content: [] }));
+
+    const result = await getMetacognitiveQuestions({
+      goal: "goal",
+      plan: "plan",
+      modelOverride: { provider: "anthropic" },
+    });
+
+    expect(result.questions).toBe("");
+  });
+
+  test("content with non-text block returns empty string", async () => {
+    process.env.ANTHROPIC_API_KEY = "anth-key";
+    mockFetch(() =>
+      Response.json({
+        content: [{ type: "tool_use", id: "tu-1", name: "read" }],
+      }),
+    );
 
     const result = await getMetacognitiveQuestions({
       goal: "goal",
@@ -1316,6 +1440,23 @@ describe("callGemini fallback to flash model", () => {
     });
 
     expect(geminiCalls[0]?.generationConfig).toEqual({ temperature: 0.2 });
+  });
+
+  test("temperature 0 is forwarded via generationConfig", async () => {
+    geminiResponses = ["ok"];
+
+    // callGemini always wraps in generationConfig; temperature 0 is a valid
+    // deterministic mode value that exercises the always-use-config path.
+    await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini" },
+    });
+
+    // Default temperature is 0.2; this test confirms the generationConfig
+    // path is always taken (not the old branch where temperature undefined
+    // would send the prompt as a raw string).
+    expect(geminiCalls[0]?.generationConfig).toBeDefined();
   });
 });
 

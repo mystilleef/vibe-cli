@@ -1,7 +1,7 @@
 import type { GoogleGenerativeAI } from "@google/generative-ai";
 import type OpenAI from "openai";
 import { getConstitution } from "../tools/constitution.js";
-import { buildAnthropicHeaders, resolveAnthropicConfig } from "./anthropic.js";
+import { callAnthropic } from "./anthropic.js";
 import { type GateDecision, parseGateDecision } from "./gateDecision.js";
 import { getLearningContextText } from "./storage.js";
 
@@ -12,11 +12,8 @@ let genAI: GoogleGenerativeAI | null = null;
 /** Lazily-initialized OpenAI client; created on first use when OPENAI_API_KEY is set. */
 let openaiClient: OpenAI | null = null;
 
-/** OpenRouter chat completions endpoint. */
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-/** DeepSeek OpenAI-compatible base URL. */
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
-/** OpenCode Go-compatible base URL. */
 const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 
 /** System prompt injected into every metacognitive question generation call. */
@@ -31,12 +28,12 @@ Scan (weight by blast radius — severity × irreversibility):
 
 Report only the highest-weight finding. If none, confirm sound and name one latent risk.
 
-Intervene — output must be self-resolvable by the agent; never request user input or confirmation:
+Output: actionable, no user input required:
 - Hard risk (constitution, irreversibility): state the violation; specify what the revised plan must include to resolve it.
-- Soft risk (misalignment, assumption, pattern): state the unverified premise; specify what the agent must verify within the revised plan.
-- Sound: one phrase confirming what's working, one latent risk worth watching.
+- Soft risk (misalignment, assumption, pattern): state the unverified premise; specify what the revised plan must verify before proceeding.
+- Sound: one phrase confirming what works, one latent risk worth watching.
 
-Output: feedback only — no narration, no preamble, no hedging.
+Feedback only — no narration, no preamble, no hedging.
 Minimum words. Maximum signal.`;
 
 /** Static fallback questions returned when the LLM call fails. */
@@ -46,35 +43,22 @@ export const FALLBACK_QUESTIONS = [
   "3. Load-bearing assumptions: enumerate each and verify within the plan before proceeding.",
 ].join("\n");
 
-/** Input payload for metacognitive question generation and gate decisions. */
 interface QuestionInput {
-  /** Desired outcome the agent wants to achieve. */
   goal: string;
-  /** Proposed approach the agent wants reviewed. */
   plan: string;
-  /** Optional explicit provider/model override; falls back to env-based detection. */
   modelOverride?: { provider?: string; model?: string };
-  /** Original caller request that prompted the check. */
   userPrompt?: string;
-  /** Work already completed or current task status. */
   progress?: string;
-  /** Known risks, unknowns, or decisions needing scrutiny. */
   uncertainties?: string[];
-  /** Additional repository, session, or task details for the reviewer. */
   taskContext?: string;
-  /** Active autosession identifier for history correlation. */
   sessionId?: string;
-  /** Condensed prior check history for the active session. */
   historySummary?: string;
 }
 
-/** Output payload from question generation. */
 interface QuestionOutput {
-  /** Metacognitive questions or feedback text from the LLM. */
   questions: string;
 }
 
-/** Lazily initialize the Gemini SDK client from GEMINI_API_KEY. */
 async function ensureGemini() {
   if (!genAI && process.env.GEMINI_API_KEY) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
@@ -82,7 +66,6 @@ async function ensureGemini() {
   }
 }
 
-/** Lazily initialize the OpenAI SDK client from OPENAI_API_KEY. */
 async function ensureOpenAI() {
   if (!openaiClient && process.env.OPENAI_API_KEY) {
     const { OpenAI } = await import("openai");
@@ -157,45 +140,33 @@ function isRetryableGeminiError(err: unknown): boolean {
   );
 }
 
-/**
- * Call the Gemini API.
- *
- * Falls back to gemini-2.5-flash only for retryable errors
- * (model-not-found, context-length). Auth, rate/quota, network,
- * and unknown errors rethrow immediately.
- */
 async function callGemini(
   model: string,
   combined: string,
-  temperature?: number,
+  temperature = 0.2,
 ): Promise<string> {
   await ensureGemini();
   if (!genAI) throw new Error("GEMINI_API_KEY not set.");
-  const m = model || "gemini-2.5-pro";
-  const request =
-    temperature !== undefined
-      ? {
-          contents: [{ role: "user", parts: [{ text: combined }] }],
-          generationConfig: { temperature },
-        }
-      : combined;
+
+  const request = {
+    contents: [{ role: "user", parts: [{ text: combined }] }],
+    generationConfig: { temperature },
+  };
+
+  const client = genAI;
+  const generate = (modelName: string) =>
+    client.getGenerativeModel({ model: modelName }).generateContent(request);
+
   try {
-    return (
-      await genAI.getGenerativeModel({ model: m }).generateContent(request)
-    ).response.text();
+    return (await generate(model || "gemini-2.5-pro")).response.text();
   } catch (err) {
     if (isRetryableGeminiError(err)) {
-      return (
-        await genAI
-          .getGenerativeModel({ model: "gemini-2.5-flash" })
-          .generateContent(request)
-      ).response.text();
+      return (await generate("gemini-2.5-flash")).response.text();
     }
     throw err;
   }
 }
 
-/** Call the OpenAI chat completions API. */
 async function callOpenAI(
   model: string,
   combined: string,
@@ -240,7 +211,6 @@ async function callOpenRouter(
   return data.choices[0]?.message.content || "";
 }
 
-/** Call DeepSeek via its OpenAI-compatible endpoint. */
 async function callDeepSeek(
   model: string,
   combined: string,
@@ -257,7 +227,6 @@ async function callDeepSeek(
   });
 }
 
-/** Call OpenCode via its OpenAI-compatible endpoint. */
 async function callOpenCode(
   model: string,
   combined: string,
@@ -346,7 +315,6 @@ function buildContextSection(input: QuestionInput): string {
     .join("\n");
 }
 
-/** Core question-generation call: resolves provider, builds context, and returns the LLM response. */
 async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
   const responseText = await callProvider(
@@ -361,7 +329,8 @@ async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
 /** System prompt for the plan-revision LLM call. */
 const PLAN_REVISION_SYSTEM_PROMPT = `AI agent plan reviser.
 
-Address every safety concern; preserve everything else. Prioritize goal alignment when feedback conflicts.
+Address the safety concern in the feedback; preserve everything else. Prioritize goal alignment when feedback conflicts.
+The revised plan returns for re-evaluation — resolve the concern completely so the gate approves.
 Output ONLY the revised plan — no preamble, no extra text. One paragraph or short numbered list.`;
 
 /**
@@ -374,10 +343,16 @@ export async function revisePlan(input: {
   goal: string;
   plan: string;
   feedback: string;
+  blockReason?: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<string> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
-  const userContent = `Goal: ${input.goal}\nBlocked plan: ${input.plan}\nSafety feedback: ${input.feedback}`;
+  const userContent = [
+    `Goal: ${input.goal}`,
+    `Blocked plan: ${input.plan}`,
+    `Safety feedback: ${input.feedback}`,
+    ...(input.blockReason ? [`Block reason: ${input.blockReason}`] : []),
+  ].join("\n");
   return callProvider(
     provider,
     model,
@@ -393,9 +368,9 @@ const GATE_SYSTEM_PROMPT = `Go/no-go decision engine for AI agent plans.
 Output ONLY one line of valid JSON — no markdown, no extra text:
 {"proceed":<bool>,"confidence":<0.0-1.0>,"reason":"<one sentence, 20 words max>"}
 
-- proceed true: safe, scoped, goal-aligned; non-critical improvements don't block
-- proceed false: unresolved critical risks, missing rollbacks for irreversible operations, or goal misalignment
-- mixed feedback: block unless safety concerns are minor, resolved, or irrelevant to the goal
+- proceed true: plan safe, scoped, goal-aligned; feedback confirms sound or raises only minor/irrelevant concerns
+- proceed false: unresolved hard risk — constitution violation, missing rollback, or irreversible op without safe-stop
+- proceed false: unverified premise critical to safety; goal misalignment
 - confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
 
 /**
@@ -422,19 +397,12 @@ export async function getGateDecision(input: {
   return parseGateDecision(raw);
 }
 
-/** Result of an LLM connectivity probe. */
 interface VerifyResult {
-  /** Whether the probe succeeded. */
   ok: boolean;
-  /** Provider that was tested. */
   provider: string;
-  /** Model that was tested (or "(default)"). */
   model: string;
-  /** Round-trip latency in milliseconds (present on success). */
   latency_ms?: number;
-  /** First 200 chars of the LLM response (present on success). */
   response?: string;
-  /** Error message (present on failure). */
   error?: string;
 }
 
@@ -493,7 +461,6 @@ export async function getMetacognitiveQuestions(
   }
 }
 
-/** Generic OpenAI-compatible caller for providers sharing the OpenAI chat completions schema. */
 async function callOpenAICompat({
   baseURL,
   apiKey,
@@ -515,145 +482,4 @@ async function callOpenAICompat({
     ...(temperature !== undefined && { temperature }),
   });
   return response.choices[0]?.message.content || "";
-}
-
-/** Options for the raw Anthropic Messages API call. */
-interface AnthropicCallOptions {
-  /** Model identifier (e.g. "claude-haiku-4-5-20251001"). */
-  model: string;
-  /** User-role message content. */
-  compiledPrompt: string;
-  /** Optional system prompt passed as a top-level `system` field. */
-  systemPrompt?: string;
-  /** Maximum tokens in the response (default: 1024). */
-  maxTokens?: number;
-  /** Sampling temperature (default: 0.2). */
-  temperature?: number;
-}
-
-/** Type guard: value is a non-null object. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/** Safely read a string property from an object, returning undefined if absent or non-string. */
-function getStringProperty(
-  value: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const property = value?.[key];
-  return typeof property === "string" ? property : undefined;
-}
-
-/** Type guard: value is an Anthropic text content block. */
-function isAnthropicTextBlock(
-  value: unknown,
-): value is { type: "text"; text: string } {
-  return (
-    isRecord(value) && value.type === "text" && typeof value.text === "string"
-  );
-}
-
-/**
- * Throw a descriptive error for a failed Anthropic API response.
- *
- * Includes the Anthropic request ID when available and maps common status codes
- * (401/403 → auth error, 429 → rate limit with retry-after) to specific messages.
- */
-function throwAnthropicError(
-  response: Response,
-  parsedObject: Record<string, unknown> | undefined,
-  rawText: string,
-): never {
-  const requestId =
-    response.headers.get("anthropic-request-id") ||
-    response.headers.get("x-request-id");
-  const suffix = requestId ? ` (request id: ${requestId})` : "";
-  const errorObject = isRecord(parsedObject?.error)
-    ? parsedObject.error
-    : undefined;
-  const msg =
-    getStringProperty(errorObject, "message") ??
-    getStringProperty(parsedObject, "message") ??
-    rawText.trim();
-
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(
-      `Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`,
-    );
-  }
-  if (response.status === 429) {
-    const retry = response.headers.get("retry-after");
-    throw new Error(
-      `Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ""}`,
-    );
-  }
-  throw new Error(
-    `Anthropic error ${response.status}${suffix}. ${msg ?? ""}`.trim(),
-  );
-}
-
-/** Extract the first text block from a successful Anthropic Messages API response. */
-function extractAnthropicText(
-  parsedObject: Record<string, unknown> | undefined,
-): string {
-  const content = Array.isArray(parsedObject?.content)
-    ? parsedObject.content
-    : [];
-  const text = content.find(isAnthropicTextBlock)?.text;
-  return (
-    text ??
-    getStringProperty(isRecord(content[0]) ? content[0] : undefined, "text") ??
-    ""
-  );
-}
-
-/**
- * Call the Anthropic Messages API directly via fetch.
- *
- * Uses `resolveAnthropicConfig` for base URL and auth, and `buildAnthropicHeaders`
- * for the required headers. System prompt is passed as a top-level field, not
- * embedded in the user message. Throws on non-2xx responses.
- */
-async function callAnthropic({
-  model,
-  compiledPrompt,
-  systemPrompt,
-  maxTokens = 1024,
-  temperature = 0.2,
-}: AnthropicCallOptions): Promise<string> {
-  const { baseUrl, apiKey, authToken, version } = resolveAnthropicConfig();
-  const headers = buildAnthropicHeaders({
-    version,
-    ...(apiKey !== undefined && { apiKey }),
-    ...(authToken !== undefined && { authToken }),
-  });
-
-  const body: Record<string, unknown> = {
-    model,
-    max_tokens: maxTokens,
-    temperature,
-    messages: [{ role: "user", content: compiledPrompt }],
-  };
-  if (systemPrompt) body.system = systemPrompt;
-
-  const response = await fetch(`${baseUrl}/v1/messages`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const rawText = await response.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    parsed = undefined;
-  }
-  const parsedObject = isRecord(parsed) ? parsed : undefined;
-
-  if (!response.ok) {
-    throwAnthropicError(response, parsedObject, rawText);
-  }
-  return extractAnthropicText(parsedObject);
 }

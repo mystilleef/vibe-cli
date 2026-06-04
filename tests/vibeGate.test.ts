@@ -135,11 +135,15 @@ describe("vibeGateTool", () => {
   });
 
   test("propagates gate provider failures after question fallback", async () => {
-    await expect(
-      vibeGateTool(
+    let thrown: Error | undefined;
+    try {
+      await vibeGateTool(
         input({ modelOverride: { provider: "unsupported-provider" } }),
-      ),
-    ).rejects.toThrow(/Unknown provider/);
+      );
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown?.message).toMatch(/Unknown provider/);
     expect(requests).toHaveLength(0);
   });
 });
@@ -168,7 +172,9 @@ describe("vibeGateLoop", () => {
     expect(requests[2]?.messages?.[0]?.content).toContain(
       "Blocked plan: run focused tests",
     );
-    expect(requests[2]?.messages?.[0]?.content).not.toContain("Block reason:");
+    expect(requests[2]?.messages?.[0]?.content).toContain(
+      "Block reason: missing rollback",
+    );
     expect(requests[2]?.messages?.[0]?.content).toContain(
       "Safety feedback: questions:first",
     );
@@ -232,5 +238,98 @@ describe("vibeGateLoop", () => {
     expect(requests[2]?.messages?.[0]?.content).toContain(
       `Safety feedback: ${FALLBACK_QUESTIONS}`,
     );
+  });
+
+  test("exhausts after maxAttempts blocks without passing", async () => {
+    responseQueue.push(
+      "questions:one",
+      gateDecision(false, 0.2, "block 1"),
+      "revision 1",
+      "questions:two",
+      gateDecision(false, 0.3, "block 2"),
+      "revision 2",
+      "questions:three",
+      gateDecision(false, 0.4, "block 3"),
+    );
+    // maxAttempts=3, after third block no revision call (attempt < maxAttempts is false)
+    const result = await vibeGateLoop(input(), 3);
+
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(3);
+    expect(result.plan).toBe("revision 2");
+    expect(result.confidence).toBe(0.4);
+    expect(result.reason).toBe("block 3");
+    // 3 checks + 3 gates + 2 revisions = 8 requests
+    expect(requests).toHaveLength(8);
+  });
+
+  test("propagates modelOverride through revisePlan calls", async () => {
+    responseQueue.push(
+      "questions:first",
+      gateDecision(false, 0.3, "missing rollback"),
+      "revision with model",
+      "questions:second",
+      gateDecision(true, 0.9, "ok"),
+    );
+
+    const result = await vibeGateLoop(
+      input({
+        modelOverride: { provider: "anthropic", model: "custom-model" },
+      }),
+      2,
+    );
+
+    expect(result.proceed).toBe(true);
+    expect(result.plan).toBe("revision with model");
+    // Verify plan revision call used the overridden model
+    const reviseCall = requests[2];
+    expect(reviseCall?.model).toBe("custom-model");
+    expect(reviseCall?.system).toContain("plan reviser");
+    expect(reviseCall?.messages?.[0]?.content).toContain(
+      "Block reason: missing rollback",
+    );
+  });
+
+  test("propagates error when vibeGateTool throws during loop", async () => {
+    // gate throws with unknown provider
+    try {
+      await vibeGateLoop(
+        input({ modelOverride: { provider: "unsupported-provider" } }),
+        2,
+      );
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect((err as Error).message).toMatch(/Unknown provider/);
+    }
+    expect(requests).toHaveLength(0);
+  });
+
+  test("propagates error when revisePlan throws mid-loop", async () => {
+    responseQueue.push("questions:first", gateDecision(false, 0.3, "blocked"), {
+      status: 500,
+      text: "anthropic internal error",
+    });
+
+    try {
+      await vibeGateLoop(input(), 2);
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect((err as Error).message).toMatch(/Anthropic error 500/);
+    }
+    // 1 check + 1 gate + 1 failed revision = at most 3 requests (revision fetch failed)
+    expect(requests).toHaveLength(3);
+  });
+
+  test("preserves last state when revisePlan fails on final retry attempt", async () => {
+    // Only 1 attempt, blocked, revisePlan crashes → error propagates with last state unknown
+    // But there's no revise since maxAttempts=1, so this exercises just the gate block path
+    responseQueue.push("questions:final", gateDecision(false, 0.1, "no"));
+
+    const result = await vibeGateLoop(input(), 1);
+    expect(result.exhausted).toBe(true);
+    expect(result.proceed).toBe(false);
+    expect(result.plan).toBe("run focused tests");
+    expect(requests).toHaveLength(2);
   });
 });

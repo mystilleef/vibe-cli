@@ -17,6 +17,15 @@ export interface AnthropicHeaderInput {
   version: string;
 }
 
+/** Options for calling the Anthropic Messages API. */
+export interface AnthropicCallOptions {
+  model: string;
+  compiledPrompt: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+  temperature?: number;
+}
+
 /**
  * Build an `AnthropicConfig` from environment variables.
  *
@@ -71,4 +80,129 @@ export function buildAnthropicHeaders({
     headers.authorization = `Bearer ${authToken}`;
   }
   return headers;
+}
+
+// ── Anthropic response helpers ────────────────────────────────────────────
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getStringProperty(
+  value: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const property = value?.[key];
+  return typeof property === "string" ? property : undefined;
+}
+
+function isAnthropicTextBlock(
+  value: unknown,
+): value is { type: "text"; text: string } {
+  return (
+    isRecord(value) && value.type === "text" && typeof value.text === "string"
+  );
+}
+
+/**
+ * Throw a descriptive error for a failed Anthropic API response.
+ *
+ * Includes the Anthropic request ID when available and maps common status codes
+ * (401/403 → auth error, 429 → rate limit with retry-after) to specific messages.
+ */
+function throwAnthropicError(
+  response: Response,
+  parsedObject: Record<string, unknown> | undefined,
+  rawText: string,
+): never {
+  const requestId =
+    response.headers.get("anthropic-request-id") ||
+    response.headers.get("x-request-id");
+  const suffix = requestId ? ` (request id: ${requestId})` : "";
+  const errorObject = isRecord(parsedObject?.error)
+    ? parsedObject.error
+    : undefined;
+  const msg =
+    getStringProperty(errorObject, "message") ??
+    getStringProperty(parsedObject, "message") ??
+    rawText.trim();
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(
+      `Anthropic auth failed (${response.status})${suffix}. Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.`,
+    );
+  }
+  if (response.status === 429) {
+    const retry = response.headers.get("retry-after");
+    throw new Error(
+      `Anthropic rate limited (429)${suffix}.${retry ? ` Retry after ${retry}s.` : ""}`,
+    );
+  }
+  throw new Error(
+    `Anthropic error ${response.status}${suffix}. ${msg ?? ""}`.trim(),
+  );
+}
+
+function extractAnthropicText(
+  parsedObject: Record<string, unknown> | undefined,
+): string {
+  const content = Array.isArray(parsedObject?.content)
+    ? parsedObject.content
+    : [];
+  const text = content.find(isAnthropicTextBlock)?.text;
+  return (
+    text ??
+    getStringProperty(isRecord(content[0]) ? content[0] : undefined, "text") ??
+    ""
+  );
+}
+
+/**
+ * Call the Anthropic Messages API directly via fetch.
+ *
+ * Uses `resolveAnthropicConfig` for base URL and auth, and `buildAnthropicHeaders`
+ * for the required headers. System prompt is passed as a top-level field, not
+ * embedded in the user message. Throws on non-2xx responses.
+ */
+export async function callAnthropic({
+  model,
+  compiledPrompt,
+  systemPrompt,
+  maxTokens = 1024,
+  temperature = 0.2,
+}: AnthropicCallOptions): Promise<string> {
+  const { baseUrl, apiKey, authToken, version } = resolveAnthropicConfig();
+  const headers = buildAnthropicHeaders({
+    version,
+    ...(apiKey !== undefined && { apiKey }),
+    ...(authToken !== undefined && { authToken }),
+  });
+
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    messages: [{ role: "user", content: compiledPrompt }],
+  };
+  if (systemPrompt) body.system = systemPrompt;
+
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  const rawText = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    parsed = undefined;
+  }
+  const parsedObject = isRecord(parsed) ? parsed : undefined;
+
+  if (!response.ok) {
+    throwAnthropicError(response, parsedObject, rawText);
+  }
+  return extractAnthropicText(parsedObject);
 }
