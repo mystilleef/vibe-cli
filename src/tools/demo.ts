@@ -10,7 +10,6 @@
  */
 
 import { resolveAutosession } from "../utils/autosession.js";
-import { loadHistory } from "../utils/state.js";
 import {
   removeLearningEntriesForDemo,
   removeStaleDemoEntries,
@@ -121,7 +120,6 @@ export interface DemoOptions {
 export async function runDemo({ modelOverride }: DemoOptions = {}) {
   const demoId = `demo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const sessionId = resolveAutosession().id;
-  await loadHistory();
   const previousRules = getConstitution();
 
   ln();
