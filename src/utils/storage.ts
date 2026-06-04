@@ -297,25 +297,68 @@ export function addLearningEntry(
   };
 }
 
-/**
- * Return every learning entry grouped by category.
- *
- * Keys are category names; values are the full entry arrays.  Returns `{}`
- * when the log is empty or was just created.
- */
-export function getLearningEntries(): Record<string, LearningEntry[]> {
-  return withDatabase((db) =>
+/** Group learning entries by category (readonly reduction). */
+function groupLearningEntries(
+  entries: readonly LearningEntry[],
+): Record<string, LearningEntry[]> {
+  const grouped: Record<string, LearningEntry[]> = {};
+  for (const entry of entries) {
+    const list = grouped[entry.category];
+    if (list) {
+      list.push(entry);
+    } else {
+      grouped[entry.category] = [entry];
+    }
+  }
+  return grouped;
+}
+
+/** Return all entries grouped by category (no limit). */
+function getLearningEntriesUnlimited(): Record<string, LearningEntry[]> {
+  const entries = withDatabase((db) =>
     db
       .query<LearningEntryStorageRow, []>(
         "SELECT id, type, category, mistake, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
       )
       .all()
       .map(learningRowToEntry),
-  ).reduce<Record<string, LearningEntry[]>>((grouped, entry) => {
-    if (!grouped[entry.category]) grouped[entry.category] = [];
-    grouped[entry.category]?.push(entry);
-    return grouped;
-  }, {});
+  );
+  return groupLearningEntries(entries);
+}
+
+/**
+ * Return every learning entry grouped by category.
+ *
+ * When `maxPerCategory` is provided, each category returns at most its
+ * `maxPerCategory` most-recent entries (via SQL window function) to avoid
+ * full-table scans on large learning stores.
+ *
+ * Keys are category names; values are the full entry arrays.  Returns `{}`
+ * when the log is empty or was just created.
+ */
+export function getLearningEntries(
+  maxPerCategory?: number,
+): Record<string, LearningEntry[]> {
+  if (maxPerCategory === undefined) return getLearningEntriesUnlimited();
+
+  const entries = withDatabase((db) =>
+    db
+      .query<LearningEntryStorageRow, [number]>(
+        `SELECT id, type, category, mistake, solution, timestamp, demo_id
+         FROM (
+           SELECT *,
+             ROW_NUMBER() OVER (
+               PARTITION BY category ORDER BY timestamp DESC, id DESC
+             ) AS rn
+           FROM learning_entries
+         )
+         WHERE rn <= ?
+         ORDER BY category, timestamp, id`,
+      )
+      .all(maxPerCategory)
+      .map(learningRowToEntry),
+  );
+  return groupLearningEntries(entries);
 }
 
 /**
@@ -799,14 +842,24 @@ export function removeStaleDemoEntries(): void {
  * empty.
  *
  * @param maxPerCategory - Maximum entries per category (most recent first);
- *   defaults to 5.
+ *   defaults to 5.  The per-category limit is pushed into SQL via
+ *   `ROW_NUMBER()` to avoid full-table scans on large learning stores.
  */
 export function getLearningContextText(maxPerCategory = 5): string {
-  return Object.entries(getLearningEntries())
+  const categoryCounts = withDatabase((db) => {
+    const rows = db
+      .query<{ category: string; count: number }, []>(
+        "SELECT category, COUNT(*) AS count FROM learning_entries GROUP BY category",
+      )
+      .all();
+    return new Map(rows.map((r) => [r.category, r.count]));
+  });
+
+  return Object.entries(getLearningEntries(maxPerCategory))
     .map(([category, examples]) => {
+      const count = categoryCounts.get(category) ?? examples.length;
       const text = [...examples]
         .sort((a, b) => a.timestamp - b.timestamp)
-        .slice(-maxPerCategory)
         .map((ex) => {
           const label =
             ex.type === "mistake"
@@ -818,7 +871,7 @@ export function getLearningContextText(maxPerCategory = 5): string {
           return `- [${label}] ${ex.mistake}${sol}`;
         })
         .join("\n");
-      return `Category: ${category} (count: ${examples.length})\n${text}`;
+      return `Category: ${category} (count: ${count})\n${text}`;
     })
     .join("\n\n")
     .trim();

@@ -2,7 +2,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getDatabasePath, withDatabase } from "../src/utils/database";
+import {
+  getDatabasePath,
+  getVibeDatabase,
+  withDatabase,
+} from "../src/utils/database";
 import {
   addLearningEntry,
   collectDemoLearningPruneCandidates,
@@ -884,6 +888,43 @@ describe("executeDestructivePrune", () => {
     expect(result.skippedTargets).toEqual(["duplicates", "demos", "sessions"]);
   });
 
+  test("reports per-target deletion failure after a successful backup", () => {
+    const now = 200 * DAY_MS;
+    insertLearningRows([
+      {
+        category: "delete-failure",
+        mistake: "stale row",
+        timestamp: 50 * DAY_MS,
+      },
+    ]);
+    const originalCopyFileSync = fs.copyFileSync;
+    fs.copyFileSync = ((...args: Parameters<typeof fs.copyFileSync>) => {
+      originalCopyFileSync(...args);
+      getVibeDatabase().db.exec("DROP TABLE learning_entries");
+    }) as typeof fs.copyFileSync;
+
+    try {
+      const result = executeDestructivePrune({
+        targets: ["learnings"],
+        ageDays: 90,
+        now,
+        backupTimestamp: new Date("2026-01-06T03:04:05.006Z"),
+      });
+
+      requireBackupPath(result);
+      expect(result.candidateCounts.learnings).toBe(1);
+      expect(result.deletedCounts.learnings).toBe(0);
+      expect(result.failedTargets).toEqual([
+        {
+          target: "learnings",
+          message: expect.stringContaining("no such table"),
+        },
+      ]);
+    } finally {
+      fs.copyFileSync = originalCopyFileSync;
+    }
+  });
+
   test("deletes stale sessions through cascade behavior", () => {
     const now = 200 * DAY_MS;
     insertSessionRows([
@@ -1113,6 +1154,44 @@ describe("createPruneDatabaseBackup", () => {
       fs.unlinkSync(backupPath);
     } catch {
       /* cleanup */
+    }
+  });
+
+  test("throws when a live WAL reader keeps checkpoint busy", () => {
+    insertLearningRows([
+      {
+        category: "busy-checkpoint",
+        mistake: "snapshot row",
+        timestamp: Date.now(),
+      },
+    ]);
+    const reader = new Database(getDatabasePath(), { readonly: true });
+
+    try {
+      reader.exec("BEGIN");
+      expect(
+        reader
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM learning_entries",
+          )
+          .get()?.count,
+      ).toBe(1);
+      insertLearningRows([
+        {
+          category: "busy-checkpoint",
+          mistake: "wal row",
+          timestamp: Date.now(),
+        },
+      ]);
+
+      expect(() =>
+        createPruneDatabaseBackup({
+          timestamp: new Date("2026-02-04T03:04:05.006Z"),
+        }),
+      ).toThrow("database checkpoint could not complete before backup");
+    } finally {
+      reader.exec("ROLLBACK");
+      reader.close();
     }
   });
 });
