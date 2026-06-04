@@ -28,11 +28,6 @@ function pruneSession(db: Database, sessionId: string): void {
   ).run(sessionId, sessionId);
 }
 
-/** Initialize SQLite-backed history storage. Safe to call multiple times. */
-export async function loadHistory(): Promise<void> {
-  withDatabase(() => {});
-}
-
 /**
  * Return a truncated summary of the last 5 interactions for
  * `sessionId`, or empty string when none exist. Intended for
@@ -58,10 +53,10 @@ export function getHistorySummary(sessionId = "default"): string {
   const summary = rows
     .map(
       (interaction, index) =>
-        `Interaction ${index + 1}: Goal ${interaction.goal}, Guidance: ${interaction.output.slice(0, 100)}...`,
+        `Interaction ${index + 1}: Goal ${interaction.goal}, Guidance: ${interaction.output.slice(0, 100)}${interaction.output.length > 100 ? "..." : ""}`,
     )
     .join("\n");
-  return `History Context:\n${summary}\n`;
+  return summary;
 }
 
 /**

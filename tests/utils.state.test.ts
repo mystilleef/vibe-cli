@@ -29,34 +29,31 @@ async function getState() {
 
 describe("getHistorySummary", () => {
   test("returns empty string for unknown session", async () => {
-    const { getHistorySummary, loadHistory } = await getState();
-    await loadHistory();
+    const { getHistorySummary } = await getState();
     expect(getHistorySummary("no-such-session")).toBe("");
   });
 
   test("returns empty string when session exists but has no entries", async () => {
-    const { getHistorySummary, loadHistory } = await getState();
-    await loadHistory();
+    const { getHistorySummary } = await getState();
     expect(getHistorySummary("empty-sess")).toBe("");
   });
 
   test("returns formatted history block after entries added", async () => {
-    const { addToHistory, getHistorySummary, loadHistory } = await getState();
-    await loadHistory();
+    const { addToHistory, getHistorySummary } = await getState();
     await addToHistory(
       "sess1",
       { goal: "Build X", plan: "step 1" },
       "do it right",
     );
     const summary = getHistorySummary("sess1");
-    expect(summary).toContain("History Context:");
+    expect(summary).not.toContain("History Context:");
     expect(summary).toContain("Goal Build X");
     expect(summary).toContain("do it right");
+    expect(summary).not.toContain("do it right...");
   });
 
   test("caps output to last 5 interactions", async () => {
-    const { addToHistory, getHistorySummary, loadHistory } = await getState();
-    await loadHistory();
+    const { addToHistory, getHistorySummary } = await getState();
     for (let i = 0; i < 8; i++) {
       await addToHistory("s", { goal: `g${i}`, plan: `p${i}` }, `out${i}`);
     }
@@ -69,8 +66,7 @@ describe("getHistorySummary", () => {
 
 describe("addToHistory", () => {
   test("keeps session capped at 10 entries by shifting oldest", async () => {
-    const { addToHistory, loadHistory, clearSession } = await getState();
-    await loadHistory();
+    const { addToHistory, clearSession } = await getState();
     await clearSession("cap");
 
     for (let i = 0; i < 11; i++) {
@@ -96,19 +92,33 @@ describe("addToHistory", () => {
     expect(summary).toContain("g10");
   });
 
-  test("persists entries so they survive a loadHistory round-trip", async () => {
-    const { addToHistory, loadHistory, getHistorySummary } = await getState();
-    await loadHistory();
+  test("appends ... only when output exceeds 100 characters", async () => {
+    const { addToHistory, getHistorySummary } = await getState();
+    await addToHistory("trunc", { goal: "Long", plan: "p" }, "a".repeat(100));
+    const exact = getHistorySummary("trunc");
+    expect(exact).not.toContain("...");
+
+    await addToHistory(
+      "trunc2",
+      { goal: "Longer", plan: "p" },
+      "b".repeat(150),
+    );
+    const truncated = getHistorySummary("trunc2");
+    expect(truncated).toContain("...");
+    expect(truncated).toContain("b".repeat(100));
+    expect(truncated).not.toContain("b".repeat(101));
+  });
+
+  test("persists entries across database connections", async () => {
+    const { addToHistory, getHistorySummary } = await getState();
     await addToHistory("persist", { goal: "persist-goal", plan: "pp" }, "out");
 
-    await loadHistory();
     const summary = getHistorySummary("persist");
     expect(summary).toContain("persist-goal");
   });
 
   test("writes interactions to SQLite without recreating history.json", async () => {
-    const { addToHistory, loadHistory } = await getState();
-    await loadHistory();
+    const { addToHistory } = await getState();
     await addToHistory("sqlite", { goal: "sqlite-goal", plan: "p" }, "out");
 
     const handle = openVibeDatabase({ legacyImports: "none" });
@@ -125,9 +135,7 @@ describe("addToHistory", () => {
 
 describe("clearSession", () => {
   test("removes session so getHistorySummary returns empty", async () => {
-    const { addToHistory, clearSession, getHistorySummary, loadHistory } =
-      await getState();
-    await loadHistory();
+    const { addToHistory, clearSession, getHistorySummary } = await getState();
     await addToHistory("del", { goal: "g", plan: "p" }, "o");
     await clearSession("del");
     const handle = openVibeDatabase({ legacyImports: "none" });
@@ -138,13 +146,10 @@ describe("clearSession", () => {
     expect(getHistorySummary("del")).toBe("");
   });
 
-  test("persists the deletion across loadHistory", async () => {
-    const { addToHistory, clearSession, getHistorySummary, loadHistory } =
-      await getState();
-    await loadHistory();
+  test("persists the deletion across connections", async () => {
+    const { addToHistory, clearSession, getHistorySummary } = await getState();
     await addToHistory("del2", { goal: "g", plan: "p" }, "o");
     await clearSession("del2");
-    await loadHistory();
     expect(getHistorySummary("del2")).toBe("");
   });
 });

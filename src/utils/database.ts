@@ -24,15 +24,43 @@ export function withDatabase<T>(
   fn: (db: Database) => T,
   options?: VibeDatabaseOptions,
 ): T {
-  const handle = openVibeDatabase(options);
+  const handle =
+    options !== undefined ? openVibeDatabase(options) : getVibeDatabase();
   try {
     return fn(handle.db);
   } finally {
-    handle.close();
+    if (options !== undefined) {
+      handle.close();
+    }
   }
 }
 
 const cachedHandles = new Map<string, VibeDatabase>();
+
+let singletonHandle: VibeDatabase | null = null;
+
+/**
+ * Returns a process-lifetime database singleton for normal operations.
+ * Callers needing independent lifecycle control (e.g., createPruneDatabaseBackup)
+ * should use openVibeDatabase() directly.
+ */
+export function getVibeDatabase(): VibeDatabase {
+  const currentPath = getDatabasePath();
+  if (singletonHandle?.path !== currentPath) {
+    if (singletonHandle) {
+      try {
+        singletonHandle.db.close();
+      } catch {
+        // ignore close errors on orphaned path
+      }
+    }
+    singletonHandle = openVibeDatabase();
+    // Detach from the shared cache so openVibeDatabase() callers get
+    // independent handles without sharing the singleton's connection.
+    cachedHandles.delete(singletonHandle.path);
+  }
+  return singletonHandle;
+}
 
 const MIGRATIONS = [
   {
