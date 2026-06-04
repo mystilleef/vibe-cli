@@ -2,7 +2,10 @@ import type { GoogleGenerativeAI } from "@google/generative-ai";
 import type OpenAI from "openai";
 import { getConstitution } from "../tools/constitution.js";
 import { buildAnthropicHeaders, resolveAnthropicConfig } from "./anthropic.js";
+import { type GateDecision, parseGateDecision } from "./gateDecision.js";
 import { getLearningContextText } from "./storage.js";
+
+export { type GateDecision, parseGateDecision };
 
 /** Lazily-initialized Gemini client; created on first use when GEMINI_API_KEY is set. */
 let genAI: GoogleGenerativeAI | null = null;
@@ -129,31 +132,81 @@ function resolveProviderAndModel(modelOverride?: {
   return { provider, model };
 }
 
-/** Call the Gemini API. Falls back to gemini-2.5-flash if the primary model fails. */
-async function callGemini(model: string, combined: string): Promise<string> {
+/**
+ * Classify a Gemini error for retry eligibility.
+ *
+ * Uses message-substring heuristics since the Gemini SDK may not expose
+ * typed error codes at runtime.
+ *
+ * Retryable (model-not-found, context-length):
+ *   - "not found", "context length", "context window"
+ *
+ * Non-retryable (auth, rate/quota, network, unknown):
+ *   - everything else, including "api key", "api_key", "quota", "rate",
+ *     "429", "exceeded"
+ */
+function isRetryableGeminiError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message.toLowerCase()
+      : String(err).toLowerCase();
+  return (
+    msg.includes("not found") ||
+    msg.includes("context length") ||
+    msg.includes("context window")
+  );
+}
+
+/**
+ * Call the Gemini API.
+ *
+ * Falls back to gemini-2.5-flash only for retryable errors
+ * (model-not-found, context-length). Auth, rate/quota, network,
+ * and unknown errors rethrow immediately.
+ */
+async function callGemini(
+  model: string,
+  combined: string,
+  temperature?: number,
+): Promise<string> {
   await ensureGemini();
   if (!genAI) throw new Error("GEMINI_API_KEY not set.");
   const m = model || "gemini-2.5-pro";
+  const request =
+    temperature !== undefined
+      ? {
+          contents: [{ role: "user", parts: [{ text: combined }] }],
+          generationConfig: { temperature },
+        }
+      : combined;
   try {
     return (
-      await genAI.getGenerativeModel({ model: m }).generateContent(combined)
+      await genAI.getGenerativeModel({ model: m }).generateContent(request)
     ).response.text();
-  } catch {
-    return (
-      await genAI
-        .getGenerativeModel({ model: "gemini-2.5-flash" })
-        .generateContent(combined)
-    ).response.text();
+  } catch (err) {
+    if (isRetryableGeminiError(err)) {
+      return (
+        await genAI
+          .getGenerativeModel({ model: "gemini-2.5-flash" })
+          .generateContent(request)
+      ).response.text();
+    }
+    throw err;
   }
 }
 
 /** Call the OpenAI chat completions API. */
-async function callOpenAI(model: string, combined: string): Promise<string> {
+async function callOpenAI(
+  model: string,
+  combined: string,
+  temperature?: number,
+): Promise<string> {
   await ensureOpenAI();
   if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
   const res = await openaiClient.chat.completions.create({
-    model: model || "o4-mini",
+    model: model || DEFAULT_MODELS.openai || "gpt-4o-mini",
     messages: [{ role: "system", content: combined }],
+    ...(temperature !== undefined && { temperature }),
   });
   return res.choices[0]?.message.content || "";
 }
@@ -162,6 +215,7 @@ async function callOpenAI(model: string, combined: string): Promise<string> {
 async function callOpenRouter(
   model: string,
   combined: string,
+  temperature?: number,
 ): Promise<string> {
   if (!process.env.OPENROUTER_API_KEY)
     throw new Error("OPENROUTER_API_KEY not set.");
@@ -177,6 +231,7 @@ async function callOpenRouter(
     body: JSON.stringify({
       model,
       messages: [{ role: "system", content: combined }],
+      ...(temperature !== undefined && { temperature }),
     }),
   });
   const data = (await res.json()) as {
@@ -186,7 +241,11 @@ async function callOpenRouter(
 }
 
 /** Call DeepSeek via its OpenAI-compatible endpoint. */
-async function callDeepSeek(model: string, combined: string): Promise<string> {
+async function callDeepSeek(
+  model: string,
+  combined: string,
+  temperature?: number,
+): Promise<string> {
   if (!process.env.DEEPSEEK_API_KEY)
     throw new Error("DEEPSEEK_API_KEY not set.");
   return callOpenAICompat({
@@ -194,11 +253,16 @@ async function callDeepSeek(model: string, combined: string): Promise<string> {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: model || "deepseek-chat",
     prompt: combined,
+    ...(temperature !== undefined && { temperature }),
   });
 }
 
 /** Call OpenCode via its OpenAI-compatible endpoint. */
-async function callOpenCode(model: string, combined: string): Promise<string> {
+async function callOpenCode(
+  model: string,
+  combined: string,
+  temperature?: number,
+): Promise<string> {
   const apiKey = process.env.OPENCODE_API_KEY;
   if (!apiKey) throw new Error("OPENCODE_API_KEY not set.");
   return callOpenAICompat({
@@ -206,6 +270,7 @@ async function callOpenCode(model: string, combined: string): Promise<string> {
     apiKey,
     model: model || "kimi-k2.6",
     prompt: combined,
+    ...(temperature !== undefined && { temperature }),
   });
 }
 
@@ -227,15 +292,15 @@ async function callProvider(
 
   switch (provider) {
     case "gemini":
-      return callGemini(model, combined);
+      return callGemini(model, combined, temperature);
     case "openai":
-      return callOpenAI(model, combined);
+      return callOpenAI(model, combined, temperature);
     case "openrouter":
-      return callOpenRouter(model, combined);
+      return callOpenRouter(model, combined, temperature);
     case "deepseek":
-      return callDeepSeek(model, combined);
+      return callDeepSeek(model, combined, temperature);
     case "opencode":
-      return callOpenCode(model, combined);
+      return callOpenCode(model, combined, temperature);
     case "anthropic":
       return callAnthropic({
         model: model || "claude-haiku-4-5-20251001",
@@ -332,49 +397,6 @@ Output ONLY one line of valid JSON — no markdown, no extra text:
 - proceed false: unresolved critical risks, missing rollbacks for irreversible operations, or goal misalignment
 - mixed feedback: block unless safety concerns are minor, resolved, or irrelevant to the goal
 - confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
-
-/** Structured gate verdict returned by `getGateDecision`. */
-interface GateDecision {
-  /** Whether the caller may proceed with the plan. */
-  proceed: boolean;
-  /** Model-reported confidence in the verdict (0.0–1.0). */
-  confidence: number;
-  /** One-sentence explanation for the verdict. */
-  reason: string;
-}
-
-/**
- * Parse a raw LLM response into a structured `GateDecision`.
- *
- * Strips markdown fences, extracts the first JSON object, and validates required fields.
- * Returns a blocking default (`proceed: false`, confidence 0.5) when parsing fails.
- */
-export function parseGateDecision(raw: string): GateDecision {
-  const stripped = raw
-    .replace(/^```(?:json)?\n?/m, "")
-    .replace(/\n?```$/m, "")
-    .trim();
-  const match = stripped.match(/\{[^}]+\}/);
-  try {
-    const parsed = JSON.parse(match?.[0] ?? stripped);
-    if (
-      typeof parsed.proceed === "boolean" &&
-      typeof parsed.confidence === "number" &&
-      typeof parsed.reason === "string"
-    ) {
-      return {
-        proceed: parsed.proceed,
-        confidence: Math.min(1, Math.max(0, parsed.confidence)),
-        reason: parsed.reason,
-      };
-    }
-  } catch {}
-  return {
-    proceed: false,
-    confidence: 0.5,
-    reason: "Gate decision unavailable — defaulting to block.",
-  };
-}
 
 /**
  * Request a go/no-go gate decision from the configured LLM.
@@ -477,17 +499,20 @@ async function callOpenAICompat({
   apiKey,
   model,
   prompt,
+  temperature,
 }: {
   baseURL: string;
   apiKey: string;
   model: string;
   prompt: string;
+  temperature?: number;
 }): Promise<string> {
   const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey, baseURL });
   const response = await client.chat.completions.create({
     model,
     messages: [{ role: "system", content: prompt }],
+    ...(temperature !== undefined && { temperature }),
   });
   return response.choices[0]?.message.content || "";
 }

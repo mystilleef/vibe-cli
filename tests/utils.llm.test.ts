@@ -39,6 +39,7 @@ const originalFetch = globalThis.fetch;
 interface OpenAiCompatRequest {
   model: string;
   messages: Array<{ role: string; content: string }>;
+  temperature?: number;
 }
 
 interface MockOpenAiOptions {
@@ -276,12 +277,13 @@ describe("parseGateDecision", () => {
     expect(result.confidence).toBe(0.5);
   });
 
-  test("extracts embedded JSON object from surrounding text", () => {
+  test("extracts embedded JSON object from surrounding text via brace counting", () => {
     const raw =
       'Here is my decision: {"proceed":true,"confidence":0.6,"reason":"looks fine"} end.';
     const result = parseGateDecision(raw);
     expect(result.proceed).toBe(true);
     expect(result.confidence).toBe(0.6);
+    expect(result.reason).toBe("looks fine");
   });
 });
 
@@ -420,27 +422,34 @@ describe("parseGateDecision edge cases", () => {
     expect(parseGateDecision(raw).confidence).toBe(1);
   });
 
-  test("nested braces cause regex to capture malformed JSON → fallback", () => {
-    // JSON.stringify produces: {"proceed":true,"confidence":0.8,"reason":"use {nested} carefully"}
-    // regex {[^}]+} matches from first { through {nested}, producing invalid JSON
+  test("brace-robust: reason containing } parses correctly via full JSON.parse", () => {
     const raw = JSON.stringify({
       proceed: true,
       confidence: 0.8,
       reason: "use {nested} carefully",
     });
     const result = parseGateDecision(raw);
-    expect(result.proceed).toBe(false);
-    expect(result.confidence).toBe(0.5);
-    expect(result.reason).toMatch(/unavailable/);
+    expect(result.proceed).toBe(true);
+    expect(result.confidence).toBe(0.8);
+    expect(result.reason).toBe("use {nested} carefully");
   });
 
-  test("multiple JSON-like objects — extracts first well-formed one", () => {
+  test("multiple JSON-like objects — extracts last balanced-brace object", () => {
     const raw =
       'First try: {"proceed":true,"confidence":0.9,"reason":"first"}. Second: {"proceed":false,"confidence":0.3,"reason":"second"}';
     const result = parseGateDecision(raw);
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.3);
+    expect(result.reason).toBe("second");
+  });
+
+  test("embedded JSON with escaped characters preserves string boundaries", () => {
+    const raw =
+      'Decision: {"proceed":true,"confidence":0.7,"reason":"escaped quote \\" and slash \\\\ and brace }"} done.';
+    const result = parseGateDecision(raw);
     expect(result.proceed).toBe(true);
-    expect(result.confidence).toBe(0.9);
-    expect(result.reason).toBe("first");
+    expect(result.confidence).toBe(0.7);
+    expect(result.reason).toBe('escaped quote " and slash \\ and brace }');
   });
 
   test("falls back when parsed object has missing confidence", () => {
@@ -473,6 +482,13 @@ describe("parseGateDecision edge cases", () => {
       '```json  \n{"proceed":true,"confidence":0.5,"reason":"ok"}\n```  ';
     const result = parseGateDecision(raw);
     expect(result.proceed).toBe(true);
+  });
+
+  test("unclosed brace — no matching close — falls back to blocking default", () => {
+    const result = parseGateDecision('{"proceed":true,"confidence":0.9');
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+    expect(result.reason).toMatch(/unavailable/);
   });
 });
 
@@ -687,6 +703,35 @@ describe("provider success paths", () => {
     expect(content.indexOf("Task Context: task context")).toBeLessThan(
       content.indexOf("History Context: history summary"),
     );
+  });
+
+  test("getGateDecision forwards temperature 0.1 to openrouter request body", async () => {
+    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env.DEFAULT_MODEL = "openrouter/model";
+    mockFetch(() =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                proceed: true,
+                confidence: 0.9,
+                reason: "ok",
+              }),
+            },
+          },
+        ],
+      }),
+    );
+
+    await getGateDecision({ goal: "g", plan: "p", feedback: "f" });
+
+    const call0 = requireValue(fetchCalls[0], "fetch call 0");
+    const body = parseBody<OpenAiCompatRequest & { temperature?: number }>(
+      call0.init,
+    );
+    expect(body.temperature).toBe(0.1);
   });
 
   test("getMetacognitiveQuestions omits absent optional context", async () => {
@@ -1025,14 +1070,35 @@ describe("callAnthropic response handling", () => {
 // ---------------------------------------------------------------------------
 
 describe("callGemini fallback to flash model", () => {
-  let geminiCalls: Array<{ model: string; prompt: string }> = [];
+  let geminiCalls: Array<{
+    model: string;
+    prompt: string;
+    generationConfig?: { temperature?: number };
+  }> = [];
   let geminiResponses: string[] = [];
   let throwOnCall: number | undefined;
+  let geminiErrorMessages: Array<string | undefined> = [];
 
   const mockGenAI = {
     getGenerativeModel: ({ model }: { model: string }) => ({
-      generateContent: async (prompt: string) => {
-        geminiCalls.push({ model, prompt });
+      generateContent: async (
+        input:
+          | string
+          | { contents: unknown; generationConfig?: { temperature?: number } },
+      ) => {
+        const prompt =
+          typeof input === "string" ? input : JSON.stringify(input.contents);
+        const generationConfig =
+          typeof input === "object" ? input.generationConfig : undefined;
+        if (generationConfig !== undefined) {
+          geminiCalls.push({ model, prompt, generationConfig });
+        } else {
+          geminiCalls.push({ model, prompt });
+        }
+        const customError = geminiErrorMessages[geminiCalls.length - 1];
+        if (customError !== undefined) {
+          throw new Error(customError);
+        }
         if (geminiCalls.length === throwOnCall) {
           throw new Error("simulated gemini failure");
         }
@@ -1051,11 +1117,12 @@ describe("callGemini fallback to flash model", () => {
     geminiCalls = [];
     geminiResponses = [];
     throwOnCall = undefined;
+    geminiErrorMessages = [];
     process.env.GEMINI_API_KEY = "g-key";
   });
 
-  test("falls back to gemini-2.5-flash when gemini-2.5-pro fails", async () => {
-    throwOnCall = 1;
+  test("falls back to gemini-2.5-flash when gemini-2.5-pro fails (retryable: model not found)", async () => {
+    geminiErrorMessages = ["model not found", undefined];
     geminiResponses = ["flash fallback response"];
 
     const result = await getMetacognitiveQuestions({
@@ -1085,7 +1152,7 @@ describe("callGemini fallback to flash model", () => {
   });
 
   test("defaults model to gemini-2.5-flash when none specified", async () => {
-    throwOnCall = 1;
+    geminiErrorMessages = ["model not found", undefined];
     geminiResponses = ["flash response"];
 
     const result = await getMetacognitiveQuestions({
@@ -1098,5 +1165,218 @@ describe("callGemini fallback to flash model", () => {
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-flash");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
+  });
+
+  test("does not fall back on auth error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+    geminiErrorMessages = [
+      "API_KEY_INVALID: the provided api key is not valid",
+    ];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(geminiCalls).toHaveLength(1);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+  });
+
+  test("does not fall back on rate limit error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+    geminiErrorMessages = ["429 Resource has been exhausted. Check quota."];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(geminiCalls).toHaveLength(1);
+  });
+
+  test("does not fall back on quota error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+    geminiErrorMessages = ["quota exceeded for this project"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(geminiCalls).toHaveLength(1);
+  });
+
+  test("does not fall back on network error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+    geminiErrorMessages = ["fetch failed: connect ECONNREFUSED"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(geminiCalls).toHaveLength(1);
+  });
+
+  test("falls back on model-not-found error", async () => {
+    geminiErrorMessages = [
+      "model gemini-2.5-pro is not found for API version v1beta",
+      undefined,
+    ];
+    geminiResponses = ["flash fallback"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe("flash fallback");
+    expect(geminiCalls).toHaveLength(2);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+    expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
+  });
+
+  test("falls back on context-length error", async () => {
+    geminiErrorMessages = [
+      "Request exceeds maximum context length of 1048576 tokens",
+      undefined,
+    ];
+    geminiResponses = ["flash fallback"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe("flash fallback");
+    expect(geminiCalls).toHaveLength(2);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+    expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
+  });
+
+  test("falls back on context-window error", async () => {
+    geminiErrorMessages = [
+      "input token count exceeds the context window",
+      undefined,
+    ];
+    geminiResponses = ["flash fallback"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe("flash fallback");
+    expect(geminiCalls).toHaveLength(2);
+    expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
+    expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
+  });
+
+  test("does not fall back on unrecognized error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+    geminiErrorMessages = ["internal server error: something broke"];
+
+    const result = await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(geminiCalls).toHaveLength(1);
+  });
+
+  test("forwards temperature via generationConfig", async () => {
+    geminiResponses = ["ok"];
+
+    const result = await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result.proceed).toBeDefined();
+    expect(geminiCalls[0]?.generationConfig).toEqual({ temperature: 0.1 });
+  });
+
+  test("defaults temperature to 0.2 via generationConfig", async () => {
+    geminiResponses = ["ok"];
+
+    await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini" },
+    });
+
+    expect(geminiCalls[0]?.generationConfig).toEqual({ temperature: 0.2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// temperature forwarding
+// ---------------------------------------------------------------------------
+
+describe("temperature forwarding", () => {
+  test("OpenAI receives temperature in request body", async () => {
+    process.env.OPENAI_API_KEY = "openai-key";
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "openai", model: "gpt-test" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.1);
+  });
+
+  test("DeepSeek receives temperature in request body", async () => {
+    process.env.DEEPSEEK_API_KEY = "ds-key";
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "deepseek" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.1);
+  });
+
+  test("OpenCode receives temperature in request body", async () => {
+    process.env.OPENCODE_API_KEY = "oc-key";
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "opencode" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.1);
+  });
+
+  test("OpenAI defaults temperature to 0.2 via callProvider", async () => {
+    process.env.OPENAI_API_KEY = "openai-key";
+    openAiResponseText = "ok";
+
+    await getMetacognitiveQuestions({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "openai" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.2);
   });
 });
