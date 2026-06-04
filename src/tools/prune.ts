@@ -1,14 +1,14 @@
 import {
   collectPruneCandidates,
   computePruneTargetCounts,
-  DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   type DestructivePruneResult,
   executeDestructivePrune,
   PRUNE_TARGET_ORDER,
   type PruneCandidateSets,
   type PruneFailureDetail,
   type PruneTarget,
-} from "../utils/storage.js";
+} from "../utils/pruneStorage.js";
+import { DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD } from "../utils/storage.js";
 
 export const DEFAULT_PRUNE_AGE_DAYS = 90;
 export const DEFAULT_PRUNE_OVERLAP_THRESHOLD =
