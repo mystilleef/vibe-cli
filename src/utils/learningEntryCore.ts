@@ -8,7 +8,7 @@ export type LearningType = "mistake" | "preference" | "success";
  *
  * @property type - Entry kind; defaults to `mistake` when callers omit it.
  * @property category - Grouping label (may be normalized by the caller).
- * @property mistake - One-sentence description of the pattern or error.
+ * @property observation - One-sentence description of the pattern or observation.
  * @property solution - Resolution text; required for mistake/success, optional for preference.
  * @property timestamp - Epoch-ms when the entry was written.
  * @property demoId - Optional identifier linking the entry to a demo session.
@@ -16,7 +16,7 @@ export type LearningType = "mistake" | "preference" | "success";
 export interface LearningEntry {
   type: LearningType;
   category: string;
-  mistake: string;
+  observation: string;
   solution?: string;
   timestamp: number;
   demoId?: string;
@@ -30,7 +30,7 @@ export interface LearningEntryStorageRow {
   id: number;
   type: LearningType;
   category: string;
-  mistake: string;
+  observation: string;
   solution: string | null;
   timestamp: number;
   demo_id: string | null;
@@ -42,7 +42,7 @@ export function learningRowToEntry(
   return {
     type: row.type,
     category: row.category,
-    mistake: row.mistake,
+    observation: row.observation,
     ...(row.solution !== null && { solution: row.solution }),
     timestamp: row.timestamp,
     ...(row.demo_id !== null && { demoId: row.demo_id }),

@@ -9,21 +9,21 @@ import {
   formatAlignedRows,
   formatListAll,
   formatListCategories,
+  formatListChecks,
   formatListCommandOverview,
   formatListConstitution,
-  formatListInteractions,
   formatListLearnings,
   formatListProviders,
   formatListSessions,
   formatListStats,
   formatRelativeTime,
-  parseInteractionReason,
+  parseCheckReason,
   parseLearningType,
   parseListLimit,
   readListAll,
   readListCategories,
+  readListChecks,
   readListConstitution,
-  readListInteractions,
   readListLearnings,
   readListProviders,
   readListSessions,
@@ -61,7 +61,7 @@ describe("list data foundations", () => {
   test("learning readers filter, limit, and summarize deterministically", () => {
     withDatabase((db) => {
       const insert = db.prepare(
-        "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       );
       insert.run("success", "alpha", "old alpha", null, 1000, null);
       insert.run("mistake", "beta", "beta mistake", null, 2000, null);
@@ -72,13 +72,13 @@ describe("list data foundations", () => {
       {
         type: "success",
         category: "alpha",
-        mistake: "old alpha",
+        observation: "old alpha",
         timestamp: 1000,
       },
     ]);
     expect(parseLearningType("mistake")).toBe("mistake");
     expect(
-      readListLearnings({ type: "mistake" }).map((entry) => entry.mistake),
+      readListLearnings({ type: "mistake" }).map((entry) => entry.observation),
     ).toEqual(["new alpha", "beta mistake"]);
     expect(readListCategories()).toEqual([
       {
@@ -87,7 +87,7 @@ describe("list data foundations", () => {
         recentExample: {
           type: "mistake",
           category: "alpha",
-          mistake: "new alpha",
+          observation: "new alpha",
           solution: "fix",
           timestamp: 3000,
           demoId: "demo-1",
@@ -99,7 +99,7 @@ describe("list data foundations", () => {
         recentExample: {
           type: "mistake",
           category: "beta",
-          mistake: "beta mistake",
+          observation: "beta mistake",
           timestamp: 2000,
         },
       },
@@ -304,7 +304,7 @@ describe("list data foundations", () => {
       }),
     );
     expect(
-      readListInteractions({ session: "session-a", limit: 1 }).map(
+      readListChecks({ session: "session-a", limit: 1 }).map(
         (interaction) => interaction.goal,
       ),
     ).toEqual(["newest"]);
@@ -320,7 +320,7 @@ describe("list data foundations", () => {
       learnings: { total: 0, mistake: 0, preference: 0, success: 0 },
       sessions: { total: 3, mostActiveCwd: "/tmp/project-a" },
       constitution: { activeRules: 2 },
-      interactions: { total: 3 },
+      checks: { total: 3 },
     });
     expect(readListAll()).toMatchObject({
       constitution: { session: active.session },
@@ -328,7 +328,7 @@ describe("list data foundations", () => {
         activeProvider: "deepseek",
         providers: expect.objectContaining({ deepseek: "deepseek-v4-pro" }),
       }),
-      stats: { interactions: { total: 3 } },
+      stats: { checks: { total: 3 } },
     });
   });
 
@@ -341,11 +341,11 @@ describe("list data foundations", () => {
     expect(() => truncateText("abc", -1)).toThrow(
       "maxLength must be a non-negative integer",
     );
-    expect(parseInteractionReason(JSON.stringify({ reason: "because" }))).toBe(
+    expect(parseCheckReason(JSON.stringify({ reason: "because" }))).toBe(
       "because",
     );
-    expect(parseInteractionReason(JSON.stringify("plain"))).toBe("plain");
-    expect(parseInteractionReason("raw")).toBe("raw");
+    expect(parseCheckReason(JSON.stringify("plain"))).toBe("plain");
+    expect(parseCheckReason("raw")).toBe("raw");
     expect(formatAlignedRows(["a", "long"], [["xx", "y"]])).toContain("xx  y");
     expect(formatListCommandOverview()).toContain("- learnings");
     expect(toListOverviewJson().commands).toContain("all");
@@ -357,20 +357,20 @@ describe("list data foundations", () => {
       {
         type: "mistake" as const,
         category: "alpha",
-        mistake: "A1",
+        observation: "A1",
         timestamp: base,
       },
       {
         type: "success" as const,
         category: "alpha",
-        mistake: "A2",
+        observation: "A2",
         solution: "fixed",
         timestamp: base + 1000,
       },
       {
         type: "preference" as const,
         category: "beta",
-        mistake: "B1",
+        observation: "B1",
         timestamp: base + 2000,
       },
     ];
@@ -470,7 +470,7 @@ describe("list data foundations", () => {
         recentExample: {
           type: "mistake" as const,
           category: "risk",
-          mistake: "Latest risk",
+          observation: "Latest risk",
           timestamp: 1000,
         },
       },
@@ -480,7 +480,7 @@ describe("list data foundations", () => {
         recentExample: {
           type: "success" as const,
           category: "style",
-          mistake: "Style win",
+          observation: "Style win",
           timestamp: 2000,
         },
       },
@@ -500,7 +500,7 @@ describe("list data foundations", () => {
     expect(result).toContain("(none)");
   });
 
-  test("formatListInteractions groups by session, parses JSON reasons, truncates long text", () => {
+  test("formatListChecks groups by session, parses JSON reasons, truncates long text", () => {
     const base = 100_000;
     const interactions = [
       {
@@ -528,9 +528,9 @@ describe("list data foundations", () => {
         displayCwd: null,
       },
     ];
-    const result = formatListInteractions(interactions, { now: base + 60_000 });
+    const result = formatListChecks(interactions, { now: base + 60_000 });
 
-    expect(result).toContain("Interactions");
+    expect(result).toContain("Checks");
     expect(result).toContain("Session: /tmp/project-a");
     expect(result).toContain("Session: s2");
     expect(result).toContain("Goal: Goal A");
@@ -540,9 +540,9 @@ describe("list data foundations", () => {
     expect(result).toContain(`${"X".repeat(120)}…`);
   });
 
-  test("formatListInteractions renders (none) for empty input", () => {
-    const result = formatListInteractions([], { now: 0 });
-    expect(result).toContain("Interactions");
+  test("formatListChecks renders (none) for empty input", () => {
+    const result = formatListChecks([], { now: 0 });
+    expect(result).toContain("Checks");
     expect(result).toContain("(none)");
   });
 
@@ -551,7 +551,7 @@ describe("list data foundations", () => {
       learnings: { total: 5, mistake: 2, preference: 1, success: 2 },
       sessions: { total: 3, mostActiveCwd: "/tmp/active" },
       constitution: { activeRules: 4 },
-      interactions: { total: 10 },
+      checks: { total: 10 },
     };
     const result = formatListStats(stats);
     expect(result).toContain("Stats");
@@ -561,7 +561,7 @@ describe("list data foundations", () => {
     expect(result).toContain("Sessions: 3 total");
     expect(result).toContain("Most active cwd: /tmp/active");
     expect(result).toContain("Constitution rules: 4");
-    expect(result).toContain("Interactions: 10 total");
+    expect(result).toContain("Checks: 10 total");
 
     const nullCwd = formatListStats({
       ...stats,
@@ -576,7 +576,7 @@ describe("list data foundations", () => {
         {
           type: "mistake" as const,
           category: "c",
-          mistake: "m",
+          observation: "m",
           timestamp: 1000,
         },
       ],
@@ -594,7 +594,7 @@ describe("list data foundations", () => {
         activeProvider: "gemini",
         providers: { gemini: "gemini-2.5-flash" },
       },
-      interactions: [
+      checks: [
         {
           id: 1,
           session_id: "s",
@@ -611,7 +611,7 @@ describe("list data foundations", () => {
           recentExample: {
             type: "mistake" as const,
             category: "c",
-            mistake: "m",
+            observation: "m",
             timestamp: 1000,
           },
         },
@@ -620,7 +620,7 @@ describe("list data foundations", () => {
         learnings: { total: 1, mistake: 1, preference: 0, success: 0 },
         sessions: { total: 1, mostActiveCwd: "/tmp" },
         constitution: { activeRules: 1 },
-        interactions: { total: 1 },
+        checks: { total: 1 },
       },
     };
     const result = formatListAll(data, { now: 0 });
@@ -630,7 +630,7 @@ describe("list data foundations", () => {
       "Constitution",
       "Sessions",
       "Providers",
-      "Interactions",
+      "Checks",
       "Categories",
       "Stats",
     ]) {

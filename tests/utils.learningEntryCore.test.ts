@@ -116,7 +116,7 @@ describe("learningRowToEntry", () => {
       id: 1,
       type: "mistake" as const,
       category: "imports",
-      mistake: "forgot import",
+      observation: "forgot import",
       solution: "add import",
       timestamp: 1000,
       demo_id: "demo-1",
@@ -125,7 +125,7 @@ describe("learningRowToEntry", () => {
     expect(entry).toEqual({
       type: "mistake",
       category: "imports",
-      mistake: "forgot import",
+      observation: "forgot import",
       solution: "add import",
       timestamp: 1000,
       demoId: "demo-1",
@@ -137,7 +137,7 @@ describe("learningRowToEntry", () => {
       id: 2,
       type: "preference" as const,
       category: "style",
-      mistake: "use tabs",
+      observation: "use tabs",
       solution: null,
       timestamp: 2000,
       demo_id: null,
@@ -146,7 +146,7 @@ describe("learningRowToEntry", () => {
     expect(entry).toEqual({
       type: "preference",
       category: "style",
-      mistake: "use tabs",
+      observation: "use tabs",
       timestamp: 2000,
     });
     expect("solution" in entry).toBe(false);
@@ -158,7 +158,7 @@ describe("learningRowToEntry", () => {
       id: 3,
       type: "success" as const,
       category: "testing",
-      mistake: "DRY test helpers",
+      observation: "DRY test helpers",
       solution: "extracted setup",
       timestamp: 3000,
       demo_id: null,
@@ -174,7 +174,7 @@ describe("learningRowToEntry", () => {
       id: 99,
       type: "mistake" as const,
       category: "x",
-      mistake: "y",
+      observation: "y",
       solution: null,
       timestamp: 1,
       demo_id: null,

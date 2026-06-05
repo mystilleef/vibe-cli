@@ -43,7 +43,7 @@ describe("addLearningEntry", () => {
     const entry = addLearningEntry("forgot import", "imports", "add import");
     expect(entry.type).toBe("mistake");
     expect(entry.category).toBe("imports");
-    expect(entry.mistake).toBe("forgot import");
+    expect(entry.observation).toBe("forgot import");
     expect(entry.solution).toBe("add import");
     expect(typeof entry.timestamp).toBe("number");
   });
@@ -90,7 +90,7 @@ describe("getLearningCategorySummary", () => {
     const summary = getLearningCategorySummary();
     expect(summary[0]?.category).toBe("high");
     expect(summary[0]?.count).toBe(2);
-    expect(summary[0]?.recentExample.mistake).toBe("z");
+    expect(summary[0]?.recentExample.observation).toBe("z");
     expect(summary[1]?.category).toBe("low");
   });
 });
@@ -135,7 +135,7 @@ function writeRawLog(
 
 type SeedLearningRow = {
   category: string;
-  mistake: string;
+  observation: string;
   timestamp: number;
   type?: LearningType;
   solution?: string;
@@ -145,13 +145,13 @@ type SeedLearningRow = {
 function insertLearningRows(rows: SeedLearningRow[]): number[] {
   return withDatabase((db) => {
     const insert = db.prepare(
-      "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
     );
     return rows.map((row) => {
       const result = insert.run(
         row.type ?? "mistake",
         row.category,
-        row.mistake,
+        row.observation,
         row.solution ?? null,
         row.timestamp,
         row.demoId ?? null,
@@ -263,24 +263,24 @@ describe("collectStaleLearningPruneCandidates", () => {
   test("returns stable row details older than the age cutoff", () => {
     const now = 200 * DAY_MS;
     const ids = insertLearningRows([
-      { category: "a", mistake: "new", timestamp: 150 * DAY_MS },
-      { category: "b", mistake: "boundary", timestamp: 110 * DAY_MS },
+      { category: "a", observation: "new", timestamp: 150 * DAY_MS },
+      { category: "b", observation: "boundary", timestamp: 110 * DAY_MS },
       {
         category: "b",
-        mistake: "old b",
+        observation: "old b",
         solution: "fix b",
         timestamp: 100 * DAY_MS,
       },
       {
         category: "a",
-        mistake: "old a",
+        observation: "old a",
         timestamp: 100 * DAY_MS,
         type: "success",
       },
       {
         category: "z",
         demoId: "demo-z",
-        mistake: "oldest",
+        observation: "oldest",
         timestamp: 50 * DAY_MS,
       },
     ]);
@@ -299,7 +299,7 @@ describe("collectStaleLearningPruneCandidates", () => {
       id: idAt(ids, 4),
       type: "mistake",
       category: "z",
-      mistake: "oldest",
+      observation: "oldest",
       timestamp: 50 * DAY_MS,
       demoId: "demo-z",
     });
@@ -307,14 +307,14 @@ describe("collectStaleLearningPruneCandidates", () => {
       id: idAt(ids, 3),
       type: "success",
       category: "a",
-      mistake: "old a",
+      observation: "old a",
       timestamp: 100 * DAY_MS,
     });
     expect(candidates[2]).toMatchObject({
       id: idAt(ids, 2),
       type: "mistake",
       category: "b",
-      mistake: "old b",
+      observation: "old b",
       solution: "fix b",
       timestamp: 100 * DAY_MS,
     });
@@ -323,9 +323,13 @@ describe("collectStaleLearningPruneCandidates", () => {
   test("filters stale candidates by category without mutating entries", () => {
     const now = 200 * DAY_MS;
     const ids = insertLearningRows([
-      { category: "target", mistake: "old target", timestamp: 50 * DAY_MS },
-      { category: "other", mistake: "old other", timestamp: 50 * DAY_MS },
-      { category: "target", mistake: "new target", timestamp: 150 * DAY_MS },
+      { category: "target", observation: "old target", timestamp: 50 * DAY_MS },
+      { category: "other", observation: "old other", timestamp: 50 * DAY_MS },
+      {
+        category: "target",
+        observation: "new target",
+        timestamp: 150 * DAY_MS,
+      },
     ]);
 
     const candidates = collectStaleLearningPruneCandidates({
@@ -344,7 +348,7 @@ describe("collectStaleLearningPruneCandidates", () => {
 describe("collectDemoLearningPruneCandidates", () => {
   test("returns empty candidates when no demo-linked entries exist", () => {
     insertLearningRows([
-      { category: "plain", mistake: "old plain", timestamp: 50 * DAY_MS },
+      { category: "plain", observation: "old plain", timestamp: 50 * DAY_MS },
     ]);
 
     expect(collectDemoLearningPruneCandidates()).toEqual([]);
@@ -355,20 +359,20 @@ describe("collectDemoLearningPruneCandidates", () => {
       {
         category: "other",
         demoId: "demo-new",
-        mistake: "demo new",
+        observation: "demo new",
         timestamp: 199 * DAY_MS,
       },
       {
         category: "target",
         demoId: "demo-old",
-        mistake: "demo old",
+        observation: "demo old",
         solution: "review demo",
         timestamp: 50 * DAY_MS,
         type: "preference",
       },
       {
         category: "target",
-        mistake: "plain old",
+        observation: "plain old",
         timestamp: 50 * DAY_MS,
       },
     ]);
@@ -383,7 +387,7 @@ describe("collectDemoLearningPruneCandidates", () => {
       id: idAt(ids, 1),
       type: "preference",
       category: "target",
-      mistake: "demo old",
+      observation: "demo old",
       solution: "review demo",
       timestamp: 50 * DAY_MS,
       demoId: "demo-old",
@@ -391,7 +395,7 @@ describe("collectDemoLearningPruneCandidates", () => {
     expect(candidates[1]).toMatchObject({
       id: idAt(ids, 0),
       category: "other",
-      mistake: "demo new",
+      observation: "demo new",
       timestamp: 199 * DAY_MS,
       demoId: "demo-new",
     });
@@ -431,17 +435,17 @@ describe("collectDuplicateLearningPruneGroups", () => {
     const ids = insertLearningRows([
       {
         category: "scope",
-        mistake: "forgot import in module",
+        observation: "forgot import in module",
         timestamp: 10,
       },
       {
         category: "scope",
-        mistake: "forgot import in module again",
+        observation: "forgot import in module again",
         timestamp: 20,
       },
       {
         category: "scope",
-        mistake: "unrelated network failure",
+        observation: "unrelated network failure",
         timestamp: 30,
       },
     ]);
@@ -451,8 +455,8 @@ describe("collectDuplicateLearningPruneGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
       category: "scope",
-      kept: { id: idAt(ids, 1), mistake: "forgot import in module again" },
-      prunable: [{ id: idAt(ids, 0), mistake: "forgot import in module" }],
+      kept: { id: idAt(ids, 1), observation: "forgot import in module again" },
+      prunable: [{ id: idAt(ids, 0), observation: "forgot import in module" }],
       overlapScores: [
         { firstId: idAt(ids, 0), secondId: idAt(ids, 1), score: 1 },
       ],
@@ -461,8 +465,12 @@ describe("collectDuplicateLearningPruneGroups", () => {
 
   test("excludes matching entries from different categories", () => {
     insertLearningRows([
-      { category: "alpha", mistake: "same repeated pattern", timestamp: 10 },
-      { category: "beta", mistake: "same repeated pattern", timestamp: 20 },
+      {
+        category: "alpha",
+        observation: "same repeated pattern",
+        timestamp: 10,
+      },
+      { category: "beta", observation: "same repeated pattern", timestamp: 20 },
     ]);
 
     expect(collectDuplicateLearningPruneGroups()).toEqual([]);
@@ -472,12 +480,12 @@ describe("collectDuplicateLearningPruneGroups", () => {
     const ids = insertLearningRows([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta",
+        observation: "alpha beta gamma delta",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta gamma omega",
+        observation: "alpha beta gamma omega",
         timestamp: 20,
       },
     ]);
@@ -502,12 +510,12 @@ describe("collectDuplicateLearningPruneGroups", () => {
     const ids = insertLearningRows([
       {
         category: "boundary",
-        mistake: "alpha beta gamma delta epsilon",
+        observation: "alpha beta gamma delta epsilon",
         timestamp: 10,
       },
       {
         category: "boundary",
-        mistake: "alpha beta gamma zeta eta",
+        observation: "alpha beta gamma zeta eta",
         timestamp: 20,
       },
     ]);
@@ -527,12 +535,12 @@ describe("collectDuplicateLearningPruneGroups", () => {
     insertLearningRows([
       {
         category: "boundary",
-        mistake: "alpha beta gamma delta epsilon",
+        observation: "alpha beta gamma delta epsilon",
         timestamp: 10,
       },
       {
         category: "boundary",
-        mistake: "alpha beta zeta eta theta",
+        observation: "alpha beta zeta eta theta",
         timestamp: 20,
       },
     ]);
@@ -542,8 +550,8 @@ describe("collectDuplicateLearningPruneGroups", () => {
 
   test("includes zero-score candidates when overlap threshold is zero", () => {
     const ids = insertLearningRows([
-      { category: "zero", mistake: "alpha beta", timestamp: 10 },
-      { category: "zero", mistake: "gamma delta", timestamp: 20 },
+      { category: "zero", observation: "alpha beta", timestamp: 10 },
+      { category: "zero", observation: "gamma delta", timestamp: 20 },
     ]);
 
     expect(
@@ -561,15 +569,15 @@ describe("collectDuplicateLearningPruneGroups", () => {
 
   test("keeps the most recent entry in each duplicate group", () => {
     const ids = insertLearningRows([
-      { category: "recent", mistake: "repeat pattern now", timestamp: 10 },
+      { category: "recent", observation: "repeat pattern now", timestamp: 10 },
       {
         category: "recent",
-        mistake: "repeat pattern now newest",
+        observation: "repeat pattern now newest",
         timestamp: 30,
       },
       {
         category: "recent",
-        mistake: "repeat pattern now middle",
+        observation: "repeat pattern now middle",
         timestamp: 20,
       },
     ]);
@@ -585,10 +593,10 @@ describe("collectDuplicateLearningPruneGroups", () => {
 
   test("orders groups deterministically and honors category filtering", () => {
     const ids = insertLearningRows([
-      { category: "b", mistake: "blue car train", timestamp: 5 },
-      { category: "a", mistake: "red apple pear", timestamp: 10 },
-      { category: "b", mistake: "blue car train again", timestamp: 15 },
-      { category: "a", mistake: "red apple pear again", timestamp: 20 },
+      { category: "b", observation: "blue car train", timestamp: 5 },
+      { category: "a", observation: "red apple pear", timestamp: 10 },
+      { category: "b", observation: "blue car train again", timestamp: 15 },
+      { category: "a", observation: "red apple pear again", timestamp: 20 },
     ]);
 
     const groups = collectDuplicateLearningPruneGroups();
@@ -603,6 +611,44 @@ describe("collectDuplicateLearningPruneGroups", () => {
         (group) => group.kept.id,
       ),
     ).toEqual([idAt(ids, 2)]);
+  });
+
+  test("sorts groups by kept timestamp when clusters appear in reverse DFS order", () => {
+    // Two disjoint duplicate clusters within the same category where DFS
+    // discovery order puts the later-timestamp'd kept entry first.  This
+    // exercises compareDuplicateLearningGroups.
+    const ids = insertLearningRows([
+      {
+        category: "dfs-sort",
+        observation: "the quick brown fox jumps over",
+        timestamp: 10,
+      },
+      {
+        category: "dfs-sort",
+        observation: "alpha beta gamma delta epsilon",
+        timestamp: 20,
+      },
+      {
+        category: "dfs-sort",
+        observation: "alpha beta gamma delta epsilon zeta",
+        timestamp: 25,
+      },
+      {
+        category: "dfs-sort",
+        observation: "the quick brown fox jumps over the lazy dog",
+        timestamp: 30,
+      },
+    ]);
+
+    const groups = collectDuplicateLearningPruneGroups();
+
+    // Two separate clusters: {10,30} kept=30 and {20,25} kept=25.
+    // DFS visits ts=10 first, so group(kept:30) appears before group(kept:25).
+    // compareDuplicateLearningGroups must sort them into ascending kept timestamp
+    // order: group(kept:25) first, then group(kept:30).
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.kept.id).toBe(idAt(ids, 2)); // kept: 25
+    expect(groups[1]?.kept.id).toBe(idAt(ids, 3)); // kept: 30
   });
 });
 
@@ -706,24 +752,28 @@ describe("executeDestructivePrune", () => {
   test("reports dry-run candidate sets and deletes selected target rows", () => {
     const now = 200 * DAY_MS;
     const ids = insertLearningRows([
-      { category: "old", mistake: "old learning", timestamp: 50 * DAY_MS },
+      { category: "old", observation: "old learning", timestamp: 50 * DAY_MS },
       {
         category: "dup",
-        mistake: "duplicate learning pattern",
+        observation: "duplicate learning pattern",
         timestamp: 120 * DAY_MS,
       },
       {
         category: "dup",
-        mistake: "duplicate learning pattern again",
+        observation: "duplicate learning pattern again",
         timestamp: 130 * DAY_MS,
       },
       {
         category: "demo",
         demoId: "demo-prune",
-        mistake: "demo learning",
+        observation: "demo learning",
         timestamp: 190 * DAY_MS,
       },
-      { category: "keep", mistake: "kept learning", timestamp: 190 * DAY_MS },
+      {
+        category: "keep",
+        observation: "kept learning",
+        timestamp: 190 * DAY_MS,
+      },
     ]);
     insertSessionRows([
       {
@@ -788,7 +838,7 @@ describe("executeDestructivePrune", () => {
       direct.exec("PRAGMA journal_mode = WAL");
       direct
         .prepare(
-          "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run("mistake", "wal", "wal old", null, 50 * DAY_MS, null);
 
@@ -803,11 +853,11 @@ describe("executeDestructivePrune", () => {
       try {
         expect(
           backup
-            .query<{ mistake: string }, []>(
-              "SELECT mistake FROM learning_entries WHERE category = 'wal'",
+            .query<{ observation: string }, []>(
+              "SELECT observation FROM learning_entries WHERE category = 'wal'",
             )
             .get(),
-        ).toEqual({ mistake: "wal old" });
+        ).toEqual({ observation: "wal old" });
       } finally {
         backup.close();
       }
@@ -825,7 +875,7 @@ describe("executeDestructivePrune", () => {
     insertLearningRows([
       {
         category: "old",
-        mistake: "kept after backup failure",
+        observation: "kept after backup failure",
         timestamp: 50 * DAY_MS,
       },
     ]);
@@ -857,9 +907,9 @@ describe("executeDestructivePrune", () => {
       sessions: 0,
     });
     expect(result.skippedTargets).toEqual(["duplicates", "demos", "sessions"]);
-    expect(getLearningEntries().old?.map((entry) => entry.mistake)).toEqual([
-      "kept after backup failure",
-    ]);
+    expect(getLearningEntries().old?.map((entry) => entry.observation)).toEqual(
+      ["kept after backup failure"],
+    );
   });
 
   test("backs up empty destructive runs and reports zero counts", () => {
@@ -893,7 +943,7 @@ describe("executeDestructivePrune", () => {
     insertLearningRows([
       {
         category: "delete-failure",
-        mistake: "stale row",
+        observation: "stale row",
         timestamp: 50 * DAY_MS,
       },
     ]);
@@ -981,10 +1031,9 @@ describe("removeLearningEntriesForDemo", () => {
 
     removeLearningEntriesForDemo("demo-1");
 
-    expect(getLearningEntries().mixed?.map((entry) => entry.mistake)).toEqual([
-      "legacy",
-      "demo two",
-    ]);
+    expect(
+      getLearningEntries().mixed?.map((entry) => entry.observation),
+    ).toEqual(["legacy", "demo two"]);
   });
 
   test("recalculates category metadata and deletes empty categories", () => {
@@ -1004,7 +1053,7 @@ describe("removeLearningEntriesForDemo", () => {
     const summary = getLearningCategorySummary();
     const kept = summary.find((entry) => entry.category === "kept");
     expect(kept?.count).toBe(2);
-    expect(kept?.recentExample.mistake).toBe("new");
+    expect(kept?.recentExample.observation).toBe("new");
   });
 });
 
@@ -1093,7 +1142,7 @@ describe("createPruneDatabaseBackup", () => {
     insertLearningRows([
       {
         category: "backup-test",
-        mistake: "entry to back up",
+        observation: "entry to back up",
         timestamp: now,
       },
     ]);
@@ -1116,7 +1165,7 @@ describe("createPruneDatabaseBackup", () => {
     insertLearningRows([
       {
         category: "backup-custom",
-        mistake: "entry for custom backup",
+        observation: "entry for custom backup",
         timestamp: now,
       },
     ]);
@@ -1138,7 +1187,7 @@ describe("createPruneDatabaseBackup", () => {
     insertLearningRows([
       {
         category: "backup-direct",
-        mistake: "entry for direct backup",
+        observation: "entry for direct backup",
         timestamp: Date.now(),
       },
     ]);
@@ -1161,7 +1210,7 @@ describe("createPruneDatabaseBackup", () => {
     insertLearningRows([
       {
         category: "busy-checkpoint",
-        mistake: "snapshot row",
+        observation: "snapshot row",
         timestamp: Date.now(),
       },
     ]);
@@ -1179,7 +1228,7 @@ describe("createPruneDatabaseBackup", () => {
       insertLearningRows([
         {
           category: "busy-checkpoint",
-          mistake: "wal row",
+          observation: "wal row",
           timestamp: Date.now(),
         },
       ]);
@@ -1202,12 +1251,12 @@ describe("collectPruneCandidates — overlapThreshold parameter", () => {
     insertLearningRows([
       {
         category: "threshold-test",
-        mistake: "alpha beta gamma delta",
+        observation: "alpha beta gamma delta",
         timestamp: 10,
       },
       {
         category: "threshold-test",
-        mistake: "alpha beta gamma omega",
+        observation: "alpha beta gamma omega",
         timestamp: 20,
       },
     ]);
@@ -1236,12 +1285,12 @@ describe("collectPruneCandidates — overlapThreshold parameter", () => {
     insertLearningRows([
       {
         category: "candidate-boundary",
-        mistake: "alpha beta gamma delta epsilon",
+        observation: "alpha beta gamma delta epsilon",
         timestamp: 10,
       },
       {
         category: "candidate-boundary",
-        mistake: "alpha beta gamma zeta eta",
+        observation: "alpha beta gamma zeta eta",
         timestamp: 20,
       },
     ]);
@@ -1260,12 +1309,12 @@ describe("collectPruneCandidates — overlapThreshold parameter", () => {
     insertLearningRows([
       {
         category: "default-threshold",
-        mistake: "same repeated pattern now",
+        observation: "same repeated pattern now",
         timestamp: 10,
       },
       {
         category: "default-threshold",
-        mistake: "same repeated pattern later",
+        observation: "same repeated pattern later",
         timestamp: 20,
       },
     ]);
@@ -1285,9 +1334,9 @@ describe("SQLite write error handling", () => {
   test("persists without writing legacy JSON", () => {
     addLearningEntry("sqlite-only", "cat");
 
-    expect(getLearningEntries().cat?.map((entry) => entry.mistake)).toEqual([
-      "sqlite-only",
-    ]);
+    expect(getLearningEntries().cat?.map((entry) => entry.observation)).toEqual(
+      ["sqlite-only"],
+    );
     expect(fs.existsSync(path.join(home.dataRoot, "vibe-log.json"))).toBe(
       false,
     );

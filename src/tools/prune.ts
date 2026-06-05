@@ -39,7 +39,7 @@ export interface PruneSuccessPayload {
     learnings: Array<{
       id: number;
       category: string;
-      mistake: string;
+      observation: string;
       timestamp: number;
     }>;
     duplicates: Array<{
@@ -50,7 +50,7 @@ export interface PruneSuccessPayload {
     demos: Array<{
       id: number;
       category: string;
-      mistake: string;
+      observation: string;
       demoId?: string;
     }>;
     sessions: Array<{
@@ -104,7 +104,7 @@ function extractRepresentativeDetails(
     learnings: topN(candidates.learnings, (entry) => ({
       id: entry.id,
       category: entry.category,
-      mistake: entry.mistake,
+      observation: entry.observation,
       timestamp: entry.timestamp,
     })),
     duplicates: topN(candidates.duplicates, (group) => ({
@@ -115,7 +115,7 @@ function extractRepresentativeDetails(
     demos: topN(candidates.demos, (entry) => ({
       id: entry.id,
       category: entry.category,
-      mistake: entry.mistake,
+      observation: entry.observation,
       ...(entry.demoId !== undefined && { demoId: entry.demoId }),
     })),
     sessions: topN(candidates.sessions, (session) => ({

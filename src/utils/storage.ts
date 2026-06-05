@@ -51,7 +51,7 @@ export {
  * Increments the category counter and returns the persisted entry.  Creates
  * the category if it does not yet exist.
  *
- * @param mistake - One-sentence pattern description.
+ * @param observation - One-sentence pattern description.
  * @param category - Grouping label (callers should normalize beforehand).
  * @param solution - Resolution text; omit for preference entries.
  * @param type - Entry kind; defaults to `"mistake"`.
@@ -59,7 +59,7 @@ export {
  * @returns The entry as written, including its `timestamp`.
  */
 export function addLearningEntry(
-  mistake: string,
+  observation: string,
   category: string,
   solution?: string,
   type: LearningType = "mistake",
@@ -69,14 +69,14 @@ export function addLearningEntry(
   withDatabase((db) =>
     db
       .prepare(
-        "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(type, category, mistake, solution ?? null, now, demoId ?? null),
+      .run(type, category, observation, solution ?? null, now, demoId ?? null),
   );
   return {
     type,
     category,
-    mistake,
+    observation,
     ...(solution !== undefined && { solution }),
     timestamp: now,
     ...(demoId !== undefined && { demoId }),
@@ -104,7 +104,7 @@ function getLearningEntriesUnlimited(): Record<string, LearningEntry[]> {
   const entries = withDatabase((db) =>
     db
       .query<LearningEntryStorageRow, []>(
-        "SELECT id, type, category, mistake, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
+        "SELECT id, type, category, observation, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
       )
       .all()
       .map(learningRowToEntry),
@@ -130,7 +130,7 @@ export function getLearningEntries(
   const entries = withDatabase((db) =>
     db
       .query<LearningEntryStorageRow, [number]>(
-        `SELECT id, type, category, mistake, solution, timestamp, demo_id
+        `SELECT id, type, category, observation, solution, timestamp, demo_id
          FROM (
            SELECT *,
              ROW_NUMBER() OVER (
@@ -232,7 +232,7 @@ export function getLearningContextText(maxPerCategory = 5): string {
                 ? "Preference"
                 : "Success";
           const sol = ex.solution ? ` | Solution: ${ex.solution}` : "";
-          return `- [${label}] ${ex.mistake}${sol}`;
+          return `- [${label}] ${ex.observation}${sol}`;
         })
         .join("\n");
       return `Category: ${category} (count: ${count})\n${text}`;

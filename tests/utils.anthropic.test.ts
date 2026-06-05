@@ -62,6 +62,14 @@ describe("resolveAnthropicConfig", () => {
     const cfg = resolveAnthropicConfig();
     expect(cfg.version).toBe("2024-01-01");
   });
+
+  test("prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN when both set", () => {
+    process.env.ANTHROPIC_API_KEY = "key-first";
+    process.env.ANTHROPIC_AUTH_TOKEN = "tok-second";
+    const cfg = resolveAnthropicConfig();
+    expect(cfg.apiKey).toBe("key-first");
+    expect(cfg.authToken).toBe("tok-second");
+  });
 });
 
 describe("buildAnthropicHeaders", () => {
@@ -91,6 +99,16 @@ describe("buildAnthropicHeaders", () => {
       expect.arrayContaining(["content-type", "anthropic-version"]),
     );
     expect(h["x-api-key"]).toBeUndefined();
+    expect(h.authorization).toBeUndefined();
+  });
+
+  test("prefers x-api-key over Bearer when both apiKey and authToken present", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      authToken: "tok",
+      version: "2023-06-01",
+    });
+    expect(h["x-api-key"]).toBe("key");
     expect(h.authorization).toBeUndefined();
   });
 });

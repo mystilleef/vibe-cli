@@ -1,10 +1,10 @@
 import type {
   ListAllData,
   ListCategorySummary,
+  ListCheck,
   ListClock,
   ListCommandName,
   ListConstitution,
-  ListInteraction,
   ListProviderState,
   ListSession,
   ListStats,
@@ -15,7 +15,7 @@ import {
   formatListSection,
   formatRelativeTime,
   groupBy,
-  parseInteractionReason,
+  parseCheckReason,
   truncateText,
 } from "./listDataUtils.js";
 import type { LearningEntry } from "./storage.js";
@@ -45,7 +45,7 @@ export function formatListLearnings(
   const body = [...groupBy(learnings, (e) => e.category).entries()]
     .map(([category, entries]) => {
       const rows = entries.flatMap((entry) => [
-        `- [${entry.type}] ${entry.mistake} (${formatRelativeTime(entry.timestamp, options)})`,
+        `- [${entry.type}] ${entry.observation} (${formatRelativeTime(entry.timestamp, options)})`,
         ...(entry.solution === undefined
           ? []
           : [`  Solution: ${entry.solution}`]),
@@ -108,7 +108,7 @@ export function formatListCategories(
   const rows = categories.map((summary) => [
     summary.category,
     String(summary.count),
-    `[${summary.recentExample.type}] ${summary.recentExample.mistake}`,
+    `[${summary.recentExample.type}] ${summary.recentExample.observation}`,
   ]);
   const body = rows.length
     ? formatAlignedRows(["Category", "Count", "Recent Example"], rows)
@@ -116,20 +116,19 @@ export function formatListCategories(
   return formatListSection("Categories", body);
 }
 
-/** Render stored interactions grouped by session for pretty list output. */
-export function formatListInteractions(
-  interactions: readonly ListInteraction[],
+/** Render stored checks grouped by session for pretty list output. */
+export function formatListChecks(
+  checks: readonly ListCheck[],
   options: ListClock = {},
 ): string {
   const body = [
-    ...groupBy(interactions, (i) => i.displayCwd ?? i.session_id).entries(),
+    ...groupBy(checks, (i) => i.displayCwd ?? i.session_id).entries(),
   ]
     .map(([sessionLabel, entries]) => {
-      const rows = entries.flatMap((interaction) => {
-        const reason =
-          parseInteractionReason(interaction.output).trim() || "(none)";
+      const rows = entries.flatMap((check) => {
+        const reason = parseCheckReason(check.output).trim() || "(none)";
         return [
-          `- Goal: ${interaction.goal} (${formatRelativeTime(interaction.timestamp, options)})`,
+          `- Goal: ${check.goal} (${formatRelativeTime(check.timestamp, options)})`,
           `  Reason: ${truncateText(reason, 120)}`,
         ];
       });
@@ -137,7 +136,7 @@ export function formatListInteractions(
     })
     .join("\n\n");
 
-  return formatListSection("Interactions", body);
+  return formatListSection("Checks", body);
 }
 
 /** Render aggregate list stats for pretty list output. */
@@ -149,7 +148,7 @@ export function formatListStats(stats: ListStats): string {
       `Sessions: ${stats.sessions.total} total`,
       `Most active cwd: ${stats.sessions.mostActiveCwd ?? "(none)"}`,
       `Constitution rules: ${stats.constitution.activeRules}`,
-      `Interactions: ${stats.interactions.total} total`,
+      `Checks: ${stats.checks.total} total`,
     ].join("\n"),
   );
 }
@@ -165,7 +164,7 @@ export function formatListAll(
     formatListConstitution(data.constitution),
     formatListSessions(data.sessions),
     formatListProviders(providerState),
-    formatListInteractions(data.interactions, options),
+    formatListChecks(data.checks, options),
     formatListCategories(data.categories),
     formatListStats(data.stats),
   ].join("\n\n");

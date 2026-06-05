@@ -34,7 +34,7 @@ export function buildSchema() {
           proceed: "bool",
           confidence: "float",
           reason: "str",
-          questions: "str",
+          feedback: "str",
           plan: "str (final approved or last plan)",
           attempts: "int",
           exhausted: "bool?",
@@ -47,7 +47,7 @@ export function buildSchema() {
       },
       learn: {
         when: "after completing a task; when a mistake, preference, or success is observed",
-        req: { "--mistake": "str (one sentence)", "--category": "str" },
+        req: { "--observation": "str (one sentence)", "--category": "str" },
         opt: {
           "--solution": "str (required unless --type preference)",
           "--type": "mistake|preference|success (default: mistake)",
@@ -55,7 +55,7 @@ export function buildSchema() {
         out: {
           added: "bool",
           alreadyKnown: "bool",
-          currentTally: "int",
+          categoryCount: "int",
           topCategories: "[{category,count,recentExample}]",
         },
       },
@@ -87,6 +87,18 @@ export function buildSchema() {
           response: "str?",
           error: "str?",
         },
+      },
+      migrate: {
+        when: "run database migrations and report schema migration state",
+        req: {},
+        opt: {},
+        out: {
+          applied: "[str]",
+          pending: "[str]",
+          ranAt: "ISO datetime str",
+          status: "migrated|up-to-date",
+        },
+        exit: { "0": "success", "1": "error" },
       },
       "constitution get": {
         when: "inspect active rules before acting",

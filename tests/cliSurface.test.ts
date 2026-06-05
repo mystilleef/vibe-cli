@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCwdKey } from "../src/utils/autosession";
-import { initializeSchema } from "../src/utils/database";
+import { getMigrationIds, initializeSchema } from "../src/utils/database";
 import type { LearningType } from "../src/utils/storage";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
@@ -25,6 +25,7 @@ const capturePruneInput = join(
   "helpers",
   "capturePruneInput.ts",
 );
+const EXPECTED_MIGRATION_IDS = getMigrationIds();
 
 interface CliResult {
   stdout: string;
@@ -50,6 +51,77 @@ async function createCwd(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "vibe-cli-surface-"));
   cwdRoots.push(cwd);
   return cwd;
+}
+
+function parseMigrationReport(result: CliResult): {
+  applied: string[];
+  pending: string[];
+  ranAt: string;
+  status: string;
+} {
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout.trim().split("\n")).toHaveLength(1);
+  const report = JSON.parse(result.stdout) as {
+    applied: string[];
+    pending: string[];
+    ranAt: string;
+    status: string;
+  };
+  expect(Object.keys(report).sort()).toEqual([
+    "applied",
+    "pending",
+    "ranAt",
+    "status",
+  ]);
+  expect(Date.parse(report.ranAt)).not.toBeNaN();
+  return report;
+}
+
+async function seedSchemaMigrationsOnly(
+  home: TempHomeContext,
+  appliedIds: readonly string[] = [],
+): Promise<void> {
+  await mkdir(home.dataRoot, { recursive: true });
+  const db = new Database(join(home.dataRoot, "vibe.db"));
+  db.exec(`
+    CREATE TABLE schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+  const insert = db.prepare(
+    "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+  );
+  for (const id of appliedIds) {
+    insert.run(id, "2026-01-01T00:00:00.000Z");
+  }
+  db.close();
+}
+
+async function seedInitialMigrationOnly(home: TempHomeContext): Promise<void> {
+  await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
+  const db = new Database(join(home.dataRoot, "vibe.db"));
+  db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      cwd_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      last_accessed_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_sessions_last_accessed_at
+      ON sessions(last_accessed_at);
+    CREATE TABLE learning_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
+      category TEXT NOT NULL,
+      mistake TEXT NOT NULL,
+      solution TEXT,
+      timestamp INTEGER NOT NULL,
+      demo_id TEXT
+    );
+  `);
+  db.close();
 }
 
 function runCli(
@@ -102,7 +174,7 @@ function expectHelpWithoutSession(command: string[]): void {
 type SeedLearningEntry = {
   type: LearningType;
   category: string;
-  mistake: string;
+  observation: string;
   solution?: string;
   timestamp: number;
   demoId?: string;
@@ -117,14 +189,14 @@ async function seedLearningEntries(
   initializeSchema(db);
   const insert = db.prepare(
     `INSERT INTO learning_entries
-       (type, category, mistake, solution, timestamp, demo_id)
+       (type, category, observation, solution, timestamp, demo_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   for (const entry of entries) {
     insert.run(
       entry.type,
       entry.category,
-      entry.mistake,
+      entry.observation,
       entry.solution ?? null,
       entry.timestamp,
       entry.demoId ?? null,
@@ -250,7 +322,7 @@ describe("CLI autosession surface", () => {
   test("removed --session options fail through Commander", () => {
     for (const command of [
       ["check", "--session", "x", "--goal", "g", "--plan", "p"],
-      ["learn", "--session", "x", "--mistake", "m", "--category", "c"],
+      ["learn", "--session", "x", "--observation", "m", "--category", "c"],
       ["constitution", "set", "--session", "x", "--rule", "r"],
       ["constitution", "get", "--session", "x"],
       ["constitution", "reset", "--session", "x"],
@@ -279,7 +351,7 @@ describe("CLI autosession surface", () => {
         "constitution",
         "sessions",
         "providers",
-        "interactions",
+        "checks",
         "categories",
         "stats",
         "all",
@@ -321,34 +393,34 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "alpha",
-        mistake: "Alpha older.",
+        observation: "Alpha older.",
         solution: "Fix older.",
         timestamp: base,
       },
       {
         type: "success",
         category: "alpha",
-        mistake: "Alpha newer.",
+        observation: "Alpha newer.",
         solution: "Keep newer.",
         timestamp: base + 1000,
       },
       {
         type: "preference",
         category: "beta",
-        mistake: "Beta preference.",
+        observation: "Beta preference.",
         timestamp: base + 2000,
       },
       {
         type: "mistake",
         category: "beta",
-        mistake: "Beta mistake.",
+        observation: "Beta mistake.",
         solution: "Fix beta.",
         timestamp: base + 3000,
       },
       {
         type: "mistake",
         category: "gamma",
-        mistake: "Gamma mistake.",
+        observation: "Gamma mistake.",
         solution: "Fix gamma.",
         timestamp: base + 4000,
       },
@@ -370,14 +442,14 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "alpha",
-        mistake: "Alpha older.",
+        observation: "Alpha older.",
         solution: "Fix older.",
         timestamp: base,
       },
       {
         type: "mistake",
         category: "beta",
-        mistake: "Beta mistake.",
+        observation: "Beta mistake.",
         solution: "Fix beta.",
         timestamp: base + 3000,
       },
@@ -386,7 +458,7 @@ describe("CLI autosession surface", () => {
       {
         type: "preference",
         category: "beta",
-        mistake: "Beta preference.",
+        observation: "Beta preference.",
         timestamp: base + 2000,
       },
     ]);
@@ -405,34 +477,34 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "beta",
-        mistake: "Beta older.",
+        observation: "Beta older.",
         solution: "Fix beta older.",
         timestamp: base,
       },
       {
         type: "mistake",
         category: "alpha",
-        mistake: "Alpha older.",
+        observation: "Alpha older.",
         solution: "Fix alpha older.",
         timestamp: base + 1000,
       },
       {
         type: "success",
         category: "alpha",
-        mistake: "Alpha newer.",
+        observation: "Alpha newer.",
         solution: "Keep alpha newer.",
         timestamp: base + 2000,
       },
       {
         type: "preference",
         category: "beta",
-        mistake: "Beta newer.",
+        observation: "Beta newer.",
         timestamp: base + 3000,
       },
       {
         type: "mistake",
         category: "gamma",
-        mistake: "Gamma only.",
+        observation: "Gamma only.",
         solution: "Fix gamma.",
         timestamp: base + 4000,
       },
@@ -445,7 +517,7 @@ describe("CLI autosession surface", () => {
     const categories = JSON.parse(json.stdout) as Array<{
       category: string;
       count: number;
-      recentExample: { mistake: string };
+      recentExample: { observation: string };
     }>;
 
     expect(categories.map((category) => category.category)).toEqual([
@@ -454,8 +526,8 @@ describe("CLI autosession surface", () => {
       "gamma",
     ]);
     expect(categories.map((category) => category.count)).toEqual([2, 2, 1]);
-    expect(categories[0]?.recentExample.mistake).toBe("Alpha newer.");
-    expect(categories[1]?.recentExample.mistake).toBe("Beta newer.");
+    expect(categories[0]?.recentExample.observation).toBe("Alpha newer.");
+    expect(categories[1]?.recentExample.observation).toBe("Beta newer.");
     expect(pretty.exitCode).toBe(0);
     expect(pretty.stderr).toBe("");
     expect(pretty.stdout).toContain("Category  Count  Recent Example");
@@ -600,7 +672,7 @@ describe("CLI autosession surface", () => {
     expect(pretty.stdout).toMatch(/deepseek\s+deepseek-v4-pro\s+\*/);
   });
 
-  test("list interactions filters, limits, parses, and truncates reasons", async () => {
+  test("list checks filters, limits, parses, and truncates reasons", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     const longReason = "R".repeat(125);
@@ -635,7 +707,7 @@ describe("CLI autosession surface", () => {
     const json = runCli(
       [
         "list",
-        "interactions",
+        "checks",
         "--session",
         "session-alpha",
         "--limit",
@@ -644,7 +716,7 @@ describe("CLI autosession surface", () => {
       ],
       { home: home.home },
     );
-    const pretty = runCli(["list", "interactions"], { home: home.home });
+    const pretty = runCli(["list", "checks"], { home: home.home });
     const payload = JSON.parse(json.stdout) as Array<{
       id: number;
       session_id: string;
@@ -668,7 +740,7 @@ describe("CLI autosession surface", () => {
     ]);
     expect(pretty.exitCode).toBe(0);
     expect(pretty.stderr).toBe("");
-    expect(pretty.stdout).toContain("Interactions");
+    expect(pretty.stdout).toContain("Checks");
     expect(pretty.stdout).toContain("Session: /tmp/alpha");
     expect(pretty.stdout).toContain("Session: /tmp/beta");
     expect(pretty.stdout.indexOf("Deploy carefully")).toBeLessThan(
@@ -715,16 +787,8 @@ describe("CLI autosession surface", () => {
       ["list", "sessions", "--json"],
       ["list", "providers"],
       ["list", "providers", "--json"],
-      ["list", "interactions", "--session", "missing", "--limit", "5"],
-      [
-        "list",
-        "interactions",
-        "--session",
-        "missing",
-        "--limit",
-        "5",
-        "--json",
-      ],
+      ["list", "checks", "--session", "missing", "--limit", "5"],
+      ["list", "checks", "--session", "missing", "--limit", "5", "--json"],
       ["list", "categories"],
       ["list", "categories", "--json"],
       ["list", "stats"],
@@ -766,20 +830,20 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "risk",
-        mistake: "Risk one.",
+        observation: "Risk one.",
         solution: "Mitigate risk.",
         timestamp: base,
       },
       {
         type: "preference",
         category: "style",
-        mistake: "Style one.",
+        observation: "Style one.",
         timestamp: base + 1000,
       },
       {
         type: "success",
         category: "risk",
-        mistake: "Risk success.",
+        observation: "Risk success.",
         solution: "Repeat it.",
         timestamp: base + 2000,
       },
@@ -837,7 +901,7 @@ describe("CLI autosession surface", () => {
       constitution: { rules: string[] };
       sessions: unknown[];
       providers: { activeProvider: string; providers: Record<string, string> };
-      interactions: unknown[];
+      checks: unknown[];
       categories: unknown[];
       stats: unknown;
     };
@@ -848,7 +912,7 @@ describe("CLI autosession surface", () => {
       learnings: { total: 3, mistake: 1, preference: 1, success: 1 },
       sessions: { total: 2, mostActiveCwd: cwd },
       constitution: { activeRules: 1 },
-      interactions: { total: 3 },
+      checks: { total: 3 },
     });
     expect(statsPretty.exitCode).toBe(0);
     expect(statsPretty.stderr).toBe("");
@@ -861,7 +925,7 @@ describe("CLI autosession surface", () => {
       "constitution",
       "sessions",
       "providers",
-      "interactions",
+      "checks",
       "categories",
       "stats",
     ]);
@@ -869,7 +933,7 @@ describe("CLI autosession surface", () => {
     expect(all.constitution.rules).toEqual(["Prefer local reads"]);
     expect(all.sessions).toHaveLength(2);
     expect(all.providers.providers.deepseek).toBe("deepseek-v4-pro");
-    expect(all.interactions).toHaveLength(3);
+    expect(all.checks).toHaveLength(3);
     expect(all.categories).toHaveLength(2);
     expect(all.stats).toEqual(stats);
     expect(allPretty.exitCode).toBe(0);
@@ -879,7 +943,7 @@ describe("CLI autosession surface", () => {
       "Constitution",
       "Sessions",
       "Providers",
-      "Interactions",
+      "Checks",
       "Categories",
       "Stats",
     ]) {
@@ -895,7 +959,7 @@ describe("CLI autosession surface", () => {
     const result = runCli(
       [
         "learn",
-        "--mistake",
+        "--observation",
         "Store reusable successes.",
         "--category",
         "archive",
@@ -909,11 +973,11 @@ describe("CLI autosession surface", () => {
     const payload = JSON.parse(result.stdout) as {
       added: boolean;
       alreadyKnown: boolean;
-      currentTally: number;
+      categoryCount: number;
       topCategories: Array<{
         category: string;
         count: number;
-        recentExample: { type: string; mistake: string; solution: string };
+        recentExample: { type: string; observation: string; solution: string };
       }>;
     };
 
@@ -922,14 +986,14 @@ describe("CLI autosession surface", () => {
     expect(payload).toMatchObject({
       added: true,
       alreadyKnown: false,
-      currentTally: 1,
+      categoryCount: 1,
       topCategories: [
         {
           category: "archive",
           count: 1,
           recentExample: {
             type: "success",
-            mistake: "Store reusable successes.",
+            observation: "Store reusable successes.",
             solution: "Review them before similar work.",
           },
         },
@@ -952,6 +1016,129 @@ describe("CLI autosession surface", () => {
     expect(columns).toContainEqual(
       expect.objectContaining({ name: "cwd", type: "TEXT", notnull: 0 }),
     );
+  });
+
+  test("migrate command reports fresh database migrations", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["migrate"], { home: home.home });
+    const report = parseMigrationReport(result);
+
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS,
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+  });
+
+  test("migrate command reports empty database files as fresh migrations", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, "vibe.db"), "");
+
+    const result = runCli(["migrate"], { home: home.home });
+    const report = parseMigrationReport(result);
+
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS,
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+  });
+
+  test("migrate command reports schema-migrations-only databases as fresh migrations", async () => {
+    const home = await useTempHome();
+    await seedSchemaMigrationsOnly(home);
+
+    const result = runCli(["migrate"], { home: home.home });
+    const report = parseMigrationReport(result);
+
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS,
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+  });
+
+  test("migrate command reports current databases without pending migrations", async () => {
+    const home = await useTempHome();
+
+    const first = parseMigrationReport(
+      runCli(["migrate"], { home: home.home }),
+    );
+    const second = parseMigrationReport(
+      runCli(["migrate"], { home: home.home }),
+    );
+
+    expect(first.pending).toEqual(EXPECTED_MIGRATION_IDS);
+    expect(second).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: [],
+      ranAt: second.ranAt,
+      status: "up-to-date",
+    });
+  });
+
+  test("migrate command reports partially migrated databases", async () => {
+    const home = await useTempHome();
+    await seedInitialMigrationOnly(home);
+
+    const result = runCli(["migrate"], { home: home.home });
+    const report = parseMigrationReport(result);
+
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS.slice(1),
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+  });
+
+  test("migrate command rejects flags without stdout success payload", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["migrate", "--json"], { home: home.home });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({ error: expect.any(String) });
+  });
+
+  test("migrate command emits fatal JSON without stdout on filesystem setup failure", async () => {
+    const home = await useTempHome();
+    await writeFile(home.dataRoot, "not a directory");
+
+    const result = runCli(["migrate"], { home: home.home });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({ error: expect.any(String) });
+  });
+
+  test("migrate command emits fatal JSON without stdout on database open failure", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, "vibe.db"), "not sqlite");
+
+    const result = runCli(["migrate"], { home: home.home });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({ error: expect.any(String) });
+  });
+
+  test("migrate command emits fatal JSON without stdout on migration SQL failure", async () => {
+    const home = await useTempHome();
+    await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
+
+    const result = runCli(["migrate"], { home: home.home });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({ error: expect.any(String) });
   });
 
   test("session command emits JSON and refreshes lastAccessedAt", async () => {
@@ -1026,6 +1213,15 @@ describe("CLI autosession surface", () => {
       );
       CREATE INDEX idx_sessions_last_accessed_at
         ON sessions(last_accessed_at);
+      CREATE TABLE learning_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
+        category TEXT NOT NULL,
+        mistake TEXT NOT NULL,
+        solution TEXT,
+        timestamp INTEGER NOT NULL,
+        demo_id TEXT
+      );
     `);
     db.prepare(
       "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
@@ -1064,7 +1260,15 @@ describe("CLI autosession surface", () => {
       data?: unknown;
       errors?: unknown;
       config?: unknown;
-      commands: Record<string, { opt?: Record<string, string>; out?: unknown }>;
+      commands: Record<
+        string,
+        {
+          req?: Record<string, string>;
+          opt?: Record<string, string>;
+          out?: unknown;
+          exit?: Record<string, string>;
+        }
+      >;
     };
 
     const commandKeys = Object.keys(schema.commands);
@@ -1085,12 +1289,40 @@ describe("CLI autosession surface", () => {
       "session",
       "verify",
       "prune",
+      "migrate",
     ]) {
       expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
         "--session",
       );
     }
+    expect(schema.commands.migrate).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {},
+      out: {
+        applied: "[str]",
+        pending: "[str]",
+        ranAt: "ISO datetime str",
+        status: "migrated|up-to-date",
+      },
+      exit: {
+        "0": "success",
+        "1": "error",
+      },
+    });
+    expect(Object.keys(schema.commands.migrate?.req ?? {})).toEqual([]);
+    expect(Object.keys(schema.commands.migrate?.opt ?? {})).toEqual([]);
+    expect(Object.keys(schema.commands.migrate?.out ?? {})).toEqual([
+      "applied",
+      "pending",
+      "ranAt",
+      "status",
+    ]);
+    expect(Object.keys(schema.commands.migrate?.exit ?? {})).toEqual([
+      "0",
+      "1",
+    ]);
     expect(Object.keys(schema.commands.prune?.opt ?? {})).toEqual([
       "--learnings",
       "--duplicates",
@@ -1235,7 +1467,7 @@ describe("CLI autosession surface", () => {
       reason: "proceed:mock-claude",
       attempts: 1,
     });
-    expect(payload.questions).toContain("questions:mock-claude");
+    expect(payload.feedback).toContain("questions:mock-claude");
   });
 
   test("VIBE_MAX_ATTEMPTS env var sets default max attempts", async () => {
@@ -1343,13 +1575,13 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
 
     const result = runCli(
-      ["learn", "--mistake", "Repeated risky plan.", "--category", "risk"],
+      ["learn", "--observation", "Repeated risky plan.", "--category", "risk"],
       { home: home.home },
     );
     const payload = JSON.parse(result.stdout) as {
       added: boolean;
       alreadyKnown: boolean;
-      currentTally: number;
+      categoryCount: number;
       topCategories: unknown[];
     };
 
@@ -1360,7 +1592,7 @@ describe("CLI autosession surface", () => {
     expect(payload).toEqual({
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     });
   });
@@ -1645,7 +1877,7 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "test",
-        mistake: "Old entry.",
+        observation: "Old entry.",
         solution: "Fix it.",
         timestamp: base - 100 * 24 * 60 * 60 * 1000,
       },
@@ -1690,7 +1922,7 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "test",
-        mistake: "Old entry.",
+        observation: "Old entry.",
         solution: "Fix it.",
         timestamp: base - 100 * 24 * 60 * 60 * 1000,
       },
@@ -1719,7 +1951,7 @@ describe("CLI autosession surface", () => {
       {
         type: "mistake",
         category: "test",
-        mistake: "Old entry.",
+        observation: "Old entry.",
         solution: "Fix it.",
         timestamp: base - 100 * 24 * 60 * 60 * 1000,
       },

@@ -37,7 +37,7 @@ describe("learn and constitution autosessions", () => {
     await setupIsolatedCwd();
 
     const input: import("../src/tools/vibeLearn").VibeLearnInput = {
-      mistake: "Agent repeated a risky plan without verification.",
+      observation: "Agent repeated a risky plan without verification.",
       category: "Premature Implementation",
       solution: "Verify the plan before executing risky work.",
       type: "mistake",
@@ -46,7 +46,7 @@ describe("learn and constitution autosessions", () => {
     const result = await tools.vibeLearnTool(input);
 
     expect(result.added).toBe(true);
-    expect(result.currentTally).toBe(1);
+    expect(result.categoryCount).toBe(1);
     expect(result.topCategories[0]?.category).toBe("Premature Implementation");
   });
 

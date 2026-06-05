@@ -158,7 +158,7 @@ describe("runDemo", () => {
     expect(getConstitution()).toEqual(["Keep existing user rules"]);
     expect(
       getLearningEntries()["Premature Implementation"]?.map(
-        (entry) => entry.mistake,
+        (entry) => entry.observation,
       ),
     ).toEqual(["Legacy user learning", "Concurrent user learning"]);
     expect(
@@ -170,7 +170,9 @@ describe("runDemo", () => {
     expect(summary).toHaveLength(1);
     expect(summary[0]?.category).toBe("Premature Implementation");
     expect(summary[0]?.count).toBe(2);
-    expect(summary[0]?.recentExample.mistake).toBe("Concurrent user learning");
+    expect(summary[0]?.recentExample.observation).toBe(
+      "Concurrent user learning",
+    );
     expect(summary[0]?.recentExample.timestamp).toBeGreaterThanOrEqual(
       legacyEntry.timestamp,
     );

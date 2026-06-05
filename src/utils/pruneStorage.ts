@@ -16,7 +16,7 @@ export interface LearningPruneCandidate {
   id: number;
   type: "mistake" | "preference" | "success";
   category: string;
-  mistake: string;
+  observation: string;
   solution?: string;
   timestamp: number;
   demoId?: string;
@@ -148,7 +148,7 @@ function rowToSessionPruneCandidate(
 }
 
 const LEARNING_PRUNE_SELECT =
-  "SELECT id, type, category, mistake, solution, timestamp, demo_id FROM learning_entries";
+  "SELECT id, type, category, observation, solution, timestamp, demo_id FROM learning_entries";
 
 const LEARNING_PRUNE_ORDER = "ORDER BY timestamp, category, id";
 
@@ -278,7 +278,10 @@ function buildLearningOverlapGraph(
     ) {
       const right = rows[rightIndex];
       if (right === undefined) continue;
-      const score = getLearningOverlapScore(left.mistake, right.mistake);
+      const score = getLearningOverlapScore(
+        left.observation,
+        right.observation,
+      );
       if (score < overlapThreshold) continue;
       edges.get(left.id)?.add(right.id);
       edges.get(right.id)?.add(left.id);

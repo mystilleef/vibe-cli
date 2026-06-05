@@ -7,7 +7,7 @@ import {
   vibeGateLoop,
   vibeGateTool,
 } from "../src/tools/vibeGate";
-import { FALLBACK_QUESTIONS } from "../src/utils/llm";
+import { FALLBACK_FEEDBACK } from "../src/utils/llm";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 interface AnthropicBody {
@@ -109,7 +109,7 @@ describe("vibeGateTool", () => {
       proceed: true,
       confidence: 0.92,
       reason: "risks addressed",
-      questions: "questions:mock-gate:review rollback",
+      feedback: "questions:mock-gate:review rollback",
       plan: "run focused tests",
       attempts: 1,
     });
@@ -130,7 +130,7 @@ describe("vibeGateTool", () => {
     expect(result.proceed).toBe(false);
     expect(result.confidence).toBe(0.5);
     expect(result.reason).toMatch(/unavailable/);
-    expect(result.questions).toBe("questions:needs-structure");
+    expect(result.feedback).toBe("questions:needs-structure");
     expect(result.attempts).toBe(1);
   });
 
@@ -164,7 +164,7 @@ describe("vibeGateLoop", () => {
       proceed: true,
       confidence: 0.88,
       reason: "rollback added",
-      questions: "questions:second",
+      feedback: "questions:second",
       plan: "add rollback and smoke tests",
       attempts: 2,
     });
@@ -192,7 +192,7 @@ describe("vibeGateLoop", () => {
       proceed: false,
       confidence: 0.2,
       reason: "too risky",
-      questions: "questions:only",
+      feedback: "questions:only",
       plan: "run focused tests",
       attempts: 1,
       exhausted: true,
@@ -233,10 +233,10 @@ describe("vibeGateLoop", () => {
     expect(result.proceed).toBe(true);
     expect(result.plan).toBe("fallback-aware revision");
     expect(requests[1]?.messages?.[0]?.content).toContain(
-      `Feedback: ${FALLBACK_QUESTIONS}`,
+      `Feedback: ${FALLBACK_FEEDBACK}`,
     );
     expect(requests[2]?.messages?.[0]?.content).toContain(
-      `Safety feedback: ${FALLBACK_QUESTIONS}`,
+      `Safety feedback: ${FALLBACK_FEEDBACK}`,
     );
   });
 

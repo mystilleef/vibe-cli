@@ -55,7 +55,7 @@ Skip trivial, reversible, single-step plans.
    - `proceed=true`: execute the returned `plan` exactly, not the
      original.
    - `proceed=false` without exhaustion: revise from `reason`,
-     `questions`, and returned `plan`; resubmit.
+     `feedback`, and returned `plan`; resubmit.
    - `exhausted=true`: stop; report that the mentor failed to safely
      approve the plan within the attempt limit.
 6. **Record notable outcomes**—after task completion, run `vibe learn`

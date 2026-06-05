@@ -16,7 +16,7 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 
-/** System prompt injected into every metacognitive question generation call. */
+/** System prompt injected into every mentor feedback generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
 
 Scan (weight by blast radius — severity × irreversibility):
@@ -36,14 +36,14 @@ Output: actionable, no user input required:
 Feedback only — no narration, no preamble, no hedging.
 Minimum words. Maximum signal.`;
 
-/** Static fallback questions returned when the LLM call fails. */
-export const FALLBACK_QUESTIONS = [
+/** Static fallback feedback returned when the LLM call fails. */
+export const FALLBACK_FEEDBACK = [
   "1. Goal alignment: confirm the plan directly addresses the stated goal — no scope drift.",
   "2. Irreversible steps: each must have a tested rollback or safe-stop defined in the plan.",
   "3. Load-bearing assumptions: enumerate each and verify within the plan before proceeding.",
 ].join("\n");
 
-interface QuestionInput {
+interface ReviewInput {
   goal: string;
   plan: string;
   modelOverride?: { provider?: string; model?: string };
@@ -55,8 +55,8 @@ interface QuestionInput {
   historySummary?: string;
 }
 
-interface QuestionOutput {
-  questions: string;
+interface ReviewOutput {
+  feedback: string;
 }
 
 async function ensureGemini() {
@@ -291,7 +291,7 @@ async function callProvider(
  * rules, prior session history, and learning-pattern history. Learning context is
  * controlled by the USE_LEARNING_HISTORY env var (default: "true").
  */
-function buildContextSection(input: QuestionInput): string {
+function buildContextSection(input: ReviewInput): string {
   const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
   const learningContext = useLearning ? getLearningContextText() : "";
   const rules = getConstitution();
@@ -315,7 +315,7 @@ function buildContextSection(input: QuestionInput): string {
     .join("\n");
 }
 
-async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
+async function generateResponse(input: ReviewInput): Promise<ReviewOutput> {
   const { provider, model } = resolveProviderAndModel(input.modelOverride);
   const responseText = await callProvider(
     provider,
@@ -323,7 +323,7 @@ async function generateResponse(input: QuestionInput): Promise<QuestionOutput> {
     SYSTEM_PROMPT,
     buildContextSection(input),
   );
-  return { questions: responseText };
+  return { feedback: responseText };
 }
 
 /** System prompt for the plan-revision LLM call. */
@@ -433,7 +433,7 @@ export async function verifyConnection(opts?: {
       provider,
       model: model || "(default)",
       latency_ms: Date.now() - start,
-      response: result.questions.slice(0, 200),
+      response: result.feedback.slice(0, 200),
     };
   } catch (err) {
     return {
@@ -446,18 +446,18 @@ export async function verifyConnection(opts?: {
 }
 
 /**
- * Generate metacognitive review questions for a plan.
+ * Generate mentor feedback for a plan.
  *
- * Returns LLM-generated feedback on success, or the static `FALLBACK_QUESTIONS`
+ * Returns LLM-generated feedback on success, or the static `FALLBACK_FEEDBACK`
  * on any error. Never throws — callers always receive a usable result.
  */
-export async function getMetacognitiveQuestions(
-  input: QuestionInput,
-): Promise<QuestionOutput> {
+export async function getMentorFeedback(
+  input: ReviewInput,
+): Promise<ReviewOutput> {
   try {
     return await generateResponse(input);
   } catch {
-    return { questions: FALLBACK_QUESTIONS };
+    return { feedback: FALLBACK_FEEDBACK };
   }
 }
 

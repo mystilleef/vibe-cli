@@ -92,8 +92,8 @@ export function truncateText(
     : `${text.slice(0, maxLength)}${suffix}`;
 }
 
-/** Extract a stored interaction reason when output contains a JSON reason. */
-export function parseInteractionReason(output: string): string {
+/** Extract a stored check reason when output contains a JSON reason. */
+export function parseCheckReason(output: string): string {
   try {
     const parsed = JSON.parse(output) as unknown;
     if (

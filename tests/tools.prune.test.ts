@@ -27,7 +27,7 @@ afterEach(async () => {
 
 type SeedLearningRow = {
   category: string;
-  mistake: string;
+  observation: string;
   timestamp: number;
   type?: LearningType;
   solution?: string;
@@ -39,13 +39,13 @@ function seedLearningEntries(rows: SeedLearningRow[]): number[] {
   const db = new Database(join(home.dataRoot, "vibe.db"));
   initializeSchema(db);
   const insert = db.prepare(
-    "INSERT INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const ids = rows.map((row) => {
     const result = insert.run(
       row.type ?? "mistake",
       row.category,
-      row.mistake,
+      row.observation,
       row.solution ?? null,
       row.timestamp,
       row.demoId ?? null,
@@ -56,15 +56,15 @@ function seedLearningEntries(rows: SeedLearningRow[]): number[] {
   return ids;
 }
 
-function readLearningMistakes(category: string): string[] {
+function readLearningObservations(category: string): string[] {
   const db = new Database(join(home.dataRoot, "vibe.db"));
   try {
     return db
-      .query<{ mistake: string }, [string]>(
-        "SELECT mistake FROM learning_entries WHERE category = ? ORDER BY id",
+      .query<{ observation: string }, [string]>(
+        "SELECT observation FROM learning_entries WHERE category = ? ORDER BY id",
       )
       .all(category)
-      .map((row) => row.mistake);
+      .map((row) => row.observation);
   } finally {
     db.close();
   }
@@ -181,10 +181,14 @@ describe("runPrune — validateAge (internal)", () => {
   test("uses default age (90 days) when --age is omitted", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
+      {
+        category: "old",
+        observation: "old entry",
+        timestamp: now - 100 * DAY_MS,
+      },
       {
         category: "recent",
-        mistake: "recent entry",
+        observation: "recent entry",
         timestamp: now - 10 * DAY_MS,
       },
     ]);
@@ -197,15 +201,19 @@ describe("runPrune — validateAge (internal)", () => {
   test("accepts valid age and narrows candidates", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "very old", timestamp: now - 100 * DAY_MS },
+      {
+        category: "old",
+        observation: "very old",
+        timestamp: now - 100 * DAY_MS,
+      },
       {
         category: "medium",
-        mistake: "medium old",
+        observation: "medium old",
         timestamp: now - 60 * DAY_MS,
       },
       {
         category: "recent",
-        mistake: "pretty recent",
+        observation: "pretty recent",
         timestamp: now - 10 * DAY_MS,
       },
     ]);
@@ -238,7 +246,7 @@ describe("runPrune — validateAge (internal)", () => {
     seedLearningEntries([
       {
         category: "very-old",
-        mistake: "some entry",
+        observation: "some entry",
         timestamp: now - 4000 * DAY_MS,
       },
     ]);
@@ -257,12 +265,12 @@ describe("runPrune — validateOverlap (internal)", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta",
+        observation: "alpha beta gamma delta",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta gamma omega",
+        observation: "alpha beta gamma omega",
         timestamp: 20,
       },
     ]);
@@ -275,12 +283,12 @@ describe("runPrune — validateOverlap (internal)", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta epsilon",
+        observation: "alpha beta gamma delta epsilon",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta gamma zeta eta",
+        observation: "alpha beta gamma zeta eta",
         timestamp: 20,
       },
     ]);
@@ -293,12 +301,12 @@ describe("runPrune — validateOverlap (internal)", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta epsilon",
+        observation: "alpha beta gamma delta epsilon",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta zeta eta theta",
+        observation: "alpha beta zeta eta theta",
         timestamp: 20,
       },
     ]);
@@ -333,12 +341,12 @@ describe("runPrune — validateOverlap (internal)", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta",
+        observation: "alpha beta",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "gamma delta",
+        observation: "gamma delta",
         timestamp: 20,
       },
     ]);
@@ -351,12 +359,12 @@ describe("runPrune — validateOverlap (internal)", () => {
     seedLearningEntries([
       {
         category: "threshold",
-        mistake: "alpha beta gamma delta",
+        observation: "alpha beta gamma delta",
         timestamp: 10,
       },
       {
         category: "threshold",
-        mistake: "alpha beta gamma omega",
+        observation: "alpha beta gamma omega",
         timestamp: 20,
       },
     ]);
@@ -448,14 +456,14 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
     const now = Date.now();
     const oldMs = now - 100 * DAY_MS;
     seedLearningEntries([
-      { category: "cat", mistake: "Mistake one.", timestamp: oldMs },
+      { category: "cat", observation: "Mistake one.", timestamp: oldMs },
     ]);
 
     const result = runPrune({ learnings: true, age: 90, dryRun: true });
     expect(result.representativeDetails.learnings).toHaveLength(1);
     expect(result.representativeDetails.learnings[0]).toMatchObject({
       category: "cat",
-      mistake: "Mistake one.",
+      observation: "Mistake one.",
     });
     expect(typeof result.representativeDetails.learnings[0]?.id).toBe("number");
   });
@@ -466,7 +474,7 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
       seedLearningEntries([
         {
           category: "cat",
-          mistake: `Mistake ${i}.`,
+          observation: `Mistake ${i}.`,
           timestamp: now - 100 * DAY_MS,
         },
       ]);
@@ -480,12 +488,12 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
     seedLearningEntries([
       {
         category: "scope",
-        mistake: "forgot import in module",
+        observation: "forgot import in module",
         timestamp: 10,
       },
       {
         category: "scope",
-        mistake: "forgot import in module again",
+        observation: "forgot import in module again",
         timestamp: 20,
       },
     ]);
@@ -505,7 +513,7 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
       {
         category: "demo-cat",
         demoId: "demo-1",
-        mistake: "Demo mistake.",
+        observation: "Demo mistake.",
         timestamp: 100 * DAY_MS,
       },
     ]);
@@ -514,7 +522,7 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
     expect(result.representativeDetails.demos).toHaveLength(1);
     expect(result.representativeDetails.demos[0]).toMatchObject({
       category: "demo-cat",
-      mistake: "Demo mistake.",
+      observation: "Demo mistake.",
       demoId: "demo-1",
     });
   });
@@ -524,7 +532,7 @@ describe("runPrune — extractRepresentativeDetails (internal)", () => {
       {
         id: 1,
         category: "demo-cat",
-        mistake: "Demo mistake.",
+        observation: "Demo mistake.",
       };
 
     expect(detail.demoId).toBeUndefined();
@@ -567,7 +575,11 @@ describe("runPrune — dry-run mode", () => {
   test("dryRun=true with explicit targets returns zero deleted count", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
+      {
+        category: "old",
+        observation: "old entry",
+        timestamp: now - 100 * DAY_MS,
+      },
     ]);
 
     const result = runPrune({
@@ -603,7 +615,11 @@ describe("runPrune — dry-run mode", () => {
   test("explicit targets without --yes defaults to dry-run", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
+      {
+        category: "old",
+        observation: "old entry",
+        timestamp: now - 100 * DAY_MS,
+      },
     ]);
 
     const result = runPrune({ learnings: true, age: 90 });
@@ -652,8 +668,8 @@ describe("runPrune — destructive mode", () => {
     const oldMs = now - 100 * DAY_MS;
     const recentMs = now - 10 * DAY_MS;
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: oldMs },
-      { category: "recent", mistake: "recent entry", timestamp: recentMs },
+      { category: "old", observation: "old entry", timestamp: oldMs },
+      { category: "recent", observation: "recent entry", timestamp: recentMs },
     ]);
 
     const result = runPrune({
@@ -675,7 +691,7 @@ describe("runPrune — destructive mode", () => {
     seedLearningEntries([
       {
         category: "old",
-        mistake: "kept after backup failure",
+        observation: "kept after backup failure",
         timestamp: now - 100 * DAY_MS,
       },
     ]);
@@ -698,19 +714,21 @@ describe("runPrune — destructive mode", () => {
       demos: 0,
       sessions: 0,
     });
-    expect(readLearningMistakes("old")).toEqual(["kept after backup failure"]);
+    expect(readLearningObservations("old")).toEqual([
+      "kept after backup failure",
+    ]);
   });
 
   test("deletes duplicate learning entries with --yes", () => {
     seedLearningEntries([
       {
         category: "scope",
-        mistake: "forgot import in module",
+        observation: "forgot import in module",
         timestamp: 10,
       },
       {
         category: "scope",
-        mistake: "forgot import in module again",
+        observation: "forgot import in module again",
         timestamp: 20,
       },
     ]);
@@ -731,7 +749,7 @@ describe("runPrune — destructive mode", () => {
       {
         category: "demo-cat",
         demoId: "demo-1",
-        mistake: "Demo entry.",
+        observation: "Demo entry.",
         timestamp: 100 * DAY_MS,
       },
     ]);
@@ -778,12 +796,12 @@ describe("runPrune — destructive mode", () => {
     seedLearningEntries([
       {
         category: "old",
-        mistake: "old entry one.",
+        observation: "old entry one.",
         timestamp: now - 120 * DAY_MS,
       },
       {
         category: "old",
-        mistake: "old entry two.",
+        observation: "old entry two.",
         timestamp: now - 110 * DAY_MS,
       },
     ]);
@@ -866,21 +884,25 @@ describe("runPrune — multi-target combinations", () => {
   test("runs all four targets simultaneously in dry-run", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
       {
-        category: "dup",
-        mistake: "duplicate pattern",
+        category: "old",
+        observation: "old entry",
         timestamp: now - 100 * DAY_MS,
       },
       {
         category: "dup",
-        mistake: "duplicate pattern again",
+        observation: "duplicate pattern",
+        timestamp: now - 100 * DAY_MS,
+      },
+      {
+        category: "dup",
+        observation: "duplicate pattern again",
         timestamp: now - 99 * DAY_MS,
       },
       {
         category: "demo",
         demoId: "demo-x",
-        mistake: "demo entry",
+        observation: "demo entry",
         timestamp: now - 100 * DAY_MS,
       },
     ]);
@@ -916,21 +938,25 @@ describe("runPrune — multi-target combinations", () => {
   test("runs all four targets in destructive mode", () => {
     const now = Date.now();
     seedLearningEntries([
-      { category: "old", mistake: "old entry", timestamp: now - 100 * DAY_MS },
       {
-        category: "dup",
-        mistake: "duplicate pattern",
+        category: "old",
+        observation: "old entry",
         timestamp: now - 100 * DAY_MS,
       },
       {
         category: "dup",
-        mistake: "duplicate pattern again",
+        observation: "duplicate pattern",
+        timestamp: now - 100 * DAY_MS,
+      },
+      {
+        category: "dup",
+        observation: "duplicate pattern again",
         timestamp: now - 99 * DAY_MS,
       },
       {
         category: "demo",
         demoId: "demo-x",
-        mistake: "demo entry",
+        observation: "demo entry",
         timestamp: now - 100 * DAY_MS,
       },
     ]);

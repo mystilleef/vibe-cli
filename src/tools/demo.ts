@@ -50,7 +50,7 @@ function indentJSON(data: unknown) {
 }
 
 /** Print each non-empty line of `text` in yellow. */
-function printQuestions(text: string) {
+function printFeedback(text: string) {
   for (const line of text.split("\n")) {
     if (line.trim()) ln(`  ${yellow(line)}`);
   }
@@ -59,7 +59,7 @@ function printQuestions(text: string) {
 function printGateResult(result: VibeGateOutput) {
   ln(bold("  Feedback:"));
   ln();
-  printQuestions(result.questions);
+  printFeedback(result.feedback);
   ln();
   ln(
     dim("  Decision: ") +
@@ -218,7 +218,7 @@ export async function runDemo({ modelOverride }: DemoOptions = {}) {
 
     // ── Step 4: Learn ─────────────────────────────────────────────────────
     const learnInput = {
-      mistake:
+      observation:
         "Safe migration pattern: rollback script, dry-run, staged rollout with monitoring.",
       solution:
         "Always write and test a rollback script, dry-run on a small batch, then execute in staged batches with monitoring.",

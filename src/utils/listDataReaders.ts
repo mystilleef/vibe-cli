@@ -3,9 +3,9 @@ import { withDatabase } from "./database.js";
 import type {
   ListAllData,
   ListCategorySummary,
+  ListCheck,
+  ListCheckFilters,
   ListConstitution,
-  ListInteraction,
-  ListInteractionFilters,
   ListLearningFilters,
   ListProviderState,
   ListSession,
@@ -29,7 +29,7 @@ function readLearningRows(): LearningEntryStorageRow[] {
   return withDatabase((db) =>
     db
       .query<LearningEntryStorageRow, []>(
-        `SELECT id, type, category, mistake, solution, timestamp, demo_id
+        `SELECT id, type, category, observation, solution, timestamp, demo_id
          FROM learning_entries
          ORDER BY category ASC, timestamp ASC, id ASC`,
       )
@@ -122,13 +122,11 @@ export function toProvidersJson(
   return state.providers;
 }
 
-/** Read interactions with deterministic filter/order/limit behavior. */
-export function readListInteractions(
-  filters: ListInteractionFilters = {},
-): ListInteraction[] {
+/** Read checks with deterministic filter/order/limit behavior. */
+export function readListChecks(filters: ListCheckFilters = {}): ListCheck[] {
   const rows = withDatabase((db) =>
     db
-      .query<ListInteraction, []>(
+      .query<ListCheck, []>(
         `SELECT i.id, i.session_id, i.goal, i.output, i.timestamp,
                 COALESCE(s.cwd, s.cwd_key) AS displayCwd
          FROM interactions i
@@ -149,7 +147,7 @@ export function buildListStats(
   learnings: readonly LearningEntry[],
   sessions: readonly ListSession[],
   constitution: ListConstitution,
-  interactions: readonly ListInteraction[],
+  checks: readonly ListCheck[],
 ): ListStats {
   const byType: Record<LearningType, number> = {
     mistake: 0,
@@ -167,10 +165,10 @@ export function buildListStats(
     },
     sessions: {
       total: sessions.length,
-      mostActiveCwd: resolveMostActiveCwd(sessions, interactions),
+      mostActiveCwd: resolveMostActiveCwd(sessions, checks),
     },
     constitution: { activeRules: constitution.rules.length },
-    interactions: { total: interactions.length },
+    checks: { total: checks.length },
   };
 }
 
@@ -179,8 +177,8 @@ export function readListStats(): ListStats {
   const constitution = readListConstitution();
   const learnings = readListLearnings();
   const sessions = readListSessions();
-  const interactions = readListInteractions();
-  return buildListStats(learnings, sessions, constitution, interactions);
+  const checks = readListChecks();
+  return buildListStats(learnings, sessions, constitution, checks);
 }
 
 /** Compose every list reader into one JSON-safe envelope. */
@@ -189,29 +187,26 @@ export function readListAll(): ListAllData {
   const learnings = readListLearnings();
   const sessions = readListSessions();
   const providerState = readListProviders();
-  const interactions = readListInteractions();
+  const checks = readListChecks();
   const categories = summarizeLearningCategories(learnings);
   return {
     learnings,
     constitution,
     sessions,
     providers: providerState,
-    interactions,
+    checks,
     categories,
-    stats: buildListStats(learnings, sessions, constitution, interactions),
+    stats: buildListStats(learnings, sessions, constitution, checks),
   };
 }
 
 function resolveMostActiveCwd(
   sessions: readonly ListSession[],
-  interactions: readonly ListInteraction[],
+  checks: readonly ListCheck[],
 ): string | null {
   const counts = new Map<string, number>();
-  for (const interaction of interactions) {
-    counts.set(
-      interaction.session_id,
-      (counts.get(interaction.session_id) ?? 0) + 1,
-    );
+  for (const check of checks) {
+    counts.set(check.session_id, (counts.get(check.session_id) ?? 0) + 1);
   }
 
   const [session] = sessions.slice().sort((left, right) => {

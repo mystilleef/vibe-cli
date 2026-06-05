@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type VibeCheckInput, vibeCheckTool } from "../src/tools/vibeCheck";
 import { resolveAutosession } from "../src/utils/autosession";
-import { FALLBACK_QUESTIONS } from "../src/utils/llm";
+import { FALLBACK_FEEDBACK } from "../src/utils/llm";
 import { getHistorySummary } from "../src/utils/state";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
@@ -99,7 +99,7 @@ describe("vibeCheckTool", () => {
     const sessionId = resolveAutosession().id;
     const prompt = latestPrompt();
 
-    expect(result.questions).toContain("questions:mock-claude");
+    expect(result.feedback).toContain("questions:mock-claude");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.model).toBe("mock-claude");
     expect(prompt).not.toContain("History Context: None");
@@ -109,7 +109,7 @@ describe("vibeCheckTool", () => {
     expect(prompt).toContain("Uncertainties: edge cases, regression risk");
     expect(prompt).toContain("Task Context: release prep");
     expect(prompt).toContain("User Prompt: verify this plan");
-    expect(getHistorySummary(sessionId)).toContain(result.questions);
+    expect(getHistorySummary(sessionId)).toContain(result.feedback);
   });
 
   test("uses boundary defaults for omitted and empty optional context", async () => {
@@ -121,7 +121,7 @@ describe("vibeCheckTool", () => {
     });
     const prompt = latestPrompt();
 
-    expect(result.questions).toContain("questions:mock-boundary");
+    expect(result.feedback).toContain("questions:mock-boundary");
     expect(prompt).toContain("Goal: ");
     expect(prompt).toContain("Plan: ");
     expect(prompt).not.toContain("Progress:");
@@ -143,11 +143,11 @@ describe("vibeCheckTool", () => {
     });
     const secondPrompt = requests[1]?.messages?.[0]?.content ?? "";
 
-    expect(first.questions).toContain("questions:mock-history");
+    expect(first.feedback).toContain("questions:mock-history");
     expect(requests).toHaveLength(2);
     expect(secondPrompt).toContain("History Context:");
     expect(secondPrompt).toContain("Goal first goal");
-    expect(secondPrompt).toContain(first.questions);
+    expect(secondPrompt).toContain(first.feedback);
   });
 
   test("returns and records fallback questions when question generation fails", async () => {
@@ -159,10 +159,10 @@ describe("vibeCheckTool", () => {
     const sessionId = resolveAutosession().id;
     const summary = getHistorySummary(sessionId);
 
-    expect(result).toEqual({ questions: FALLBACK_QUESTIONS });
+    expect(result).toEqual({ feedback: FALLBACK_FEEDBACK });
     expect(requests).toHaveLength(0);
     expect(summary).toContain("Goal bad provider");
-    expect(summary).toContain(FALLBACK_QUESTIONS.slice(0, 80));
+    expect(summary).toContain(FALLBACK_FEEDBACK.slice(0, 80));
   });
 
   test("returns fallback questions when autosession state cannot be created", async () => {
@@ -172,7 +172,7 @@ describe("vibeCheckTool", () => {
 
     const result = await vibeCheckTool({ goal: "g", plan: "p" });
 
-    expect(result).toEqual({ questions: FALLBACK_QUESTIONS });
+    expect(result).toEqual({ feedback: FALLBACK_FEEDBACK });
     expect(requests).toHaveLength(0);
   });
 });

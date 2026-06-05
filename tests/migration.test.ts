@@ -69,8 +69,10 @@ function expectCompleteLegacyImport(handle: VibeDatabase): void {
     handle.db.query("SELECT id, cwd_key FROM sessions").all(),
   ).toContainEqual({ id: "session-a", cwd_key: "abc123" });
   expect(
-    handle.db.query("SELECT mistake, timestamp FROM learning_entries").all(),
-  ).toEqual([{ mistake: "used database", timestamp: 42 }]);
+    handle.db
+      .query("SELECT observation, timestamp FROM learning_entries")
+      .all(),
+  ).toEqual([{ observation: "used database", timestamp: 42 }]);
   expect(
     handle.db.query("SELECT rule FROM constitution_rules").all(),
   ).toContainEqual({ rule: "rule one" });
@@ -142,14 +144,14 @@ describe("legacy JSON migration", () => {
     expect(
       handle.db
         .query(
-          "SELECT type, category, mistake, solution, timestamp, demo_id FROM learning_entries",
+          "SELECT type, category, observation, solution, timestamp, demo_id FROM learning_entries",
         )
         .all(),
     ).toEqual([
       {
         type: "success",
         category: "coding",
-        mistake: "used database",
+        observation: "used database",
         solution: "keep using database",
         timestamp: 42,
         demo_id: "demo-a",
@@ -241,7 +243,7 @@ describe("legacy JSON migration", () => {
     const home = await useTempHome();
     await writeCompleteLegacyArtifacts(home);
 
-    expect(getLearningEntries().coding?.[0]?.mistake).toBe("used database");
+    expect(getLearningEntries().coding?.[0]?.observation).toBe("used database");
     const handle = openTracked();
 
     expectCompleteLegacyImport(handle);

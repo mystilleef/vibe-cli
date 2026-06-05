@@ -21,12 +21,13 @@ import { runPrune } from "./tools/prune.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
+import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
 import {
   formatListAll,
   formatListCategories,
+  formatListChecks,
   formatListCommandOverview,
   formatListConstitution,
-  formatListInteractions,
   formatListLearnings,
   formatListProviders,
   formatListSessions,
@@ -35,8 +36,8 @@ import {
   parseListLimit,
   readListAll,
   readListCategories,
+  readListChecks,
   readListConstitution,
-  readListInteractions,
   readListLearnings,
   readListProviders,
   readListSessions,
@@ -185,23 +186,19 @@ const LIST_COMMANDS = [
     ),
   },
   {
-    name: "interactions",
-    description: "List stored vibe-check interactions",
+    name: "checks",
+    description: "List stored vibe-check records",
     options: [
       { flags: "--session <id>", description: "Filter by session id" },
       { flags: "--limit <n>", description: "Limit rows after filtering" },
     ],
-    action: buildListAction(
-      readListInteractions,
-      formatListInteractions,
-      (opts) => {
-        const limit = parseListLimit(opts.limit);
-        return {
-          ...(opts.session !== undefined && { session: opts.session }),
-          ...(limit !== undefined && { limit }),
-        };
-      },
-    ),
+    action: buildListAction(readListChecks, formatListChecks, (opts) => {
+      const limit = parseListLimit(opts.limit);
+      return {
+        ...(opts.session !== undefined && { session: opts.session }),
+        ...(limit !== undefined && { limit }),
+      };
+    }),
   },
   {
     name: "categories",
@@ -228,7 +225,12 @@ const program = new Command();
 program
   .name("vibe")
   .description("Metacognitive AI agent oversight CLI")
-  .version("1.0.0");
+  .version("1.0.0")
+  .exitOverride((error) => {
+    if (error.exitCode === 0) process.exit(0);
+    throw error;
+  })
+  .configureOutput({ writeErr: () => {} });
 
 const checkCmd = program
   .command("check")
@@ -269,7 +271,7 @@ checkCmd.action(async (opts) => {
 program
   .command("learn")
   .description("Record a mistake, preference, or success pattern")
-  .requiredOption("--mistake <text>", "Pattern to record (one sentence)")
+  .requiredOption("--observation <text>", "Pattern to record (one sentence)")
   .requiredOption("--category <name>", "Category label")
   .option("--solution <text>", "How it was or should be resolved")
   .option(
@@ -279,7 +281,7 @@ program
   )
   .action(async (opts) => {
     const result = await vibeLearnTool({
-      mistake: opts.mistake,
+      observation: opts.observation,
       category: opts.category,
       solution: opts.solution,
       type: opts.type as "mistake" | "preference" | "success",
@@ -328,6 +330,15 @@ program
   .description("Emit the active autosession ID for this working directory")
   .action(() => {
     emit({ session: resolveAutosession().id });
+  });
+
+program
+  .command("migrate")
+  .description("Run database migrations and emit schema migration state")
+  .action(() => {
+    const { database, report } = openVibeDatabaseWithMigrationReport();
+    database.close();
+    emit(report);
   });
 
 const verifyCmd = program

@@ -20,6 +20,20 @@ export interface VibeDatabase {
   close: () => void;
 }
 
+export type MigrationStatus = "migrated" | "up-to-date";
+
+export interface MigrationReport {
+  applied: string[];
+  pending: string[];
+  ranAt: string;
+  status: MigrationStatus;
+}
+
+export interface VibeDatabaseMigrationResult {
+  database: VibeDatabase;
+  report: MigrationReport;
+}
+
 export function withDatabase<T>(
   fn: (db: Database) => T,
   options?: VibeDatabaseOptions,
@@ -121,15 +135,73 @@ const MIGRATIONS = [
     id: "002_sessions_display_cwd",
     sql: "ALTER TABLE sessions ADD COLUMN cwd TEXT;",
   },
-] as const;
+  {
+    id: "003_rename_mistake_to_observation",
+    sql: "ALTER TABLE learning_entries RENAME COLUMN mistake TO observation;",
+  },
+];
 
 export function getDatabasePath(): string {
   return getLegacyArtifactPath(DATABASE_FILENAME);
 }
 
+export function getMigrationIds(): string[] {
+  return MIGRATIONS.map(({ id }) => id);
+}
+
 export function openVibeDatabase(
   options: VibeDatabaseOptions = {},
 ): VibeDatabase {
+  return openDatabase(options).database;
+}
+
+export function openVibeDatabaseWithMigrationReport(
+  options: VibeDatabaseOptions = {},
+): VibeDatabaseMigrationResult {
+  return openDatabase(options, true);
+}
+
+export function initializeSchema(db: Database, ranAt?: string): string[] {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const appliedAt = ranAt ?? new Date().toISOString();
+  const pending: string[] = [];
+  const insertMigration = db.prepare(
+    "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+  );
+
+  db.transaction(() => {
+    for (const migration of MIGRATIONS) {
+      const applied = db
+        .query("SELECT 1 FROM schema_migrations WHERE id = ? LIMIT 1")
+        .get(migration.id);
+      if (applied) continue;
+      db.exec(migration.sql);
+      insertMigration.run(migration.id, appliedAt);
+      pending.push(migration.id);
+    }
+  })();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS legacy_imports (
+      artifact TEXT PRIMARY KEY,
+      imported_at TEXT NOT NULL,
+      backup_path TEXT NOT NULL
+    );
+  `);
+
+  return pending;
+}
+
+function openDatabase(
+  options: VibeDatabaseOptions,
+  captureReport = false,
+): VibeDatabaseMigrationResult {
   const databasePath = options.path ?? getDatabasePath();
   if (databasePath !== ":memory:") {
     if (options.path === undefined) {
@@ -140,12 +212,18 @@ export function openVibeDatabase(
   }
 
   const cached = cachedHandles.get(databasePath);
-  if (cached && databasePath !== ":memory:") return cached;
+  if (cached && databasePath !== ":memory:") {
+    return {
+      database: cached,
+      report: createMigrationReport(cached.db, [], new Date().toISOString()),
+    };
+  }
 
   const db = new Database(databasePath, { create: true });
   db.exec("PRAGMA foreign_keys = ON");
   if (databasePath !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
-  initializeSchema(db);
+  const ranAt = new Date().toISOString();
+  const pending = initializeSchema(db, ranAt);
   const legacyImports = options.legacyImports ?? "all";
   if (options.path === undefined && legacyImports === "all")
     importAllLegacyData(db);
@@ -159,37 +237,33 @@ export function openVibeDatabase(
     },
   };
   if (databasePath !== ":memory:") cachedHandles.set(databasePath, handle);
-  return handle;
+  return {
+    database: handle,
+    report: createMigrationReport(
+      db,
+      captureReport ? pending : [],
+      captureReport ? ranAt : new Date().toISOString(),
+    ),
+  };
 }
 
-export function initializeSchema(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    );
-  `);
+function createMigrationReport(
+  db: Database,
+  pending: string[],
+  ranAt: string,
+): MigrationReport {
+  const applied = readAppliedMigrationIds(db);
+  return {
+    applied,
+    pending,
+    ranAt,
+    status: pending.length > 0 ? "migrated" : "up-to-date",
+  };
+}
 
-  const insertMigration = db.prepare(
-    "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
-  );
-
-  db.transaction(() => {
-    for (const migration of MIGRATIONS) {
-      const applied = db
-        .query("SELECT 1 FROM schema_migrations WHERE id = ? LIMIT 1")
-        .get(migration.id);
-      if (applied) continue;
-      db.exec(migration.sql);
-      insertMigration.run(migration.id, new Date().toISOString());
-    }
-  })();
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS legacy_imports (
-      artifact TEXT PRIMARY KEY,
-      imported_at TEXT NOT NULL,
-      backup_path TEXT NOT NULL
-    );
-  `);
+function readAppliedMigrationIds(db: Database): string[] {
+  const rows = db
+    .query("SELECT id FROM schema_migrations ORDER BY id")
+    .all() as Array<{ id: string }>;
+  return rows.map(({ id }) => id);
 }

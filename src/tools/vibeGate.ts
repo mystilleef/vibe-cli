@@ -10,8 +10,8 @@ export interface VibeGateOutput {
   confidence: number;
   /** Explanation for the gate verdict, especially when blocking progress. */
   reason: string;
-  /** Metacognitive questions used as feedback for the gate decision. */
-  questions: string;
+  /** Mentor feedback used for the gate decision. */
+  feedback: string;
   /** Plan text reviewed on the final attempt. */
   plan: string;
   /** Number of gate attempts consumed by the returned verdict. */
@@ -23,9 +23,9 @@ export interface VibeGateOutput {
 /**
  * Runs one blocking gate review for a plan.
  *
- * Generates metacognitive questions first, passes them into the gate decision as
- * safety feedback, and returns the verdict for the original plan. Question
- * generation failures use the fallback questions from `vibeCheckTool`; gate
+ * Generates mentor feedback first, passes it into the gate decision as
+ * safety feedback, and returns the verdict for the original plan. Feedback
+ * generation failures use the fallback feedback from `vibeCheckTool`; gate
  * decision failures still reject to callers.
  */
 export async function vibeGateTool(
@@ -35,7 +35,7 @@ export async function vibeGateTool(
   const decision = await getGateDecision({
     goal: input.goal,
     plan: input.plan,
-    feedback: checkResult.questions,
+    feedback: checkResult.feedback,
     ...(input.modelOverride !== undefined && {
       modelOverride: input.modelOverride,
     }),
@@ -44,7 +44,7 @@ export async function vibeGateTool(
     proceed: decision.proceed,
     confidence: decision.confidence,
     reason: decision.reason,
-    questions: checkResult.questions,
+    feedback: checkResult.feedback,
     plan: input.plan,
     attempts: 1,
   };
@@ -77,7 +77,7 @@ export async function vibeGateLoop(
       plan = await revisePlan({
         goal: input.goal,
         plan,
-        feedback: last.questions,
+        feedback: last.feedback,
         blockReason: last.reason,
         ...(input.modelOverride !== undefined && {
           modelOverride: input.modelOverride,

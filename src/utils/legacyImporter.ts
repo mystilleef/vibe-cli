@@ -31,7 +31,7 @@ interface LegacyLearningEntry {
 interface ImportedLearningEntry {
   type?: string;
   category: string;
-  mistake: string;
+  observation: string;
   solution?: string;
   timestamp: number;
   demoId?: string;
@@ -91,13 +91,13 @@ function importLegacyLearningEntries(db: Database): void {
   try {
     db.transaction(() => {
       const insert = db.prepare(
-        "INSERT OR IGNORE INTO learning_entries (type, category, mistake, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       );
       for (const entry of entries) {
         insert.run(
           entry.type ?? "mistake",
           entry.category,
-          entry.mistake,
+          entry.observation,
           entry.solution ?? null,
           entry.timestamp,
           entry.demoId ?? null,
@@ -225,7 +225,7 @@ function extractLearningEntries(
       entries.push({
         ...(entry.type !== undefined && { type: entry.type }),
         category: entry.category ?? category,
-        mistake: entry.mistake,
+        observation: entry.mistake,
         ...(entry.solution !== undefined && { solution: entry.solution }),
         timestamp: entry.timestamp,
         ...(entry.demoId !== undefined && { demoId: entry.demoId }),

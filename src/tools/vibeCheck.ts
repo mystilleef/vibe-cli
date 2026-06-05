@@ -1,8 +1,8 @@
 import { resolveAutosession } from "../utils/autosession.js";
-import { FALLBACK_QUESTIONS, getMetacognitiveQuestions } from "../utils/llm.js";
+import { FALLBACK_FEEDBACK, getMentorFeedback } from "../utils/llm.js";
 import { addToHistory, getHistorySummary } from "../utils/state.js";
 
-/** Describes the plan context sent to the metacognitive question generator. */
+/** Describes the plan context sent to the mentor feedback generator. */
 export interface VibeCheckInput {
   /** Desired outcome the agent wants to achieve. */
   goal: string;
@@ -20,18 +20,18 @@ export interface VibeCheckInput {
   taskContext?: string;
 }
 
-/** Contains the review questions returned to the caller. */
+/** Contains the mentor feedback returned to the caller. */
 export interface VibeCheckOutput {
-  /** Metacognitive questions from the configured LLM, or fallback questions on failure. */
-  questions: string;
+  /** Mentor feedback from the configured LLM, or fallback feedback on failure. */
+  feedback: string;
 }
 
 /**
  * Runs a metacognitive check for a plan and records the exchange in autosession history.
  *
  * Reuses prior history from the resolved autosession, forwards all supplied optional
- * context to the question generator, then stores the returned questions for future
- * checks. On any failure, logs the error and returns the fallback question set without
+ * context to the mentor feedback generator, then stores the returned feedback for future
+ * checks. On any failure, logs the error and returns the fallback feedback set without
  * throwing to callers.
  */
 export async function vibeCheckTool(
@@ -40,7 +40,7 @@ export async function vibeCheckTool(
   try {
     const sessionId = resolveAutosession().id;
     const historySummary = getHistorySummary(sessionId);
-    const response = await getMetacognitiveQuestions({
+    const response = await getMentorFeedback({
       goal: input.goal,
       plan: input.plan,
       ...(input.modelOverride !== undefined && {
@@ -57,10 +57,10 @@ export async function vibeCheckTool(
       sessionId,
       historySummary,
     });
-    await addToHistory(sessionId, input, response.questions);
-    return { questions: response.questions };
+    await addToHistory(sessionId, input, response.feedback);
+    return { feedback: response.feedback };
   } catch (error) {
     console.error("vibe_check error:", error);
-    return { questions: FALLBACK_QUESTIONS };
+    return { feedback: FALLBACK_FEEDBACK };
   }
 }

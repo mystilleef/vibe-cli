@@ -6,9 +6,9 @@ import { resetConstitution } from "../src/tools/constitution";
 import {
   DEFAULT_MODELS,
   detectProvider,
-  FALLBACK_QUESTIONS,
+  FALLBACK_FEEDBACK,
   getGateDecision,
-  getMetacognitiveQuestions,
+  getMentorFeedback,
   parseGateDecision,
   revisePlan,
   verifyConnection,
@@ -288,7 +288,7 @@ describe("parseGateDecision", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FALLBACK_QUESTIONS
+// FALLBACK_FEEDBACK
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -356,36 +356,36 @@ describe("verifyConnection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getMetacognitiveQuestions — graceful fallback
+// getMentorFeedback — graceful fallback
 // ---------------------------------------------------------------------------
 
-describe("getMetacognitiveQuestions", () => {
-  test("returns FALLBACK_QUESTIONS when LLM is unavailable", async () => {
-    const result = await getMetacognitiveQuestions({
+describe("getMentorFeedback", () => {
+  test("returns FALLBACK_FEEDBACK when LLM is unavailable", async () => {
+    const result = await getMentorFeedback({
       goal: "test goal",
       plan: "test plan",
     });
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
   });
 
-  test("returns FALLBACK_QUESTIONS even with modelOverride", async () => {
-    const result = await getMetacognitiveQuestions({
+  test("returns FALLBACK_FEEDBACK even with modelOverride", async () => {
+    const result = await getMentorFeedback({
       goal: "test goal",
       plan: "test plan",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
   });
 });
 
-describe("FALLBACK_QUESTIONS", () => {
+describe("FALLBACK_FEEDBACK", () => {
   test("is a non-empty string", () => {
-    expect(typeof FALLBACK_QUESTIONS).toBe("string");
-    expect(FALLBACK_QUESTIONS.length).toBeGreaterThan(0);
+    expect(typeof FALLBACK_FEEDBACK).toBe("string");
+    expect(FALLBACK_FEEDBACK.length).toBeGreaterThan(0);
   });
 
   test("contains exactly three numbered, non-duplicative questions", () => {
-    const questions = FALLBACK_QUESTIONS.split("\n");
+    const questions = FALLBACK_FEEDBACK.split("\n");
     expect(questions).toHaveLength(3);
     expect(new Set(questions).size).toBe(3);
     expect(questions.every((q, index) => q.startsWith(`${index + 1}. `))).toBe(
@@ -394,9 +394,9 @@ describe("FALLBACK_QUESTIONS", () => {
   });
 
   test("covers goal alignment, reversibility, and unstated assumptions", () => {
-    expect(FALLBACK_QUESTIONS).toContain("stated goal");
-    expect(FALLBACK_QUESTIONS).toMatch(/rollback|safe-stop/);
-    expect(FALLBACK_QUESTIONS).toContain("assumptions");
+    expect(FALLBACK_FEEDBACK).toContain("stated goal");
+    expect(FALLBACK_FEEDBACK).toMatch(/rollback|safe-stop/);
+    expect(FALLBACK_FEEDBACK).toContain("assumptions");
   });
 });
 
@@ -633,7 +633,7 @@ describe("getGateDecision error propagation", () => {
 // ---------------------------------------------------------------------------
 
 describe("provider success paths", () => {
-  test("getMetacognitiveQuestions posts full context to OpenRouter", async () => {
+  test("getMentorFeedback posts full context to OpenRouter", async () => {
     process.env.DEFAULT_LLM_PROVIDER = "openrouter";
     process.env.OPENROUTER_API_KEY = "or-key";
     process.env.DEFAULT_MODEL = "openrouter/model";
@@ -644,7 +644,7 @@ describe("provider success paths", () => {
       }),
     );
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal text",
       plan: "plan text",
       progress: "half done",
@@ -654,7 +654,7 @@ describe("provider success paths", () => {
       historySummary: "history summary",
     });
 
-    expect(result.questions).toBe("provider question");
+    expect(result.feedback).toBe("provider question");
     const call0 = requireValue(fetchCalls[0], "fetch call 0");
     expect(call0.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(call0.init.method).toBe("POST");
@@ -734,7 +734,7 @@ describe("provider success paths", () => {
     expect(body.temperature).toBe(0.1);
   });
 
-  test("getMetacognitiveQuestions omits absent optional context", async () => {
+  test("getMentorFeedback omits absent optional context", async () => {
     process.env.DEFAULT_LLM_PROVIDER = "openrouter";
     process.env.OPENROUTER_API_KEY = "or-key";
     process.env.DEFAULT_MODEL = "openrouter/model";
@@ -745,7 +745,7 @@ describe("provider success paths", () => {
       }),
     );
 
-    await getMetacognitiveQuestions({ goal: "goal text", plan: "plan text" });
+    await getMentorFeedback({ goal: "goal text", plan: "plan text" });
 
     const call0 = requireValue(fetchCalls[0], "fetch call 0");
     const body = parseBody<OpenAiCompatRequest>(call0.init);
@@ -760,7 +760,7 @@ describe("provider success paths", () => {
     expect(content).not.toContain("History Context:");
   });
 
-  test("getMetacognitiveQuestions includes constitution before history", async () => {
+  test("getMentorFeedback includes constitution before history", async () => {
     const originalHome = process.env.HOME;
     const tempHome = mkdtempSync(path.join(tmpdir(), "vibe-llm-test-"));
     try {
@@ -776,7 +776,7 @@ describe("provider success paths", () => {
         }),
       );
 
-      await getMetacognitiveQuestions({
+      await getMentorFeedback({
         goal: "goal text",
         plan: "plan text",
         historySummary: "history summary",
@@ -944,13 +944,13 @@ describe("provider success paths", () => {
   test("DeepSeek uses the OpenAI-compatible client", async () => {
     process.env.DEEPSEEK_API_KEY = "ds-key";
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "deepseek" },
     });
 
-    expect(result.questions).toBe("mock provider response");
+    expect(result.feedback).toBe("mock provider response");
     const dsReq0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(dsReq0.options).toEqual({
       apiKey: "ds-key",
@@ -962,13 +962,13 @@ describe("provider success paths", () => {
   test("OpenCode uses the OpenAI-compatible client", async () => {
     process.env.OPENCODE_API_KEY = "oc-key";
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "opencode" },
     });
 
-    expect(result.questions).toBe("mock provider response");
+    expect(result.feedback).toBe("mock provider response");
     const ocReq0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(ocReq0.options).toEqual({
       apiKey: "oc-key",
@@ -999,13 +999,13 @@ describe("provider success paths", () => {
     process.env.OPENAI_API_KEY = "openai-key";
     openAiResponseText = "openai question";
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "openai", model: "gpt-test" },
     });
 
-    expect(result.questions).toBe("openai question");
+    expect(result.feedback).toBe("openai question");
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(req0.options).toEqual({ apiKey: "openai-key" });
     expect(req0.request.model).toBe("gpt-test");
@@ -1025,13 +1025,13 @@ describe("callOpenAI empty choices boundary", () => {
     process.env.OPENAI_API_KEY = "openai-key";
     openAiResponseText = "";
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "openai" },
     });
 
-    expect(result.questions).toBe("");
+    expect(result.feedback).toBe("");
   });
 });
 
@@ -1046,12 +1046,12 @@ describe("callOpenRouter empty choices boundary", () => {
     process.env.DEFAULT_MODEL = "openrouter/model";
     mockFetch(() => Response.json({ choices: [] }));
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
     });
 
-    expect(result.questions).toBe("");
+    expect(result.feedback).toBe("");
   });
 });
 
@@ -1071,6 +1071,40 @@ describe("callAnthropic response handling", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("Anthropic auth failed (401)");
     expect(result.error).toContain("request id: req-401");
+  });
+
+  test("auth failure with 403 uses same auth error path", async () => {
+    process.env.ANTHROPIC_API_KEY = "bad-key";
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ error: { message: "forbidden" } }), {
+          status: 403,
+          headers: { "anthropic-request-id": "req-403" },
+        }),
+    );
+
+    const result = await verifyConnection({ provider: "anthropic" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Anthropic auth failed (403)");
+    expect(result.error).toContain("request id: req-403");
+  });
+
+  test("uses x-request-id fallback when anthropic-request-id absent", async () => {
+    process.env.ANTHROPIC_API_KEY = "bad-key";
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ error: { message: "bad key" } }), {
+          status: 401,
+          headers: { "x-request-id": "x-req-401" },
+        }),
+    );
+
+    const result = await verifyConnection({ provider: "anthropic" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Anthropic auth failed (401)");
+    expect(result.error).toContain("request id: x-req-401");
   });
 
   test("rate limit failure includes retry-after", async () => {
@@ -1110,26 +1144,26 @@ describe("callAnthropic response handling", () => {
     process.env.ANTHROPIC_API_KEY = "anth-key";
     mockFetch(() => Response.json({ content: [{ text: "legacy text" }] }));
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "anthropic" },
     });
 
-    expect(result.questions).toBe("legacy text");
+    expect(result.feedback).toBe("legacy text");
   });
 
   test("malformed success body returns empty Anthropic text", async () => {
     process.env.ANTHROPIC_API_KEY = "anth-key";
     mockFetch(() => new Response("not-json"));
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "anthropic" },
     });
 
-    expect(result.questions).toBe("");
+    expect(result.feedback).toBe("");
   });
 
   test("error response without message field falls back to raw text", async () => {
@@ -1162,13 +1196,13 @@ describe("callAnthropic response handling", () => {
     process.env.ANTHROPIC_API_KEY = "anth-key";
     mockFetch(() => Response.json({ content: [] }));
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "anthropic" },
     });
 
-    expect(result.questions).toBe("");
+    expect(result.feedback).toBe("");
   });
 
   test("content with non-text block returns empty string", async () => {
@@ -1179,13 +1213,13 @@ describe("callAnthropic response handling", () => {
       }),
     );
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "goal",
       plan: "plan",
       modelOverride: { provider: "anthropic" },
     });
 
-    expect(result.questions).toBe("");
+    expect(result.feedback).toBe("");
   });
 });
 
@@ -1249,13 +1283,13 @@ describe("callGemini fallback to flash model", () => {
     geminiErrorMessages = ["model not found", undefined];
     geminiResponses = ["flash fallback response"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe("flash fallback response");
+    expect(result.feedback).toBe("flash fallback response");
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
@@ -1264,13 +1298,13 @@ describe("callGemini fallback to flash model", () => {
   test("does not fall back when pro succeeds", async () => {
     geminiResponses = ["pro response"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe("pro response");
+    expect(result.feedback).toBe("pro response");
     expect(geminiCalls).toHaveLength(1);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
   });
@@ -1279,70 +1313,70 @@ describe("callGemini fallback to flash model", () => {
     geminiErrorMessages = ["model not found", undefined];
     geminiResponses = ["flash response"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini" },
     });
 
-    expect(result.questions).toBe("flash response");
+    expect(result.feedback).toBe("flash response");
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-flash");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
   });
 
-  test("does not fall back on auth error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+  test("does not fall back on auth error — returns FALLBACK_FEEDBACK after single attempt", async () => {
     geminiErrorMessages = [
       "API_KEY_INVALID: the provided api key is not valid",
     ];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
     expect(geminiCalls).toHaveLength(1);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
   });
 
-  test("does not fall back on rate limit error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+  test("does not fall back on rate limit error — returns FALLBACK_FEEDBACK after single attempt", async () => {
     geminiErrorMessages = ["429 Resource has been exhausted. Check quota."];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
     expect(geminiCalls).toHaveLength(1);
   });
 
-  test("does not fall back on quota error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+  test("does not fall back on quota error — returns FALLBACK_FEEDBACK after single attempt", async () => {
     geminiErrorMessages = ["quota exceeded for this project"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
     expect(geminiCalls).toHaveLength(1);
   });
 
-  test("does not fall back on network error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+  test("does not fall back on network error — returns FALLBACK_FEEDBACK after single attempt", async () => {
     geminiErrorMessages = ["fetch failed: connect ECONNREFUSED"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
     expect(geminiCalls).toHaveLength(1);
   });
 
@@ -1353,13 +1387,13 @@ describe("callGemini fallback to flash model", () => {
     ];
     geminiResponses = ["flash fallback"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe("flash fallback");
+    expect(result.feedback).toBe("flash fallback");
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
@@ -1372,13 +1406,13 @@ describe("callGemini fallback to flash model", () => {
     ];
     geminiResponses = ["flash fallback"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe("flash fallback");
+    expect(result.feedback).toBe("flash fallback");
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
@@ -1391,28 +1425,28 @@ describe("callGemini fallback to flash model", () => {
     ];
     geminiResponses = ["flash fallback"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe("flash fallback");
+    expect(result.feedback).toBe("flash fallback");
     expect(geminiCalls).toHaveLength(2);
     expect(geminiCalls[0]?.model).toBe("gemini-2.5-pro");
     expect(geminiCalls[1]?.model).toBe("gemini-2.5-flash");
   });
 
-  test("does not fall back on unrecognized error — returns FALLBACK_QUESTIONS after single attempt", async () => {
+  test("does not fall back on unrecognized error — returns FALLBACK_FEEDBACK after single attempt", async () => {
     geminiErrorMessages = ["internal server error: something broke"];
 
-    const result = await getMetacognitiveQuestions({
+    const result = await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
     });
 
-    expect(result.questions).toBe(FALLBACK_QUESTIONS);
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
     expect(geminiCalls).toHaveLength(1);
   });
 
@@ -1433,7 +1467,7 @@ describe("callGemini fallback to flash model", () => {
   test("defaults temperature to 0.2 via generationConfig", async () => {
     geminiResponses = ["ok"];
 
-    await getMetacognitiveQuestions({
+    await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini" },
@@ -1447,7 +1481,7 @@ describe("callGemini fallback to flash model", () => {
 
     // callGemini always wraps in generationConfig; temperature 0 is a valid
     // deterministic mode value that exercises the always-use-config path.
-    await getMetacognitiveQuestions({
+    await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "gemini" },
@@ -1511,7 +1545,7 @@ describe("temperature forwarding", () => {
     process.env.OPENAI_API_KEY = "openai-key";
     openAiResponseText = "ok";
 
-    await getMetacognitiveQuestions({
+    await getMentorFeedback({
       goal: "g",
       plan: "p",
       modelOverride: { provider: "openai" },

@@ -10,7 +10,7 @@ import {
 /** Input for recording an agent learning pattern. */
 export interface VibeLearnInput {
   /** Pattern text; stored as the first sentence and required for every entry. */
-  mistake: string;
+  observation: string;
   /** Category label; known aliases normalize to canonical learning categories. */
   category: string;
   /** Required resolution text for mistake and success entries. */
@@ -26,7 +26,7 @@ export interface VibeLearnOutput {
   /** True when a new entry was written; false for duplicates or validation failures. */
   added: boolean;
   /** Count for the normalized category after the attempt, or zero on failure. */
-  currentTally: number;
+  categoryCount: number;
   /** True when an existing entry overlaps enough to suppress a duplicate write. */
   alreadyKnown?: boolean;
   /** Up to three most frequent categories, ordered by stored count descending. */
@@ -49,7 +49,7 @@ export async function vibeLearnTool(
   input: VibeLearnInput,
 ): Promise<VibeLearnOutput> {
   try {
-    if (!input.mistake) throw new Error("--mistake is required");
+    if (!input.observation) throw new Error("--observation is required");
     if (!input.category) throw new Error("--category is required");
 
     const entryType: LearningType = input.type ?? "mistake";
@@ -57,7 +57,7 @@ export async function vibeLearnTool(
       throw new Error("--solution is required for mistake and success types");
     }
 
-    const mistake = enforceOneSentence(input.mistake);
+    const observation = enforceOneSentence(input.observation);
     const solution = input.solution
       ? enforceOneSentence(input.solution)
       : undefined;
@@ -65,11 +65,17 @@ export async function vibeLearnTool(
 
     const existing = getLearningEntries()[category] || [];
     const alreadyKnown = existing.some((e) =>
-      isLearningOverlapDuplicate(e.mistake, mistake),
+      isLearningOverlapDuplicate(e.observation, observation),
     );
 
     if (!alreadyKnown) {
-      addLearningEntry(mistake, category, solution, entryType, input.demoId);
+      addLearningEntry(
+        observation,
+        category,
+        solution,
+        entryType,
+        input.demoId,
+      );
     }
 
     const categorySummary = getLearningCategorySummary();
@@ -78,7 +84,7 @@ export async function vibeLearnTool(
     return {
       added: !alreadyKnown,
       alreadyKnown,
-      currentTally: categoryData?.count ?? 1,
+      categoryCount: categoryData?.count ?? 1,
       topCategories: categorySummary.slice(0, 3),
     };
   } catch (error) {
@@ -86,7 +92,7 @@ export async function vibeLearnTool(
     return {
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     };
   }

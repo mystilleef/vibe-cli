@@ -6,7 +6,7 @@ export const LIST_COMMAND_NAMES = [
   "constitution",
   "sessions",
   "providers",
-  "interactions",
+  "checks",
   "categories",
   "stats",
   "all",
@@ -20,7 +20,7 @@ export interface ListLearningFilters {
   limit?: number;
 }
 
-export interface ListInteractionFilters {
+export interface ListCheckFilters {
   session?: string;
   limit?: number;
 }
@@ -47,7 +47,7 @@ export interface ListProviderState {
   providers: Record<string, string>;
 }
 
-export interface ListInteraction {
+export interface ListCheck {
   id: number;
   session_id: string;
   goal: string;
@@ -76,7 +76,7 @@ export interface ListStats {
   constitution: {
     activeRules: number;
   };
-  interactions: {
+  checks: {
     total: number;
   };
 }
@@ -86,7 +86,7 @@ export interface ListAllData {
   constitution: ListConstitution;
   sessions: ListSession[];
   providers: ListProviderState;
-  interactions: ListInteraction[];
+  checks: ListCheck[];
   categories: ListCategorySummary[];
   stats: ListStats;
 }

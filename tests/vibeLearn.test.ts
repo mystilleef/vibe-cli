@@ -24,7 +24,7 @@ afterEach(async () => {
 describe("vibeLearnTool", () => {
   test("adds a sanitized learning entry and preserves custom categories", async () => {
     const input: VibeLearnInput = {
-      mistake: "Agent kept adding tools. Extra sentence should be ignored.",
+      observation: "Agent kept adding tools. Extra sentence should be ignored.",
       category: "bespoke workflow",
       solution: "Keep the toolset minimal",
       type: "mistake",
@@ -35,36 +35,36 @@ describe("vibeLearnTool", () => {
 
     expect(result.added).toBe(true);
     expect(result.alreadyKnown).toBe(false);
-    expect(result.currentTally).toBe(1);
+    expect(result.categoryCount).toBe(1);
     expect(result.topCategories[0]?.category).toBe("bespoke workflow");
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.mistake).toBe("Agent kept adding tools.");
+    expect(entries[0]?.observation).toBe("Agent kept adding tools.");
     expect(entries[0]?.solution).toBe("Keep the toolset minimal.");
   });
 
   test("accepts preferences without solutions and normalizes overtooling categories", async () => {
     const result = await vibeLearnTool({
-      mistake: "Prefer one verification tool",
+      observation: "Prefer one verification tool",
       category: "too many tools",
       type: "preference",
     });
     const entries = getLearningEntries().Overtooling ?? [];
 
     expect(result.added).toBe(true);
-    expect(result.currentTally).toBe(1);
+    expect(result.categoryCount).toBe(1);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.type).toBe("preference");
     expect(entries[0]?.solution).toBeUndefined();
-    expect(entries[0]?.mistake).toBe("Prefer one verification tool.");
+    expect(entries[0]?.observation).toBe("Prefer one verification tool.");
   });
 
   test("rejects mistake and success entries without a solution", async () => {
     const missingMistakeSolution = await vibeLearnTool({
-      mistake: "Missing solution",
+      observation: "Missing solution",
       category: "validation",
     });
     const missingSuccessSolution = await vibeLearnTool({
-      mistake: "Good outcome",
+      observation: "Good outcome",
       category: "validation",
       type: "success",
     });
@@ -72,13 +72,13 @@ describe("vibeLearnTool", () => {
     expect(missingMistakeSolution).toEqual({
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     });
     expect(missingSuccessSolution).toEqual({
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     });
     expect(getLearningEntries()).toEqual({});
@@ -87,13 +87,13 @@ describe("vibeLearnTool", () => {
   test("skips new writes for similar existing mistakes", async () => {
     const category = "Premature Implementation";
     await vibeLearnTool({
-      mistake: "Repeat the exact same risky plan.",
+      observation: "Repeat the exact same risky plan.",
       category,
       solution: "Verify before acting.",
     });
 
     const result = await vibeLearnTool({
-      mistake: "repeat exact same risky plan now.",
+      observation: "repeat exact same risky plan now.",
       category,
       solution: "Stop and verify first.",
     });
@@ -101,40 +101,40 @@ describe("vibeLearnTool", () => {
 
     expect(result.added).toBe(false);
     expect(result.alreadyKnown).toBe(true);
-    expect(result.currentTally).toBe(1);
+    expect(result.categoryCount).toBe(1);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.solution).toBe("Verify before acting.");
   });
 
   test("rejects input with missing mistake", async () => {
     const result = await vibeLearnTool({
-      mistake: "",
+      observation: "",
       category: "validation",
     });
     expect(result).toEqual({
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     });
   });
 
   test("rejects input with missing category", async () => {
     const result = await vibeLearnTool({
-      mistake: "A mistake",
+      observation: "A mistake",
       category: "",
     });
     expect(result).toEqual({
       added: false,
       alreadyKnown: false,
-      currentTally: 0,
+      categoryCount: 0,
       topCategories: [],
     });
   });
 
   test("accepts success type entries with a solution", async () => {
     const result = await vibeLearnTool({
-      mistake: "Achieved a great outcome",
+      observation: "Achieved a great outcome",
       category: "wins",
       solution: "Keep doing it this way",
       type: "success",
@@ -142,7 +142,7 @@ describe("vibeLearnTool", () => {
     const entries = getLearningEntries().wins ?? [];
 
     expect(result.added).toBe(true);
-    expect(result.currentTally).toBe(1);
+    expect(result.categoryCount).toBe(1);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.type).toBe("success");
     expect(entries[0]?.solution).toBe("Keep doing it this way.");
@@ -150,7 +150,7 @@ describe("vibeLearnTool", () => {
 
   test("passes demoId through to the storage layer", async () => {
     const result = await vibeLearnTool({
-      mistake: "Demo test entry.",
+      observation: "Demo test entry.",
       category: "democat",
       solution: "Demo test solution.",
       demoId: "my-demo-123",
@@ -173,7 +173,7 @@ describe("vibeLearnTool", () => {
 
     for (const { input, expected } of suites) {
       const result = await vibeLearnTool({
-        mistake: `Test for ${input}.`,
+        observation: `Test for ${input}.`,
         category: input,
         solution: "Normalize test solution.",
       });
@@ -196,20 +196,20 @@ describe("vibeLearnTool", () => {
 
   test("enforceOneSentence rejects empty string input upstream before processing", async () => {
     // enforceOneSentence would return "." for empty input, but vibeLearnTool
-    // rejects empty mistake text first via --mistake is required validation.
+    // rejects empty mistake text first via --observation is required validation.
     const result = await vibeLearnTool({
-      mistake: "",
+      observation: "",
       category: "edge",
       solution: "Empty string validation fires first.",
     });
 
     expect(result.added).toBe(false);
-    expect(result.currentTally).toBe(0);
+    expect(result.categoryCount).toBe(0);
   });
 
   test("enforceOneSentence adds period to text without punctuation", async () => {
     const result = await vibeLearnTool({
-      mistake: "hello world",
+      observation: "hello world",
       category: "nopunct",
       solution: "fix it",
     });
@@ -217,18 +217,18 @@ describe("vibeLearnTool", () => {
     expect(result.added).toBe(true);
     const entries = getLearningEntries().nopunct ?? [];
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.mistake).toBe("hello world.");
+    expect(entries[0]?.observation).toBe("hello world.");
   });
 
   test("enforceOneSentence rejects whitespace-only input upstream before processing", async () => {
     // Whitespace-only input is truthy after trim, but enforceOneSentence
-    // trims to empty and returns ".". However, the input.mistake check fires
+    // trims to empty and returns ".". However, the input.observation check fires
     // on the raw string "   " which is truthy, so it passes validation.
     // After enforceOneSentence: "   ".trim() = "", match fails, returns " .".
     // Wait — trim() on "   " returns "", then cleaned.match(...) on ""
     // returns null, so it falls to `${cleaned}.` = ""."? No — `${cleaned}.` = ".."
     const result = await vibeLearnTool({
-      mistake: "   ",
+      observation: "   ",
       category: "whitespace",
       solution: "fix",
     });
@@ -236,14 +236,14 @@ describe("vibeLearnTool", () => {
     expect(result.added).toBe(true);
     const entries = getLearningEntries().whitespace ?? [];
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.mistake).toBe(".");
+    expect(entries[0]?.observation).toBe(".");
   });
 
   test("ignores empty legacy mistakes when checking similarity", async () => {
     addLearningEntry("", "legacy", "legacy solution");
 
     const result = await vibeLearnTool({
-      mistake: "Recover from malformed historical records",
+      observation: "Recover from malformed historical records",
       category: "legacy",
       solution: "Treat empty legacy mistakes as non-matches",
     });
@@ -254,8 +254,8 @@ describe("vibeLearnTool", () => {
 
     expect(result.added).toBe(true);
     expect(result.alreadyKnown).toBe(false);
-    expect(result.currentTally).toBe(2);
-    expect(entries.map((entry) => entry.mistake)).toEqual([
+    expect(result.categoryCount).toBe(2);
+    expect(entries.map((entry) => entry.observation)).toEqual([
       "",
       "Recover from malformed historical records.",
     ]);
