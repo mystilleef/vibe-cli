@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write --unsafe --error-on-warnings .",
     "migrate": "biome migrate --write",
-    "coverage": "bun test --coverage",
+    "coverage": "bun test --parallel --parallel-delay=0",
     "dev": "bun run src/cli.ts",
     "build": "bun build --compile --minify src/cli.ts --outfile dist/vibe",
     "check": "bun lint && bun typecheck",
