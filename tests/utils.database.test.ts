@@ -7,6 +7,7 @@ import {
   DATABASE_FILENAME,
   getDatabasePath,
   getMigrationIds,
+  getVibeDatabase,
   openVibeDatabase,
   openVibeDatabaseWithMigrationReport,
   type VibeDatabase,
@@ -221,6 +222,83 @@ describe("withDatabase", () => {
       journal_mode: string;
     };
     expect(journalMode.journal_mode).toBe("wal");
+  });
+
+  test("uses singleton and does not close when called without options", async () => {
+    const _home = await useTempHome();
+
+    withDatabase((db) => {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS singleton_test (id INTEGER PRIMARY KEY)",
+      );
+    });
+
+    // Singleton must still be open — verify by reading back through getVibeDatabase
+    const handle = getVibeDatabase();
+    const table = handle.db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='singleton_test'",
+      )
+      .get() as { name: string } | null;
+    expect(table).toEqual({ name: "singleton_test" });
+  });
+});
+
+describe("getVibeDatabase", () => {
+  test("first call creates a singleton with functional schema", async () => {
+    const home = await useTempHome();
+    const handle = getVibeDatabase();
+
+    expect(handle.path).toBe(join(home.dataRoot, DATABASE_FILENAME));
+    const tables = handle.db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'",
+      )
+      .get() as { name: string } | null;
+    expect(tables).toEqual({ name: "sessions" });
+  });
+
+  test("same path returns identical singleton", async () => {
+    await useTempHome();
+    const first = getVibeDatabase();
+    const second = getVibeDatabase();
+
+    expect(first).toBe(second);
+  });
+
+  test("path change closes old singleton and opens new at updated path", async () => {
+    const home1 = await useTempHome();
+    const first = getVibeDatabase();
+    const firstPath = first.path;
+
+    first.db
+      .prepare(
+        "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        "s1",
+        "cwd1",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+
+    // Switch to a different data root via HOME
+    await home1.cleanup();
+    homes.splice(homes.indexOf(home1), 1);
+    const home2 = await useTempHome();
+    const second = getVibeDatabase();
+
+    expect(second.path).not.toBe(firstPath);
+    expect(second.path).toBe(join(home2.dataRoot, DATABASE_FILENAME));
+
+    // Old handle must be closed
+    expect(() => first.db.query("SELECT 1").get()).toThrow();
+
+    // New database must be independent (no sessions carried over)
+    const count = second.db
+      .query("SELECT count(*) AS count FROM sessions")
+      .get() as { count: number };
+    expect(count.count).toBe(0);
   });
 });
 
@@ -541,5 +619,149 @@ describe("openVibeDatabase", () => {
       .all("session-a") as Array<{ rule: string }>;
 
     expect(rules.map((entry) => entry.rule)).toEqual(["first", "second"]);
+  });
+
+  test("skips legacy imports when legacyImports is none", async () => {
+    const home = await useTempHome();
+    const handle = openVibeDatabase({ legacyImports: "none" });
+    handles.push(handle);
+
+    expect(handle.path).toBe(join(home.dataRoot, DATABASE_FILENAME));
+    expect(readMigrationIds(handle)).toEqual(EXPECTED_MIGRATION_IDS);
+    assertOpenSideEffects(handle);
+
+    // Database must be fully functional without legacy import side effects
+    handle.db
+      .prepare(
+        "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        "s1",
+        "cwd1",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+    const count = handle.db
+      .query("SELECT count(*) AS count FROM sessions")
+      .get() as { count: number };
+    expect(count.count).toBe(1);
+  });
+
+  test("skips legacy imports with report when legacyImports is none", async () => {
+    const home = await useTempHome();
+    const { database, report } = openVibeDatabaseWithMigrationReport({
+      legacyImports: "none",
+    });
+    handles.push(database);
+
+    expect(database.path).toBe(join(home.dataRoot, DATABASE_FILENAME));
+    expectReportKeys(report);
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS,
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+  });
+
+  test("custom path with legacyImports none opens isolated database", async () => {
+    const databasePath = await tempDatabasePath("legacy-none-custom");
+    const handle = openVibeDatabase({
+      path: databasePath,
+      legacyImports: "none",
+    });
+    handles.push(handle);
+
+    expect(handle.path).toBe(databasePath);
+    expect(readMigrationIds(handle)).toEqual(EXPECTED_MIGRATION_IDS);
+    assertOpenSideEffects(handle);
+  });
+
+  test("reports fresh migrations on in-memory databases", () => {
+    const { database, report } = openVibeDatabaseWithMigrationReport({
+      path: ":memory:",
+    });
+    handles.push(database);
+
+    expectReportKeys(report);
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: EXPECTED_MIGRATION_IDS,
+      ranAt: report.ranAt,
+      status: "migrated",
+    });
+    expect(Date.parse(report.ranAt)).not.toBeNaN();
+    expect(readMigrationIds(database)).toEqual(EXPECTED_MIGRATION_IDS);
+  });
+
+  test("reports up-to-date when returning cached handle via report variant", async () => {
+    const databasePath = await tempDatabasePath("cached-report");
+
+    const first = openVibeDatabase({ path: databasePath });
+    handles.push(first);
+
+    const { database, report } = openVibeDatabaseWithMigrationReport({
+      path: databasePath,
+    });
+    handles.push(database);
+
+    expect(database).toBe(first);
+    expectReportKeys(report);
+    expect(report).toEqual({
+      applied: EXPECTED_MIGRATION_IDS,
+      pending: [],
+      ranAt: report.ranAt,
+      status: "up-to-date",
+    });
+    expect(Date.parse(report.ranAt)).not.toBeNaN();
+  });
+
+  test("getVibeDatabase singleton is isolated from openVibeDatabase cache", async () => {
+    const home = await useTempHome();
+
+    const singleton = getVibeDatabase();
+    const independent = openVibeDatabase();
+    handles.push(independent);
+
+    // Must be different handle objects — getVibeDatabase evicts from cache
+    expect(independent).not.toBe(singleton);
+
+    // Both must point to the same database file
+    expect(independent.path).toBe(singleton.path);
+    expect(singleton.path).toBe(join(home.dataRoot, DATABASE_FILENAME));
+
+    // Writes through the singleton must be visible through the independent handle
+    singleton.db
+      .prepare(
+        "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        "isolation-test",
+        "iso-cwd",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+
+    const count = independent.db
+      .query("SELECT count(*) AS count FROM sessions")
+      .get() as { count: number };
+    expect(count.count).toBe(1);
+
+    // Writes through the independent handle must be visible through the singleton
+    independent.db
+      .prepare(
+        "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        "isolation-test-2",
+        "iso-cwd-2",
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      );
+
+    const totalCount = singleton.db
+      .query("SELECT count(*) AS count FROM sessions")
+      .get() as { count: number };
+    expect(totalCount.count).toBe(2);
   });
 });
