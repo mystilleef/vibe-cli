@@ -25,6 +25,12 @@
   - Run `bun check` to address lint issues
   - Run `bun verify`, at your discretion, for comprehensive validation.
 
+### Testing rules
+
+- Before writing tests, read relevant `bun` testing guides, on demand,
+  in `./docs/bun`. The agent file in that folder indexes what each guide
+  documents.
+
 ## Gotchas
 
 - Environment configuration requires `~/.vibe-cli/.env`.
