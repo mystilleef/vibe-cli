@@ -21,6 +21,6 @@ describe("test harness", () => {
 
     expect(first.home).not.toBe(second.home);
     expect(first.dataRoot).not.toBe(second.dataRoot);
-    expect(process.env.HOME).toBe(second.home);
+    expect(process.env["HOME"]).toBe(second.home);
   });
 });

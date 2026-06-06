@@ -243,7 +243,9 @@ describe("legacy JSON migration", () => {
     const home = await useTempHome();
     await writeCompleteLegacyArtifacts(home);
 
-    expect(getLearningEntries().coding?.[0]?.observation).toBe("used database");
+    expect(getLearningEntries()["coding"]?.[0]?.observation).toBe(
+      "used database",
+    );
     const handle = openTracked();
 
     expectCompleteLegacyImport(handle);

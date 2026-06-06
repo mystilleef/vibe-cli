@@ -36,10 +36,10 @@ let onFetchRequest: ((requestCount: number) => void) | undefined;
 let stdout = "";
 
 function configureAnthropicEnv(): void {
-  process.env.ANTHROPIC_API_KEY = "test-key";
-  process.env.DEFAULT_LLM_PROVIDER = "anthropic";
-  process.env.DEFAULT_MODEL = "default-demo-model";
-  process.env.USE_LEARNING_HISTORY = "false";
+  process.env["ANTHROPIC_API_KEY"] = "test-key";
+  process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
+  process.env["DEFAULT_MODEL"] = "default-demo-model";
+  process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
 function gateDecision(proceed: boolean, confidence: number, reason: string) {

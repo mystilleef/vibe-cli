@@ -121,8 +121,8 @@ describe("getLearningEntries", () => {
     addLearningEntry("e2", "b");
     addLearningEntry("e3", "a");
     const entries = getLearningEntries();
-    expect(entries.a).toHaveLength(2);
-    expect(entries.b).toHaveLength(1);
+    expect(entries["a"]).toHaveLength(2);
+    expect(entries["b"]).toHaveLength(1);
   });
 
   test("caps entries per category when maxPerCategory is set", () => {
@@ -131,17 +131,17 @@ describe("getLearningEntries", () => {
     addLearningEntry("e3", "limited");
     addLearningEntry("e4", "limited");
     const entries = getLearningEntries(2);
-    expect(entries.limited).toHaveLength(2);
+    expect(entries["limited"]).toHaveLength(2);
     // Most-recent entries: e3, e4 (highest timestamps)
-    const observations = entries.limited?.map((e) => e.observation);
+    const observations = entries["limited"]?.map((e) => e.observation);
     expect(observations).toEqual(["e3", "e4"]);
   });
 
   test("returns all entries when maxPerCategory exceeds actual count", () => {
     addLearningEntry("only", "sparse");
     const entries = getLearningEntries(10);
-    expect(entries.sparse).toHaveLength(1);
-    expect(entries.sparse?.[0]?.observation).toBe("only");
+    expect(entries["sparse"]).toHaveLength(1);
+    expect(entries["sparse"]?.[0]?.observation).toBe("only");
   });
 
   test("applies per-category limit across multiple categories", () => {
@@ -174,11 +174,11 @@ describe("getLearningEntries", () => {
     addLearningEntry("b1", "other");
     addLearningEntry("b2", "other");
     const entries = getLearningEntries(1);
-    expect(entries.cat).toHaveLength(1);
-    expect(entries.other).toHaveLength(1);
+    expect(entries["cat"]).toHaveLength(1);
+    expect(entries["other"]).toHaveLength(1);
     // Most-recent entry per category
-    expect(entries.cat?.[0]?.observation).toBe("a3");
-    expect(entries.other?.[0]?.observation).toBe("b2");
+    expect(entries["cat"]?.[0]?.observation).toBe("a3");
+    expect(entries["other"]?.[0]?.observation).toBe("b2");
   });
 });
 
@@ -457,8 +457,8 @@ describe("collectStaleLearningPruneCandidates", () => {
 
     expect(candidates.map((candidate) => candidate.id)).toEqual([idAt(ids, 0)]);
     expect(candidates[0]?.category).toBe("target");
-    expect(getLearningEntries().target).toHaveLength(2);
-    expect(getLearningEntries().other).toHaveLength(1);
+    expect(getLearningEntries()["target"]).toHaveLength(2);
+    expect(getLearningEntries()["other"]).toHaveLength(1);
   });
 });
 
@@ -516,8 +516,8 @@ describe("collectDemoLearningPruneCandidates", () => {
       timestamp: 199 * DAY_MS,
       demoId: "demo-new",
     });
-    expect(getLearningEntries().target).toHaveLength(2);
-    expect(getLearningEntries().other).toHaveLength(1);
+    expect(getLearningEntries()["target"]).toHaveLength(2);
+    expect(getLearningEntries()["other"]).toHaveLength(1);
   });
 });
 
@@ -984,7 +984,7 @@ describe("executeDestructivePrune", () => {
     } finally {
       direct.close();
     }
-    expect(getLearningEntries().wal).toBeUndefined();
+    expect(getLearningEntries()["wal"]).toBeUndefined();
   });
 
   test("aborts deletion and reports backup failure details", () => {
@@ -1024,9 +1024,9 @@ describe("executeDestructivePrune", () => {
       sessions: 0,
     });
     expect(result.skippedTargets).toEqual(["duplicates", "demos", "sessions"]);
-    expect(getLearningEntries().old?.map((entry) => entry.observation)).toEqual(
-      ["kept after backup failure"],
-    );
+    expect(
+      getLearningEntries()["old"]?.map((entry) => entry.observation),
+    ).toEqual(["kept after backup failure"]);
   });
 
   test("backs up empty destructive runs and reports zero counts", () => {
@@ -1149,7 +1149,7 @@ describe("removeLearningEntriesForDemo", () => {
     removeLearningEntriesForDemo("demo-1");
 
     expect(
-      getLearningEntries().mixed?.map((entry) => entry.observation),
+      getLearningEntries()["mixed"]?.map((entry) => entry.observation),
     ).toEqual(["legacy", "demo two"]);
   });
 
@@ -1166,7 +1166,7 @@ describe("removeLearningEntriesForDemo", () => {
     removeLearningEntriesForDemo("demo-1");
 
     const entries = getLearningEntries();
-    expect(entries.empty).toBeUndefined();
+    expect(entries["empty"]).toBeUndefined();
     const summary = getLearningCategorySummary();
     const kept = summary.find((entry) => entry.category === "kept");
     expect(kept?.count).toBe(2);
@@ -1186,8 +1186,8 @@ describe("removeLearningEntriesForDemo", () => {
 
     removeLearningEntriesForDemo("demo-nonexistent");
 
-    expect(getLearningEntries().safe).toHaveLength(1);
-    expect(getLearningEntries().demo).toHaveLength(1);
+    expect(getLearningEntries()["safe"]).toHaveLength(1);
+    expect(getLearningEntries()["demo"]).toHaveLength(1);
   });
 });
 
@@ -1212,9 +1212,9 @@ describe("removeStaleDemoEntries", () => {
     removeStaleDemoEntries();
 
     const entries = getLearningEntries();
-    expect(entries.d1).toBeUndefined();
-    expect(entries.d2).toHaveLength(1);
-    expect(entries.d2?.[0]?.observation).toBe("non-demo");
+    expect(entries["d1"]).toBeUndefined();
+    expect(entries["d2"]).toHaveLength(1);
+    expect(entries["d2"]?.[0]?.observation).toBe("non-demo");
   });
 
   test("no-ops when no demo-linked entries exist", () => {
@@ -1224,8 +1224,10 @@ describe("removeStaleDemoEntries", () => {
 
     removeStaleDemoEntries();
 
-    expect(getLearningEntries().plain).toHaveLength(1);
-    expect(getLearningEntries().plain?.[0]?.observation).toBe("only non-demo");
+    expect(getLearningEntries()["plain"]).toHaveLength(1);
+    expect(getLearningEntries()["plain"]?.[0]?.observation).toBe(
+      "only non-demo",
+    );
   });
 
   test("removes all entries when every entry has a demoId", () => {
@@ -1267,7 +1269,7 @@ describe("legacy log corruption recovery", () => {
 
     addLearningEntry("post-recovery", "recov");
 
-    expect(getLearningEntries().recov).toHaveLength(1);
+    expect(getLearningEntries()["recov"]).toHaveLength(1);
     expect(fs.readFileSync(logPath, "utf8")).toBe("garbage");
   });
 });
@@ -1582,9 +1584,9 @@ describe("SQLite write error handling", () => {
   test("persists without writing legacy JSON", () => {
     addLearningEntry("sqlite-only", "cat");
 
-    expect(getLearningEntries().cat?.map((entry) => entry.observation)).toEqual(
-      ["sqlite-only"],
-    );
+    expect(
+      getLearningEntries()["cat"]?.map((entry) => entry.observation),
+    ).toEqual(["sqlite-only"]);
     expect(fs.existsSync(path.join(home.dataRoot, "vibe-log.json"))).toBe(
       false,
     );

@@ -32,10 +32,10 @@ const requests: AnthropicBody[] = [];
 const responseQueue: Array<string | { status: number; text: string }> = [];
 
 function configureAnthropicEnv(): void {
-  process.env.ANTHROPIC_API_KEY = "test-key";
-  process.env.DEFAULT_LLM_PROVIDER = "anthropic";
-  process.env.DEFAULT_MODEL = "";
-  process.env.USE_LEARNING_HISTORY = "false";
+  process.env["ANTHROPIC_API_KEY"] = "test-key";
+  process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
+  process.env["DEFAULT_MODEL"] = "";
+  process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
 function installAnthropicFetch(): void {
@@ -71,10 +71,10 @@ function gateDecision(proceed: boolean, confidence: number, reason: string) {
 beforeEach(async () => {
   originalFetch = globalThis.fetch;
   savedEnv = {
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-    DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER,
-    DEFAULT_MODEL: process.env.DEFAULT_MODEL,
-    USE_LEARNING_HISTORY: process.env.USE_LEARNING_HISTORY,
+    ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
+    DEFAULT_LLM_PROVIDER: process.env["DEFAULT_LLM_PROVIDER"],
+    DEFAULT_MODEL: process.env["DEFAULT_MODEL"],
+    USE_LEARNING_HISTORY: process.env["USE_LEARNING_HISTORY"],
   };
   home = await createTempHome();
   cwd = await mkdtemp(join(tmpdir(), "vibe-gate-tool-"));

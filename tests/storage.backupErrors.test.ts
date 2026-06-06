@@ -9,7 +9,7 @@ let home: TempHomeContext;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function setBackupError(msg: string | undefined) {
-  (globalThis as Record<string, unknown>).__VIBE_BACKUP_ERROR = msg;
+  (globalThis as Record<string, unknown>)["__VIBE_BACKUP_ERROR"] = msg;
 }
 
 beforeEach(async () => {

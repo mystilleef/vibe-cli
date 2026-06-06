@@ -135,7 +135,7 @@ function runCli(
 ): CliResult {
   const env: Record<string, string> = {
     ...process.env,
-    HOME: options.home ?? process.env.HOME ?? "",
+    HOME: options.home ?? process.env["HOME"] ?? "",
   };
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (value === undefined) {
@@ -932,7 +932,7 @@ describe("CLI autosession surface", () => {
     expect(all.learnings).toHaveLength(3);
     expect(all.constitution.rules).toEqual(["Prefer local reads"]);
     expect(all.sessions).toHaveLength(2);
-    expect(all.providers.providers.deepseek).toBe("deepseek-v4-pro");
+    expect(all.providers.providers["deepseek"]).toBe("deepseek-v4-pro");
     expect(all.checks).toHaveLength(3);
     expect(all.categories).toHaveLength(2);
     expect(all.stats).toEqual(stats);
@@ -1296,7 +1296,7 @@ describe("CLI autosession surface", () => {
         "--session",
       );
     }
-    expect(schema.commands.migrate).toMatchObject({
+    expect(schema.commands["migrate"]).toMatchObject({
       when: expect.any(String),
       req: {},
       opt: {},
@@ -1311,19 +1311,19 @@ describe("CLI autosession surface", () => {
         "1": "error",
       },
     });
-    expect(Object.keys(schema.commands.migrate?.req ?? {})).toEqual([]);
-    expect(Object.keys(schema.commands.migrate?.opt ?? {})).toEqual([]);
-    expect(Object.keys(schema.commands.migrate?.out ?? {})).toEqual([
+    expect(Object.keys(schema.commands["migrate"]?.req ?? {})).toEqual([]);
+    expect(Object.keys(schema.commands["migrate"]?.opt ?? {})).toEqual([]);
+    expect(Object.keys(schema.commands["migrate"]?.out ?? {})).toEqual([
       "applied",
       "pending",
       "ranAt",
       "status",
     ]);
-    expect(Object.keys(schema.commands.migrate?.exit ?? {})).toEqual([
+    expect(Object.keys(schema.commands["migrate"]?.exit ?? {})).toEqual([
       "0",
       "1",
     ]);
-    expect(Object.keys(schema.commands.prune?.opt ?? {})).toEqual([
+    expect(Object.keys(schema.commands["prune"]?.opt ?? {})).toEqual([
       "--learnings",
       "--duplicates",
       "--demos",
@@ -1334,7 +1334,7 @@ describe("CLI autosession surface", () => {
       "--dry-run",
       "-y, --yes",
     ]);
-    expect(schema.commands.prune).toMatchObject({
+    expect(schema.commands["prune"]).toMatchObject({
       when: expect.any(String),
       req: {},
       opt: expect.objectContaining({
@@ -1467,7 +1467,7 @@ describe("CLI autosession surface", () => {
       reason: "proceed:mock-claude",
       attempts: 1,
     });
-    expect(payload.feedback).toContain("questions:mock-claude");
+    expect(payload["feedback"]).toContain("questions:mock-claude");
   });
 
   test("VIBE_MAX_ATTEMPTS env var sets default max attempts", async () => {
@@ -1528,8 +1528,8 @@ describe("CLI autosession surface", () => {
     });
 
     expect(result.exitCode).toBe(2);
-    expect(payload.exhausted).toBe(true);
-    expect(payload.attempts).toBeGreaterThanOrEqual(1);
+    expect(payload["exhausted"]).toBe(true);
+    expect(payload["attempts"]).toBeGreaterThanOrEqual(1);
   });
 
   test("VIBE_MAX_ATTEMPTS=0 env var falls back to 10 due to falsy default", async () => {
@@ -1539,8 +1539,8 @@ describe("CLI autosession surface", () => {
     });
 
     expect(result.exitCode).toBe(2);
-    expect(payload.exhausted).toBe(true);
-    expect(payload.attempts).toBeGreaterThanOrEqual(1);
+    expect(payload["exhausted"]).toBe(true);
+    expect(payload["attempts"]).toBeGreaterThanOrEqual(1);
   });
 
   test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
@@ -2064,7 +2064,7 @@ describe("CLI autosession surface", () => {
       string,
       unknown
     >;
-    expect(captured.learnings).toBe(true);
+    expect(captured["learnings"]).toBe(true);
     expect(captured).not.toHaveProperty("duplicates");
     expect(captured).not.toHaveProperty("demos");
     expect(captured).not.toHaveProperty("sessions");
@@ -2096,8 +2096,8 @@ describe("CLI autosession surface", () => {
       string,
       unknown
     >;
-    expect(captured.duplicates).toBe(true);
-    expect(captured.demos).toBe(true);
+    expect(captured["duplicates"]).toBe(true);
+    expect(captured["demos"]).toBe(true);
     expect(captured).not.toHaveProperty("learnings");
     expect(captured).not.toHaveProperty("sessions");
   });

@@ -195,49 +195,49 @@ afterEach(() => {
 
 describe("detectProvider", () => {
   test("DEFAULT_LLM_PROVIDER takes highest precedence", () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.ANTHROPIC_API_KEY = "key"; // would normally win
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["ANTHROPIC_API_KEY"] = "key"; // would normally win
     expect(detectProvider()).toBe("openrouter");
   });
 
   test("anthropic wins when ANTHROPIC_API_KEY is set", () => {
-    process.env.ANTHROPIC_API_KEY = "key-abc";
+    process.env["ANTHROPIC_API_KEY"] = "key-abc";
     expect(detectProvider()).toBe("anthropic");
   });
 
   test("anthropic wins when ANTHROPIC_AUTH_TOKEN is set", () => {
-    process.env.ANTHROPIC_AUTH_TOKEN = "tok-xyz";
+    process.env["ANTHROPIC_AUTH_TOKEN"] = "tok-xyz";
     expect(detectProvider()).toBe("anthropic");
   });
 
   test("gemini wins over openai when both set but anthropic absent", () => {
-    process.env.GEMINI_API_KEY = "g-key";
-    process.env.OPENAI_API_KEY = "o-key";
+    process.env["GEMINI_API_KEY"] = "g-key";
+    process.env["OPENAI_API_KEY"] = "o-key";
     expect(detectProvider()).toBe("gemini");
   });
 
   test("openai wins when only OPENAI_API_KEY set", () => {
-    process.env.OPENAI_API_KEY = "o-key";
+    process.env["OPENAI_API_KEY"] = "o-key";
     expect(detectProvider()).toBe("openai");
   });
 
   test("openrouter wins when only OPENROUTER_API_KEY set", () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
     expect(detectProvider()).toBe("openrouter");
   });
 
   test("deepseek wins when only DEEPSEEK_API_KEY set", () => {
-    process.env.DEEPSEEK_API_KEY = "ds-key";
+    process.env["DEEPSEEK_API_KEY"] = "ds-key";
     expect(detectProvider()).toBe("deepseek");
   });
 
   test("opencode wins when only OPENCODE_API_KEY set", () => {
-    process.env.OPENCODE_API_KEY = "oc-key";
+    process.env["OPENCODE_API_KEY"] = "oc-key";
     expect(detectProvider()).toBe("opencode");
   });
 
   test("mimo wins when only MIMO_API_KEY set", () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
     expect(detectProvider()).toBe("mimo");
   });
 
@@ -266,7 +266,7 @@ describe("DEFAULT_MODELS", () => {
   });
 
   test("openrouter default model is empty string (requires --model flag)", () => {
-    expect(DEFAULT_MODELS.openrouter).toBe("");
+    expect(DEFAULT_MODELS["openrouter"]).toBe("");
   });
 });
 
@@ -389,14 +389,14 @@ describe("verifyConnection", () => {
   });
 
   test("respects DEFAULT_LLM_PROVIDER in error response", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openai";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openai";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("openai");
   });
 
   test("respects DEFAULT_MODEL in error response", async () => {
-    process.env.DEFAULT_MODEL = "custom-default-model";
+    process.env["DEFAULT_MODEL"] = "custom-default-model";
     const result = await verifyConnection({ provider: "gemini" });
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("gemini");
@@ -404,7 +404,7 @@ describe("verifyConnection", () => {
   });
 
   test("opts.model overrides DEFAULT_MODEL in error response", async () => {
-    process.env.DEFAULT_MODEL = "default-from-env";
+    process.env["DEFAULT_MODEL"] = "default-from-env";
     const result = await verifyConnection({
       provider: "gemini",
       model: "explicit-model",
@@ -564,7 +564,7 @@ describe("parseGateDecision edge cases", () => {
 
 describe("callProvider error paths via verifyConnection", () => {
   test("openrouter missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("openrouter");
@@ -572,8 +572,8 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("openrouter with empty model returns structured error", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("openrouter");
@@ -581,7 +581,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("deepseek missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "deepseek";
+    process.env["DEFAULT_LLM_PROVIDER"] = "deepseek";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("deepseek");
@@ -589,7 +589,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("opencode missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "opencode";
+    process.env["DEFAULT_LLM_PROVIDER"] = "opencode";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("opencode");
@@ -597,7 +597,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("mimo missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "mimo";
+    process.env["DEFAULT_LLM_PROVIDER"] = "mimo";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("mimo");
@@ -605,7 +605,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("anthropic missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "anthropic";
+    process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("anthropic");
@@ -613,7 +613,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("unknown provider returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "nonexistent";
+    process.env["DEFAULT_LLM_PROVIDER"] = "nonexistent";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("nonexistent");
@@ -621,7 +621,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("gemini missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "gemini";
+    process.env["DEFAULT_LLM_PROVIDER"] = "gemini";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("gemini");
@@ -629,7 +629,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("openai missing API key returns structured error", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openai";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openai";
     const result = await verifyConnection();
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("openai");
@@ -637,7 +637,7 @@ describe("callProvider error paths via verifyConnection", () => {
   });
 
   test("openrouter with key but DEFAULT_MODEL empty propagates model error", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
     // DEFAULT_LLM_PROVIDER not set, but OPENROUTER_API_KEY triggers openrouter detection
     const result = await verifyConnection({ provider: "openrouter" });
     expect(result.ok).toBe(false);
@@ -651,7 +651,7 @@ describe("callProvider error paths via verifyConnection", () => {
 
 describe("resolveProviderAndModel via verifyConnection", () => {
   test("modelOverride with explicit provider and model", async () => {
-    process.env.GEMINI_API_KEY = "g-key";
+    process.env["GEMINI_API_KEY"] = "g-key";
     const result = await verifyConnection({
       provider: "gemini",
       model: "gemini-2.5-pro",
@@ -661,19 +661,19 @@ describe("resolveProviderAndModel via verifyConnection", () => {
   });
 
   test("modelOverride provider overrides DEFAULT_LLM_PROVIDER", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openai";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openai";
     const result = await verifyConnection({ provider: "deepseek" });
     expect(result.provider).toBe("deepseek");
   });
 
   test("DEFAULT_MODEL env takes precedence over DEFAULT_MODELS", async () => {
-    process.env.DEFAULT_MODEL = "env-custom-model";
+    process.env["DEFAULT_MODEL"] = "env-custom-model";
     const result = await verifyConnection({ provider: "gemini" });
     expect(result.model).toBe("env-custom-model");
   });
 
   test("modelOverride.model beats DEFAULT_MODEL env", async () => {
-    process.env.DEFAULT_MODEL = "env-model";
+    process.env["DEFAULT_MODEL"] = "env-model";
     const result = await verifyConnection({
       provider: "gemini",
       model: "explicit-model",
@@ -688,14 +688,14 @@ describe("resolveProviderAndModel via verifyConnection", () => {
 
 describe("getGateDecision error propagation", () => {
   test("throws when provider config is missing", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "anthropic";
+    process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
     expect(
       getGateDecision({ goal: "g", plan: "p", feedback: "f" }),
     ).rejects.toThrow(/ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN/);
   });
 
   test("throws with unknown provider", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "nonexistent";
+    process.env["DEFAULT_LLM_PROVIDER"] = "nonexistent";
     expect(
       getGateDecision({ goal: "g", plan: "p", feedback: "f" }),
     ).rejects.toThrow(/Unknown provider/);
@@ -708,10 +708,10 @@ describe("getGateDecision error propagation", () => {
 
 describe("provider success paths", () => {
   test("getMentorFeedback posts full context to OpenRouter", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_MODEL = "openrouter/model";
-    process.env.USE_LEARNING_HISTORY = "false";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_MODEL"] = "openrouter/model";
+    process.env["USE_LEARNING_HISTORY"] = "false";
     mockFetch(() =>
       Response.json({
         choices: [{ message: { content: "provider question" } }],
@@ -781,9 +781,9 @@ describe("provider success paths", () => {
   });
 
   test("getGateDecision forwards temperature 0.1 to openrouter request body", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_MODEL = "openrouter/model";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_MODEL"] = "openrouter/model";
     mockFetch(() =>
       Response.json({
         choices: [
@@ -810,10 +810,10 @@ describe("provider success paths", () => {
   });
 
   test("getMentorFeedback omits absent optional context", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_MODEL = "openrouter/model";
-    process.env.USE_LEARNING_HISTORY = "false";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_MODEL"] = "openrouter/model";
+    process.env["USE_LEARNING_HISTORY"] = "false";
     mockFetch(() =>
       Response.json({
         choices: [{ message: { content: "provider question" } }],
@@ -840,23 +840,23 @@ describe("provider success paths", () => {
     let savedHome: string | undefined;
 
     beforeEach(() => {
-      savedHome = process.env.HOME;
+      savedHome = process.env["HOME"];
       tempHome = mkdtempSync(path.join(tmpdir(), "vibe-llm-test-"));
-      process.env.HOME = tempHome;
+      process.env["HOME"] = tempHome;
     });
 
     afterEach(() => {
-      if (savedHome === undefined) delete process.env.HOME;
-      else process.env.HOME = savedHome;
+      if (savedHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = savedHome;
       rmSync(tempHome, { recursive: true, force: true });
     });
 
     test("includes constitution before history", async () => {
       resetConstitution(["Follow session rule"]);
-      process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-      process.env.OPENROUTER_API_KEY = "or-key";
-      process.env.DEFAULT_MODEL = "openrouter/model";
-      process.env.USE_LEARNING_HISTORY = "false";
+      process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+      process.env["OPENROUTER_API_KEY"] = "or-key";
+      process.env["DEFAULT_MODEL"] = "openrouter/model";
+      process.env["USE_LEARNING_HISTORY"] = "false";
       mockFetch(() =>
         Response.json({
           choices: [{ message: { content: "provider question" } }],
@@ -880,7 +880,7 @@ describe("provider success paths", () => {
   });
 
   test("getGateDecision parses a successful OpenRouter decision", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
     mockFetch(() =>
       Response.json({
         choices: [
@@ -927,7 +927,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan omits block reason when provided as empty string", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() =>
       Response.json({ content: [{ type: "text", text: "revised plan" }] }),
     );
@@ -953,7 +953,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan with OpenRouter sends system/user messages separately", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
     mockFetch(() =>
       Response.json({
         choices: [{ message: { content: "revised via openrouter" } }],
@@ -983,7 +983,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan with DeepSeek sends system/user messages separately", async () => {
-    process.env.DEEPSEEK_API_KEY = "ds-key";
+    process.env["DEEPSEEK_API_KEY"] = "ds-key";
     openAiResponseText = "deepseek revised";
 
     const result = await revisePlan({
@@ -1011,7 +1011,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan with OpenCode sends system/user messages separately", async () => {
-    process.env.OPENCODE_API_KEY = "oc-key";
+    process.env["OPENCODE_API_KEY"] = "oc-key";
     openAiResponseText = "opencode revised";
 
     const result = await revisePlan({
@@ -1037,7 +1037,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan propagates provider resolution errors", async () => {
-    process.env.DEFAULT_LLM_PROVIDER = "nonexistent";
+    process.env["DEFAULT_LLM_PROVIDER"] = "nonexistent";
     await expect(
       revisePlan({
         goal: "g",
@@ -1048,7 +1048,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan posts Anthropic system prompt and returns first text block", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() =>
       Response.json({ content: [{ type: "text", text: "revised plan" }] }),
     );
@@ -1088,7 +1088,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan includes blockReason when provided", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() =>
       Response.json({
         content: [{ type: "text", text: "revised with reason" }],
@@ -1118,7 +1118,7 @@ describe("provider success paths", () => {
   });
 
   test("DeepSeek uses the OpenAI-compatible client", async () => {
-    process.env.DEEPSEEK_API_KEY = "ds-key";
+    process.env["DEEPSEEK_API_KEY"] = "ds-key";
 
     const result = await getMentorFeedback({
       goal: "goal",
@@ -1143,7 +1143,7 @@ describe("provider success paths", () => {
   });
 
   test("OpenCode uses the OpenAI-compatible client", async () => {
-    process.env.OPENCODE_API_KEY = "oc-key";
+    process.env["OPENCODE_API_KEY"] = "oc-key";
 
     const result = await getMentorFeedback({
       goal: "goal",
@@ -1167,7 +1167,7 @@ describe("provider success paths", () => {
   });
 
   test("Mimo uses the OpenAI-compatible client with correct baseURL", async () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
 
     const result = await getMentorFeedback({
       goal: "goal",
@@ -1191,7 +1191,7 @@ describe("provider success paths", () => {
   });
 
   test("Mimo uses explicit model override", async () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
     openAiResponseText = "mimo flash response";
 
     const result = await getMentorFeedback({
@@ -1206,7 +1206,7 @@ describe("provider success paths", () => {
   });
 
   test("revisePlan with Mimo sends system/user messages separately", async () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
     openAiResponseText = "mimo revised";
 
     const result = await revisePlan({
@@ -1232,9 +1232,9 @@ describe("provider success paths", () => {
   });
 
   test("verifyConnection returns ok response with latency and preview", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.DEFAULT_MODEL = "openrouter/model";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["DEFAULT_MODEL"] = "openrouter/model";
     const longResponse = "x".repeat(250);
     mockFetch(() =>
       Response.json({ choices: [{ message: { content: longResponse } }] }),
@@ -1250,7 +1250,7 @@ describe("provider success paths", () => {
   });
 
   test("OpenAI provider uses the cached client path", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+    process.env["OPENAI_API_KEY"] = "openai-key";
     openAiResponseText = "openai question";
 
     const result = await getMentorFeedback({
@@ -1283,7 +1283,7 @@ describe("provider success paths", () => {
 
 describe("callOpenAI empty choices boundary", () => {
   test("returns empty string when choices array is empty", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+    process.env["OPENAI_API_KEY"] = "openai-key";
     openAiResponseText = "";
 
     const result = await getMentorFeedback({
@@ -1302,9 +1302,9 @@ describe("callOpenAI empty choices boundary", () => {
 
 describe("callOpenRouter empty choices boundary", () => {
   test("returns empty string when choices array is empty", async () => {
-    process.env.OPENROUTER_API_KEY = "or-key";
-    process.env.DEFAULT_LLM_PROVIDER = "openrouter";
-    process.env.DEFAULT_MODEL = "openrouter/model";
+    process.env["OPENROUTER_API_KEY"] = "or-key";
+    process.env["DEFAULT_LLM_PROVIDER"] = "openrouter";
+    process.env["DEFAULT_MODEL"] = "openrouter/model";
     mockFetch(() => Response.json({ choices: [] }));
 
     const result = await getMentorFeedback({
@@ -1318,7 +1318,7 @@ describe("callOpenRouter empty choices boundary", () => {
 
 describe("callAnthropic response handling", () => {
   test("auth failure includes status and request id", async () => {
-    process.env.ANTHROPIC_API_KEY = "bad-key";
+    process.env["ANTHROPIC_API_KEY"] = "bad-key";
     mockFetch(
       () =>
         new Response(JSON.stringify({ error: { message: "bad key" } }), {
@@ -1335,7 +1335,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("auth failure with 403 uses same auth error path", async () => {
-    process.env.ANTHROPIC_API_KEY = "bad-key";
+    process.env["ANTHROPIC_API_KEY"] = "bad-key";
     mockFetch(
       () =>
         new Response(JSON.stringify({ error: { message: "forbidden" } }), {
@@ -1352,7 +1352,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("uses x-request-id fallback when anthropic-request-id absent", async () => {
-    process.env.ANTHROPIC_API_KEY = "bad-key";
+    process.env["ANTHROPIC_API_KEY"] = "bad-key";
     mockFetch(
       () =>
         new Response(JSON.stringify({ error: { message: "bad key" } }), {
@@ -1369,7 +1369,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("rate limit failure includes retry-after", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(
       () =>
         new Response(JSON.stringify({ message: "slow down" }), {
@@ -1387,7 +1387,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("generic failure uses parsed message", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(
       () =>
         new Response(JSON.stringify({ message: "server down" }), {
@@ -1402,7 +1402,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("successful legacy text block returns text property", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() => Response.json({ content: [{ text: "legacy text" }] }));
 
     const result = await getMentorFeedback({
@@ -1415,7 +1415,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("malformed success body returns empty Anthropic text", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() => new Response("not-json"));
 
     const result = await getMentorFeedback({
@@ -1428,7 +1428,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("error response without message field falls back to raw text", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(
       () =>
         new Response("plain text error from upstream", {
@@ -1444,7 +1444,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("network failure propagates fetch rejection", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() => Promise.reject(new Error("ECONNREFUSED")));
 
     const result = await verifyConnection({ provider: "anthropic" });
@@ -1454,7 +1454,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("empty content array returns empty string", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() => Response.json({ content: [] }));
 
     const result = await getMentorFeedback({
@@ -1467,7 +1467,7 @@ describe("callAnthropic response handling", () => {
   });
 
   test("content with non-text block returns empty string", async () => {
-    process.env.ANTHROPIC_API_KEY = "anth-key";
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
     mockFetch(() =>
       Response.json({
         content: [{ type: "tool_use", id: "tu-1", name: "read" }],
@@ -1494,7 +1494,7 @@ describe("callGemini fallback to flash model", () => {
     geminiResponses = [];
     throwOnCall = undefined;
     geminiErrorMessages = [];
-    process.env.GEMINI_API_KEY = "g-key";
+    process.env["GEMINI_API_KEY"] = "g-key";
   });
 
   test("falls back to gemini-2.5-flash when gemini-2.5-pro fails (retryable: model not found)", async () => {
@@ -1844,7 +1844,7 @@ describe("callGemini fallback to flash model", () => {
   });
 
   test("revisePlan with OpenAI passes PLAN_REVISION_SYSTEM_PROMPT as system message", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+    process.env["OPENAI_API_KEY"] = "openai-key";
     openAiResponseText = "openai revised";
 
     const result = await revisePlan({
@@ -1878,7 +1878,7 @@ describe("callGemini fallback to flash model", () => {
 
 describe("temperature forwarding", () => {
   test("OpenAI receives temperature and separate system/user messages in gate decision", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+    process.env["OPENAI_API_KEY"] = "openai-key";
 
     await getGateDecision({
       goal: "g",
@@ -1903,7 +1903,7 @@ describe("temperature forwarding", () => {
   });
 
   test("DeepSeek receives temperature and separate system/user messages in gate decision", async () => {
-    process.env.DEEPSEEK_API_KEY = "ds-key";
+    process.env["DEEPSEEK_API_KEY"] = "ds-key";
 
     await getGateDecision({
       goal: "g",
@@ -1928,7 +1928,7 @@ describe("temperature forwarding", () => {
   });
 
   test("OpenCode receives temperature and separate system/user messages in gate decision", async () => {
-    process.env.OPENCODE_API_KEY = "oc-key";
+    process.env["OPENCODE_API_KEY"] = "oc-key";
 
     await getGateDecision({
       goal: "g",
@@ -1953,7 +1953,7 @@ describe("temperature forwarding", () => {
   });
 
   test("OpenAI defaults temperature to 0.2 via callProvider", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+    process.env["OPENAI_API_KEY"] = "openai-key";
     openAiResponseText = "ok";
 
     await getMentorFeedback({
@@ -1967,7 +1967,7 @@ describe("temperature forwarding", () => {
   });
 
   test("Mimo receives temperature 0.1 in gate decision", async () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
 
     await getGateDecision({
       goal: "g",
@@ -1991,7 +1991,7 @@ describe("temperature forwarding", () => {
   });
 
   test("Mimo defaults temperature to 0.2 in mentor feedback", async () => {
-    process.env.MIMO_API_KEY = "mimo-key";
+    process.env["MIMO_API_KEY"] = "mimo-key";
     openAiResponseText = "ok";
 
     await getMentorFeedback({

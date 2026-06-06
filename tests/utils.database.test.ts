@@ -225,7 +225,7 @@ describe("withDatabase", () => {
   });
 
   test("uses singleton and does not close when called without options", async () => {
-    const _home = await useTempHome();
+    await useTempHome();
 
     withDatabase((db) => {
       db.exec(

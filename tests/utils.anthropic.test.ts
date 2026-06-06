@@ -34,7 +34,7 @@ describe("resolveAnthropicConfig", () => {
   });
 
   test("uses ANTHROPIC_API_KEY and default base URL and version", () => {
-    process.env.ANTHROPIC_API_KEY = "key-123";
+    process.env["ANTHROPIC_API_KEY"] = "key-123";
     const cfg = resolveAnthropicConfig();
     expect(cfg.apiKey).toBe("key-123");
     expect(cfg.authToken).toBeUndefined();
@@ -43,29 +43,29 @@ describe("resolveAnthropicConfig", () => {
   });
 
   test("uses ANTHROPIC_AUTH_TOKEN when API key absent", () => {
-    process.env.ANTHROPIC_AUTH_TOKEN = "tok-abc";
+    process.env["ANTHROPIC_AUTH_TOKEN"] = "tok-abc";
     const cfg = resolveAnthropicConfig();
     expect(cfg.authToken).toBe("tok-abc");
     expect(cfg.apiKey).toBeUndefined();
   });
 
   test("trims trailing slashes from ANTHROPIC_BASE_URL", () => {
-    process.env.ANTHROPIC_API_KEY = "k";
-    process.env.ANTHROPIC_BASE_URL = "https://proxy.example.com///";
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    process.env["ANTHROPIC_BASE_URL"] = "https://proxy.example.com///";
     const cfg = resolveAnthropicConfig();
     expect(cfg.baseUrl).toBe("https://proxy.example.com");
   });
 
   test("respects custom ANTHROPIC_VERSION", () => {
-    process.env.ANTHROPIC_API_KEY = "k";
-    process.env.ANTHROPIC_VERSION = "2024-01-01";
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    process.env["ANTHROPIC_VERSION"] = "2024-01-01";
     const cfg = resolveAnthropicConfig();
     expect(cfg.version).toBe("2024-01-01");
   });
 
   test("prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN when both set", () => {
-    process.env.ANTHROPIC_API_KEY = "key-first";
-    process.env.ANTHROPIC_AUTH_TOKEN = "tok-second";
+    process.env["ANTHROPIC_API_KEY"] = "key-first";
+    process.env["ANTHROPIC_AUTH_TOKEN"] = "tok-second";
     const cfg = resolveAnthropicConfig();
     expect(cfg.apiKey).toBe("key-first");
     expect(cfg.authToken).toBe("tok-second");
@@ -81,7 +81,7 @@ describe("buildAnthropicHeaders", () => {
     expect(h["x-api-key"]).toBe("my-key");
     expect(h["anthropic-version"]).toBe("2023-06-01");
     expect(h["content-type"]).toBe("application/json");
-    expect(h.authorization).toBeUndefined();
+    expect(h["authorization"]).toBeUndefined();
   });
 
   test("sets Bearer authorization when authToken present and apiKey absent", () => {
@@ -89,7 +89,7 @@ describe("buildAnthropicHeaders", () => {
       authToken: "tok",
       version: "2023-06-01",
     });
-    expect(h.authorization).toBe("Bearer tok");
+    expect(h["authorization"]).toBe("Bearer tok");
     expect(h["x-api-key"]).toBeUndefined();
   });
 
@@ -99,7 +99,7 @@ describe("buildAnthropicHeaders", () => {
       expect.arrayContaining(["content-type", "anthropic-version"]),
     );
     expect(h["x-api-key"]).toBeUndefined();
-    expect(h.authorization).toBeUndefined();
+    expect(h["authorization"]).toBeUndefined();
   });
 
   test("prefers x-api-key over Bearer when both apiKey and authToken present", () => {
@@ -109,6 +109,6 @@ describe("buildAnthropicHeaders", () => {
       version: "2023-06-01",
     });
     expect(h["x-api-key"]).toBe("key");
-    expect(h.authorization).toBeUndefined();
+    expect(h["authorization"]).toBeUndefined();
   });
 });

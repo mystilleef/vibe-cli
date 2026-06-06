@@ -9,20 +9,20 @@ export interface TempHomeContext {
 }
 
 export async function createTempHome(): Promise<TempHomeContext> {
-  const previousHome = process.env.HOME;
+  const previousHome = process.env["HOME"];
   const home = await mkdtemp(join(tmpdir(), "vibe-cli-test-"));
   const dataRoot = join(home, ".vibe-cli");
 
-  process.env.HOME = home;
+  process.env["HOME"] = home;
 
   return {
     home,
     dataRoot,
     async cleanup() {
       if (previousHome === undefined) {
-        delete process.env.HOME;
+        delete process.env["HOME"];
       } else {
-        process.env.HOME = previousHome;
+        process.env["HOME"] = previousHome;
       }
       await rm(home, { recursive: true, force: true });
     },

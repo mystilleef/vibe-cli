@@ -1,4 +1,4 @@
-const mode = process.env.VIBE_TEST_ANTHROPIC_MODE ?? "proceed";
+const mode = process.env["VIBE_TEST_ANTHROPIC_MODE"] ?? "proceed";
 
 function anthropicMessage(text: string): Response {
   return new Response(JSON.stringify({ content: [{ type: "text", text }] }), {

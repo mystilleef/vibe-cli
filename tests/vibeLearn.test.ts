@@ -54,7 +54,7 @@ describe("vibeLearnTool", () => {
       category: "too many tools",
       type: "preference",
     });
-    const entries = getLearningEntries().Overtooling ?? [];
+    const entries = getLearningEntries()["Overtooling"] ?? [];
 
     expect(result.added).toBe(true);
     expect(result.categoryCount).toBe(1);
@@ -145,7 +145,7 @@ describe("vibeLearnTool", () => {
       solution: "Keep doing it this way",
       type: "success",
     });
-    const entries = getLearningEntries().wins ?? [];
+    const entries = getLearningEntries()["wins"] ?? [];
 
     expect(result.added).toBe(true);
     expect(result.categoryCount).toBe(1);
@@ -163,7 +163,7 @@ describe("vibeLearnTool", () => {
     });
     expect(result.added).toBe(true);
 
-    const entries = getLearningEntries().democat ?? [];
+    const entries = getLearningEntries()["democat"] ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]?.demoId).toBe("my-demo-123");
   });
@@ -221,7 +221,7 @@ describe("vibeLearnTool", () => {
     });
 
     expect(result.added).toBe(true);
-    const entries = getLearningEntries().nopunct ?? [];
+    const entries = getLearningEntries()["nopunct"] ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]?.observation).toBe("hello world.");
   });
@@ -240,7 +240,7 @@ describe("vibeLearnTool", () => {
     });
 
     expect(result.added).toBe(true);
-    const entries = getLearningEntries().whitespace ?? [];
+    const entries = getLearningEntries()["whitespace"] ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]?.observation).toBe(".");
   });
@@ -253,7 +253,7 @@ describe("vibeLearnTool", () => {
       category: "legacy",
       solution: "Treat empty legacy mistakes as non-matches",
     });
-    const entries = getLearningEntries().legacy ?? [];
+    const entries = getLearningEntries()["legacy"] ?? [];
     const summary = getLearningCategorySummary().find(
       (category) => category.category === "legacy",
     );

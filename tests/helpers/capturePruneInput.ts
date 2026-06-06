@@ -4,7 +4,7 @@
  *
  * Uses Bun.plugin to wrap the prune module's runPrune export.
  */
-const capturePath = process.env.VIBE_PRUNE_CAPTURE;
+const capturePath = process.env["VIBE_PRUNE_CAPTURE"];
 
 if (capturePath) {
   const path = require("node:path");

@@ -38,7 +38,7 @@ import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 let home: TempHomeContext;
 let cwd: string;
 const originalCwd = process.cwd();
-const originalProvider = process.env.DEFAULT_LLM_PROVIDER;
+const originalProvider = process.env["DEFAULT_LLM_PROVIDER"];
 
 beforeEach(async () => {
   home = await createTempHome();
@@ -49,9 +49,9 @@ beforeEach(async () => {
 afterEach(async () => {
   process.chdir(originalCwd);
   if (originalProvider === undefined) {
-    delete process.env.DEFAULT_LLM_PROVIDER;
+    delete process.env["DEFAULT_LLM_PROVIDER"];
   } else {
-    process.env.DEFAULT_LLM_PROVIDER = originalProvider;
+    process.env["DEFAULT_LLM_PROVIDER"] = originalProvider;
   }
   await rm(cwd, { recursive: true, force: true });
   await home.cleanup();
@@ -289,7 +289,7 @@ describe("list data foundations", () => {
       insertInteraction.run("session-a", "oldest", "raw output", 1000);
       insertInteraction.run("session-b", "other", "other output", 2000);
     });
-    process.env.DEFAULT_LLM_PROVIDER = "deepseek";
+    process.env["DEFAULT_LLM_PROVIDER"] = "deepseek";
 
     expect(readListConstitution()).toEqual({
       session: active.session,
