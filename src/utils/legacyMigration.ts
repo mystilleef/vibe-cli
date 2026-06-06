@@ -7,7 +7,7 @@ export const LEGACY_CONSTITUTION = "constitution.json";
 export const LEGACY_HISTORY = "history.json";
 
 function getDataRoot(): string {
-  return path.join(process.env.HOME ?? os.homedir(), ".vibe-cli");
+  return path.join(process.env["HOME"] ?? os.homedir(), ".vibe-cli");
 }
 
 export function getLegacyAutosessionDir(): string {

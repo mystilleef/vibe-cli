@@ -61,16 +61,16 @@ interface ReviewOutput {
 }
 
 async function ensureGemini() {
-  if (!genAI && process.env.GEMINI_API_KEY) {
+  if (!genAI && process.env["GEMINI_API_KEY"]) {
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    genAI = new GoogleGenerativeAI(process.env["GEMINI_API_KEY"]);
   }
 }
 
 async function ensureOpenAI() {
-  if (!openaiClient && process.env.OPENAI_API_KEY) {
+  if (!openaiClient && process.env["OPENAI_API_KEY"]) {
     const { OpenAI } = await import("openai");
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openaiClient = new OpenAI({ apiKey: process.env["OPENAI_API_KEY"] });
   }
 }
 
@@ -88,7 +88,8 @@ const PROVIDER_DETECTION_ORDER: Array<{ envVar: string; provider: string }> = [
 
 /** Detect the active LLM provider from environment variables. Priority: DEFAULT_LLM_PROVIDER > ANTHROPIC > GEMINI > OPENAI > OPENROUTER > DEEPSEEK > OPENCODE > gemini (fallback). */
 export function detectProvider(): string {
-  if (process.env.DEFAULT_LLM_PROVIDER) return process.env.DEFAULT_LLM_PROVIDER;
+  if (process.env["DEFAULT_LLM_PROVIDER"])
+    return process.env["DEFAULT_LLM_PROVIDER"];
   const entry = PROVIDER_DETECTION_ORDER.find(
     ({ envVar }) => !!process.env[envVar as keyof typeof process.env],
   );
@@ -119,7 +120,7 @@ function resolveProviderAndModel(modelOverride?: {
   const provider = modelOverride?.provider || detectProvider();
   const model =
     modelOverride?.model ||
-    process.env.DEFAULT_MODEL ||
+    process.env["DEFAULT_MODEL"] ||
     DEFAULT_MODELS[provider] ||
     "";
   return { provider, model };
@@ -207,7 +208,7 @@ async function callOpenAI(
   await ensureOpenAI();
   if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
   const res = await openaiClient.chat.completions.create({
-    model: model || DEFAULT_MODELS.openai || "gpt-4o-mini",
+    model: model || DEFAULT_MODELS["openai"] || "gpt-4o-mini",
     messages: buildMessages(systemPrompt, userContent),
     ...(temperature !== undefined && { temperature }),
   });
@@ -221,14 +222,14 @@ async function callOpenRouter(
   userContent: string,
   temperature?: number,
 ): Promise<string> {
-  if (!process.env.OPENROUTER_API_KEY)
+  if (!process.env["OPENROUTER_API_KEY"])
     throw new Error("OPENROUTER_API_KEY not set.");
   if (!model) throw new Error("--model is required with provider openrouter.");
   const res = await fetch(OPENROUTER_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${process.env["OPENROUTER_API_KEY"]}`,
       "HTTP-Referer": "http://localhost",
       "X-Title": "Vibe Check CLI",
     },
@@ -275,11 +276,11 @@ async function callDeepSeek(
   userContent: string,
   temperature?: number,
 ): Promise<string> {
-  if (!process.env.DEEPSEEK_API_KEY)
+  if (!process.env["DEEPSEEK_API_KEY"])
     throw new Error("DEEPSEEK_API_KEY not set.");
   return callOpenAICompat({
     baseURL: DEEPSEEK_BASE_URL,
-    apiKey: process.env.DEEPSEEK_API_KEY,
+    apiKey: process.env["DEEPSEEK_API_KEY"],
     model: model || "deepseek-chat",
     systemPrompt,
     userContent,
@@ -293,7 +294,7 @@ async function callMimo(
   userContent: string,
   temperature?: number,
 ): Promise<string> {
-  const apiKey = process.env.MIMO_API_KEY;
+  const apiKey = process.env["MIMO_API_KEY"];
   if (!apiKey) throw new Error("MIMO_API_KEY not set.");
   return callOpenAICompat({
     baseURL: MIMO_BASE_URL,
@@ -311,7 +312,7 @@ async function callOpenCode(
   userContent: string,
   temperature?: number,
 ): Promise<string> {
-  const apiKey = process.env.OPENCODE_API_KEY;
+  const apiKey = process.env["OPENCODE_API_KEY"];
   if (!apiKey) throw new Error("OPENCODE_API_KEY not set.");
   return callOpenAICompat({
     baseURL: OPENCODE_GO_BASE_URL,
@@ -341,7 +342,8 @@ const PROVIDER_CALL_REGISTRY: Record<string, ProviderCallFn> = {
   mimo: callMimo,
   anthropic: (model, systemPrompt, userContent, temperature) =>
     callAnthropic({
-      model: model || DEFAULT_MODELS.anthropic || "claude-haiku-4-5-20251001",
+      model:
+        model || DEFAULT_MODELS["anthropic"] || "claude-haiku-4-5-20251001",
       systemPrompt,
       compiledPrompt: userContent,
       ...(temperature !== undefined && { temperature }),
@@ -378,7 +380,8 @@ async function callProvider(
  * controlled by the USE_LEARNING_HISTORY env var (default: "true").
  */
 function buildContextSection(input: ReviewInput): string {
-  const useLearning = (process.env.USE_LEARNING_HISTORY ?? "true") === "true";
+  const useLearning =
+    (process.env["USE_LEARNING_HISTORY"] ?? "true") === "true";
   const learningContext = useLearning ? getLearningContextText() : "";
   const rules = getConstitution();
   return [
@@ -504,7 +507,10 @@ export async function verifyConnection(opts?: {
 }): Promise<VerifyResult> {
   const provider = opts?.provider || detectProvider();
   const model =
-    opts?.model || process.env.DEFAULT_MODEL || DEFAULT_MODELS[provider] || "";
+    opts?.model ||
+    process.env["DEFAULT_MODEL"] ||
+    DEFAULT_MODELS[provider] ||
+    "";
   const probe =
     "Reply with exactly one sentence confirming you are reachable and working.";
   const start = Date.now();

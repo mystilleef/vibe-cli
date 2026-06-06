@@ -9,7 +9,7 @@ import { DEFAULT_MODELS, detectProvider } from "./llm.js";
 export function buildSchema() {
   const provider = detectProvider();
   const model =
-    process.env.DEFAULT_MODEL ||
+    process.env["DEFAULT_MODEL"] ||
     DEFAULT_MODELS[provider] ||
     "(required via --model)";
   return {

@@ -32,7 +32,7 @@ interface SessionRow {
  * Uses `$HOME` when set, falling back to `os.homedir()`.
  */
 export function getDataRoot(): string {
-  return path.join(process.env.HOME ?? os.homedir(), ".vibe-cli");
+  return path.join(process.env["HOME"] ?? os.homedir(), ".vibe-cli");
 }
 
 /** Creates the data root directory if it does not already exist. */

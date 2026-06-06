@@ -38,11 +38,11 @@ export interface AnthropicCallOptions {
  */
 export function resolveAnthropicConfig(): AnthropicConfig {
   const baseUrl =
-    process.env.ANTHROPIC_BASE_URL?.replace(/\/+$/, "") ||
+    process.env["ANTHROPIC_BASE_URL"]?.replace(/\/+$/, "") ||
     "https://api.anthropic.com";
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
-  const version = process.env.ANTHROPIC_VERSION || "2023-06-01";
+  const apiKey = process.env["ANTHROPIC_API_KEY"];
+  const authToken = process.env["ANTHROPIC_AUTH_TOKEN"];
+  const version = process.env["ANTHROPIC_VERSION"] || "2023-06-01";
 
   if (!apiKey && !authToken) {
     throw new Error(
@@ -77,7 +77,7 @@ export function buildAnthropicHeaders({
   if (apiKey) {
     headers["x-api-key"] = apiKey;
   } else if (authToken) {
-    headers.authorization = `Bearer ${authToken}`;
+    headers["authorization"] = `Bearer ${authToken}`;
   }
   return headers;
 }
@@ -100,7 +100,9 @@ function isAnthropicTextBlock(
   value: unknown,
 ): value is { type: "text"; text: string } {
   return (
-    isRecord(value) && value.type === "text" && typeof value.text === "string"
+    isRecord(value) &&
+    value["type"] === "text" &&
+    typeof value["text"] === "string"
   );
 }
 
@@ -119,8 +121,8 @@ function throwAnthropicError(
     response.headers.get("anthropic-request-id") ||
     response.headers.get("x-request-id");
   const suffix = requestId ? ` (request id: ${requestId})` : "";
-  const errorObject = isRecord(parsedObject?.error)
-    ? parsedObject.error
+  const errorObject = isRecord(parsedObject?.["error"])
+    ? parsedObject["error"]
     : undefined;
   const msg =
     getStringProperty(errorObject, "message") ??
@@ -146,8 +148,8 @@ function throwAnthropicError(
 function extractAnthropicText(
   parsedObject: Record<string, unknown> | undefined,
 ): string {
-  const content = Array.isArray(parsedObject?.content)
-    ? parsedObject.content
+  const content = Array.isArray(parsedObject?.["content"])
+    ? parsedObject["content"]
     : [];
   const text = content.find(isAnthropicTextBlock)?.text;
   return (
@@ -184,7 +186,7 @@ export async function callAnthropic({
     temperature,
     messages: [{ role: "user", content: compiledPrompt }],
   };
-  if (systemPrompt) body.system = systemPrompt;
+  if (systemPrompt) body["system"] = systemPrompt;
 
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",

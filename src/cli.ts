@@ -153,11 +153,11 @@ const LIST_COMMANDS = [
       { flags: "--limit <n>", description: "Limit rows after filtering" },
     ],
     action: buildListAction(readListLearnings, formatListLearnings, (opts) => {
-      const type = parseLearningType(opts.type);
-      const limit = parseListLimit(opts.limit);
+      const type = parseLearningType(opts["type"]);
+      const limit = parseListLimit(opts["limit"]);
       return {
         ...(type !== undefined && { type }),
-        ...(opts.category !== undefined && { category: opts.category }),
+        ...(opts["category"] !== undefined && { category: opts["category"] }),
         ...(limit !== undefined && { limit }),
       };
     }),
@@ -193,9 +193,9 @@ const LIST_COMMANDS = [
       { flags: "--limit <n>", description: "Limit rows after filtering" },
     ],
     action: buildListAction(readListChecks, formatListChecks, (opts) => {
-      const limit = parseListLimit(opts.limit);
+      const limit = parseListLimit(opts["limit"]);
       return {
-        ...(opts.session !== undefined && { session: opts.session }),
+        ...(opts["session"] !== undefined && { session: opts["session"] }),
         ...(limit !== undefined && { limit }),
       };
     }),
@@ -246,7 +246,7 @@ const checkCmd = program
   .option(
     "--max-attempts <n>",
     "Max refinement attempts before giving up",
-    process.env.VIBE_MAX_ATTEMPTS ?? "10",
+    process.env["VIBE_MAX_ATTEMPTS"] ?? "10",
   );
 addModelOptions(checkCmd);
 checkCmd.action(async (opts) => {
