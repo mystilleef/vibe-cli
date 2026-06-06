@@ -22,6 +22,7 @@ import {
   isLearningOverlapDuplicate,
   type LearningType,
   removeLearningEntriesForDemo,
+  removeStaleDemoEntries,
 } from "../src/utils/storage";
 import { requireBackupPath } from "./helpers/requireBackupPath";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
@@ -61,6 +62,53 @@ describe("addLearningEntry", () => {
     const found = summary.find((s) => s.category === "cat");
     expect(found?.count).toBe(2);
   });
+
+  test("returns entry with demoId when provided", () => {
+    const entry = addLearningEntry(
+      "demo observation",
+      "demo-cat",
+      undefined,
+      "mistake",
+      "demo-42",
+    );
+    expect(entry.demoId).toBe("demo-42");
+    expect(entry.category).toBe("demo-cat");
+    expect(entry.observation).toBe("demo observation");
+    // Verify persisted correctly
+    const grouped = getLearningEntries();
+    expect(grouped["demo-cat"]?.[0]?.demoId).toBe("demo-42");
+  });
+
+  test("returns entry with all five parameters", () => {
+    const entry = addLearningEntry(
+      "pref obs",
+      "prefs",
+      "pref solution",
+      "preference",
+      "demo-99",
+    );
+    expect(entry.type).toBe("preference");
+    expect(entry.solution).toBe("pref solution");
+    expect(entry.demoId).toBe("demo-99");
+    expect(entry.category).toBe("prefs");
+    expect(entry.observation).toBe("pref obs");
+    expect(typeof entry.timestamp).toBe("number");
+  });
+
+  test("persists empty string solution", () => {
+    const entry = addLearningEntry("empty sol", "empty-cat", "");
+    expect(entry.solution).toBe("");
+    // Verify persistence
+    const grouped = getLearningEntries();
+    expect(grouped["empty-cat"]?.[0]?.solution).toBe("");
+  });
+
+  test("excludes demoId and solution from return when not provided", () => {
+    const entry = addLearningEntry("minimal", "min");
+    expect(entry.demoId).toBeUndefined();
+    expect(entry.solution).toBeUndefined();
+    expect(Object.keys(entry)).not.toContain("demoId");
+  });
 });
 
 describe("getLearningEntries", () => {
@@ -75,6 +123,62 @@ describe("getLearningEntries", () => {
     const entries = getLearningEntries();
     expect(entries.a).toHaveLength(2);
     expect(entries.b).toHaveLength(1);
+  });
+
+  test("caps entries per category when maxPerCategory is set", () => {
+    addLearningEntry("e1", "limited");
+    addLearningEntry("e2", "limited");
+    addLearningEntry("e3", "limited");
+    addLearningEntry("e4", "limited");
+    const entries = getLearningEntries(2);
+    expect(entries.limited).toHaveLength(2);
+    // Most-recent entries: e3, e4 (highest timestamps)
+    const observations = entries.limited?.map((e) => e.observation);
+    expect(observations).toEqual(["e3", "e4"]);
+  });
+
+  test("returns all entries when maxPerCategory exceeds actual count", () => {
+    addLearningEntry("only", "sparse");
+    const entries = getLearningEntries(10);
+    expect(entries.sparse).toHaveLength(1);
+    expect(entries.sparse?.[0]?.observation).toBe("only");
+  });
+
+  test("applies per-category limit across multiple categories", () => {
+    addLearningEntry("a1", "cat-a");
+    addLearningEntry("a2", "cat-a");
+    addLearningEntry("a3", "cat-a");
+    addLearningEntry("b1", "cat-b");
+    addLearningEntry("b2", "cat-b");
+    const entries = getLearningEntries(2);
+    expect(entries["cat-a"]).toHaveLength(2);
+    expect(entries["cat-b"]).toHaveLength(2);
+  });
+
+  test("returns empty object when maxPerCategory is 0", () => {
+    addLearningEntry("e1", "zero-cat");
+    addLearningEntry("e2", "zero-cat");
+    addLearningEntry("e3", "other-cat");
+    const entries = getLearningEntries(0);
+    // WHERE rn <= 0 filters out all rows, so no categories appear
+    expect(entries).toEqual({});
+    // Uncap'd retrieval still returns all entries
+    expect(getLearningEntries()["zero-cat"]).toHaveLength(2);
+    expect(getLearningEntries()["other-cat"]).toHaveLength(1);
+  });
+
+  test("returns exactly one entry per category when maxPerCategory is 1", () => {
+    addLearningEntry("a1", "cat");
+    addLearningEntry("a2", "cat");
+    addLearningEntry("a3", "cat");
+    addLearningEntry("b1", "other");
+    addLearningEntry("b2", "other");
+    const entries = getLearningEntries(1);
+    expect(entries.cat).toHaveLength(1);
+    expect(entries.other).toHaveLength(1);
+    // Most-recent entry per category
+    expect(entries.cat?.[0]?.observation).toBe("a3");
+    expect(entries.other?.[0]?.observation).toBe("b2");
   });
 });
 
@@ -92,6 +196,19 @@ describe("getLearningCategorySummary", () => {
     expect(summary[0]?.count).toBe(2);
     expect(summary[0]?.recentExample.observation).toBe("z");
     expect(summary[1]?.category).toBe("low");
+  });
+
+  test("preserves insertion order for equal-count categories via stable sort", () => {
+    addLearningEntry("a1", "alpha");
+    addLearningEntry("b1", "beta");
+    addLearningEntry("a2", "alpha");
+    addLearningEntry("b2", "beta");
+    const summary = getLearningCategorySummary();
+    expect(summary).toHaveLength(2);
+    expect(summary[0]?.count).toBe(2);
+    expect(summary[1]?.count).toBe(2);
+    // Stable sort preserves Object.entries insertion order for equal elements
+    expect(summary.map((s) => s.category)).toEqual(["alpha", "beta"]);
   });
 });
 
@@ -1055,6 +1172,82 @@ describe("removeLearningEntriesForDemo", () => {
     expect(kept?.count).toBe(2);
     expect(kept?.recentExample.observation).toBe("new");
   });
+
+  test("no-ops when demoId does not match any entries", () => {
+    insertLearningRows([
+      { category: "safe", observation: "unrelated", timestamp: 100 },
+      {
+        category: "demo",
+        demoId: "demo-real",
+        observation: "demo entry",
+        timestamp: 200,
+      },
+    ]);
+
+    removeLearningEntriesForDemo("demo-nonexistent");
+
+    expect(getLearningEntries().safe).toHaveLength(1);
+    expect(getLearningEntries().demo).toHaveLength(1);
+  });
+});
+
+describe("removeStaleDemoEntries", () => {
+  test("removes all entries with non-null demo_id", () => {
+    insertLearningRows([
+      {
+        category: "d1",
+        demoId: "demo-a",
+        observation: "stale demo a",
+        timestamp: 10,
+      },
+      {
+        category: "d2",
+        demoId: "demo-b",
+        observation: "stale demo b",
+        timestamp: 20,
+      },
+      { category: "d2", observation: "non-demo", timestamp: 30 },
+    ]);
+
+    removeStaleDemoEntries();
+
+    const entries = getLearningEntries();
+    expect(entries.d1).toBeUndefined();
+    expect(entries.d2).toHaveLength(1);
+    expect(entries.d2?.[0]?.observation).toBe("non-demo");
+  });
+
+  test("no-ops when no demo-linked entries exist", () => {
+    insertLearningRows([
+      { category: "plain", observation: "only non-demo", timestamp: 10 },
+    ]);
+
+    removeStaleDemoEntries();
+
+    expect(getLearningEntries().plain).toHaveLength(1);
+    expect(getLearningEntries().plain?.[0]?.observation).toBe("only non-demo");
+  });
+
+  test("removes all entries when every entry has a demoId", () => {
+    insertLearningRows([
+      {
+        category: "all-demo",
+        demoId: "demo-x",
+        observation: "all stale",
+        timestamp: 10,
+      },
+      {
+        category: "all-demo",
+        demoId: "demo-x",
+        observation: "all stale 2",
+        timestamp: 20,
+      },
+    ]);
+
+    removeStaleDemoEntries();
+
+    expect(getLearningEntries()["all-demo"]).toBeUndefined();
+  });
 });
 
 describe("legacy log corruption recovery", () => {
@@ -1133,6 +1326,61 @@ describe("getLearningContextText", () => {
     expect(text).toContain("Category: beta");
     // Categories separated by blank line
     expect(text).toContain("\n\n");
+  });
+
+  test("returns empty string when maxPerCategory is 0", () => {
+    addLearningEntry("e1", "cat");
+    addLearningEntry("e2", "cat");
+    addLearningEntry("e3", "other");
+    // getLearningEntries(0) returns {} → no categories to format
+    const text = getLearningContextText(0);
+    expect(text).toBe("");
+  });
+
+  test("does not leak demoId into context text", () => {
+    addLearningEntry(
+      "demo entry",
+      "demo-cat",
+      "demo fix",
+      "mistake",
+      "demo-123",
+    );
+    const text = getLearningContextText();
+    expect(text).not.toContain("demo-123");
+    expect(text).toContain("[Mistake] demo entry");
+  });
+
+  test("omits Solution line when solution is empty string", () => {
+    addLearningEntry("empty", "sol-cat", "");
+    const text = getLearningContextText();
+    // Empty string is falsy; solution line is omitted
+    expect(text).not.toContain("Solution:");
+    expect(text).toContain("[Mistake] empty");
+  });
+
+  test("header count reflects total entries, not the capped amount", () => {
+    for (let i = 0; i < 7; i++) {
+      addLearningEntry(`e${i}`, "many");
+    }
+    const text = getLearningContextText(3);
+    // Header shows full category count (7) from separate COUNT query
+    expect(text).toContain("Category: many (count: 7)");
+    // Only 3 entry lines are rendered
+    const entryLines = (text.match(/- \[Mistake\]/g) ?? []).length;
+    expect(entryLines).toBe(3);
+  });
+
+  test("orders entries within a category by timestamp ascending", () => {
+    insertLearningRows([
+      { category: "order", observation: "third", timestamp: 300 },
+      { category: "order", observation: "first", timestamp: 100 },
+      { category: "order", observation: "second", timestamp: 200 },
+    ]);
+    const text = getLearningContextText();
+    const lines = text.split("\n").filter((l) => l.startsWith("- ["));
+    expect(lines[0]).toContain("first");
+    expect(lines[1]).toContain("second");
+    expect(lines[2]).toContain("third");
   });
 });
 
@@ -1242,7 +1490,7 @@ describe("createPruneDatabaseBackup", () => {
       reader.exec("ROLLBACK");
       reader.close();
     }
-  }, 8_000);
+  });
 });
 
 describe("collectPruneCandidates — overlapThreshold parameter", () => {
