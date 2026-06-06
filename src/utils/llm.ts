@@ -73,17 +73,24 @@ async function ensureOpenAI() {
   }
 }
 
+/** Priority-ordered provider detection entries: [{envVar, provider}, ...]. First env var set wins. */
+const PROVIDER_DETECTION_ORDER: Array<{ envVar: string; provider: string }> = [
+  { envVar: "ANTHROPIC_API_KEY", provider: "anthropic" },
+  { envVar: "ANTHROPIC_AUTH_TOKEN", provider: "anthropic" },
+  { envVar: "GEMINI_API_KEY", provider: "gemini" },
+  { envVar: "OPENAI_API_KEY", provider: "openai" },
+  { envVar: "OPENROUTER_API_KEY", provider: "openrouter" },
+  { envVar: "DEEPSEEK_API_KEY", provider: "deepseek" },
+  { envVar: "OPENCODE_API_KEY", provider: "opencode" },
+];
+
 /** Detect the active LLM provider from environment variables. Priority: DEFAULT_LLM_PROVIDER > ANTHROPIC > GEMINI > OPENAI > OPENROUTER > DEEPSEEK > OPENCODE > gemini (fallback). */
 export function detectProvider(): string {
   if (process.env.DEFAULT_LLM_PROVIDER) return process.env.DEFAULT_LLM_PROVIDER;
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN)
-    return "anthropic";
-  if (process.env.GEMINI_API_KEY) return "gemini";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  if (process.env.OPENROUTER_API_KEY) return "openrouter";
-  if (process.env.DEEPSEEK_API_KEY) return "deepseek";
-  if (process.env.OPENCODE_API_KEY) return "opencode";
-  return "gemini";
+  const entry = PROVIDER_DETECTION_ORDER.find(
+    ({ envVar }) => !!process.env[envVar as keyof typeof process.env],
+  );
+  return entry?.provider ?? "gemini";
 }
 
 /** Default model identifier for each supported provider. Empty string means the provider requires an explicit --model. */
@@ -142,20 +149,26 @@ function isRetryableGeminiError(err: unknown): boolean {
 
 async function callGemini(
   model: string,
-  combined: string,
+  systemPrompt: string,
+  userContent: string,
   temperature = 0.2,
 ): Promise<string> {
   await ensureGemini();
   if (!genAI) throw new Error("GEMINI_API_KEY not set.");
 
   const request = {
-    contents: [{ role: "user", parts: [{ text: combined }] }],
+    contents: [{ role: "user", parts: [{ text: userContent }] }],
     generationConfig: { temperature },
   };
 
   const client = genAI;
   const generate = (modelName: string) =>
-    client.getGenerativeModel({ model: modelName }).generateContent(request);
+    client
+      .getGenerativeModel({
+        model: modelName,
+        systemInstruction: systemPrompt,
+      })
+      .generateContent(request);
 
   try {
     return (await generate(model || "gemini-2.5-pro")).response.text();
@@ -167,25 +180,42 @@ async function callGemini(
   }
 }
 
+/** Build a standard chat completion messages array from system and user prompts. */
+function buildMessages(systemPrompt: string, userContent: string) {
+  return [
+    { role: "system" as const, content: systemPrompt },
+    { role: "user" as const, content: userContent },
+  ];
+}
+
+/** Extract the text content from an OpenAI-compatible chat completion response. */
+function extractContent(response: {
+  choices: Array<{ message: { content: string | null } }>;
+}): string {
+  return response.choices[0]?.message.content || "";
+}
+
 async function callOpenAI(
   model: string,
-  combined: string,
+  systemPrompt: string,
+  userContent: string,
   temperature?: number,
 ): Promise<string> {
   await ensureOpenAI();
   if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
   const res = await openaiClient.chat.completions.create({
     model: model || DEFAULT_MODELS.openai || "gpt-4o-mini",
-    messages: [{ role: "system", content: combined }],
+    messages: buildMessages(systemPrompt, userContent),
     ...(temperature !== undefined && { temperature }),
   });
-  return res.choices[0]?.message.content || "";
+  return extractContent(res);
 }
 
 /** Call the OpenRouter API via direct fetch. Requires an explicit --model. */
 async function callOpenRouter(
   model: string,
-  combined: string,
+  systemPrompt: string,
+  userContent: string,
   temperature?: number,
 ): Promise<string> {
   if (!process.env.OPENROUTER_API_KEY)
@@ -201,19 +231,45 @@ async function callOpenRouter(
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: "system", content: combined }],
+      messages: buildMessages(systemPrompt, userContent),
       ...(temperature !== undefined && { temperature }),
     }),
   });
   const data = (await res.json()) as {
-    choices: Array<{ message: { content: string } }>;
+    choices: Array<{ message: { content: string | null } }>;
   };
-  return data.choices[0]?.message.content || "";
+  return extractContent(data);
+}
+
+async function callOpenAICompat({
+  baseURL,
+  apiKey,
+  model,
+  systemPrompt,
+  userContent,
+  temperature,
+}: {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+}): Promise<string> {
+  const { OpenAI } = await import("openai");
+  const client = new OpenAI({ apiKey, baseURL });
+  const response = await client.chat.completions.create({
+    model,
+    messages: buildMessages(systemPrompt, userContent),
+    ...(temperature !== undefined && { temperature }),
+  });
+  return extractContent(response);
 }
 
 async function callDeepSeek(
   model: string,
-  combined: string,
+  systemPrompt: string,
+  userContent: string,
   temperature?: number,
 ): Promise<string> {
   if (!process.env.DEEPSEEK_API_KEY)
@@ -222,14 +278,16 @@ async function callDeepSeek(
     baseURL: DEEPSEEK_BASE_URL,
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: model || "deepseek-chat",
-    prompt: combined,
+    systemPrompt,
+    userContent,
     ...(temperature !== undefined && { temperature }),
   });
 }
 
 async function callOpenCode(
   model: string,
-  combined: string,
+  systemPrompt: string,
+  userContent: string,
   temperature?: number,
 ): Promise<string> {
   const apiKey = process.env.OPENCODE_API_KEY;
@@ -238,16 +296,40 @@ async function callOpenCode(
     baseURL: OPENCODE_GO_BASE_URL,
     apiKey,
     model: model || "kimi-k2.6",
-    prompt: combined,
+    systemPrompt,
+    userContent,
     ...(temperature !== undefined && { temperature }),
   });
 }
 
+/** Provider call function signature shared by all dispatchers. */
+type ProviderCallFn = (
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  temperature?: number,
+) => Promise<string>;
+
+/** Registry of provider call functions keyed by provider name. Add new providers here. */
+const PROVIDER_CALL_REGISTRY: Record<string, ProviderCallFn> = {
+  gemini: callGemini,
+  openai: callOpenAI,
+  openrouter: callOpenRouter,
+  deepseek: callDeepSeek,
+  opencode: callOpenCode,
+  anthropic: (model, systemPrompt, userContent, temperature) =>
+    callAnthropic({
+      model: model || DEFAULT_MODELS.anthropic || "claude-haiku-4-5-20251001",
+      systemPrompt,
+      compiledPrompt: userContent,
+      ...(temperature !== undefined && { temperature }),
+    }),
+};
+
 /**
  * Dispatch an LLM call to the resolved provider.
  *
- * Combines system and user prompts into a single string for providers that do not
- * separate them natively (all except Anthropic, which passes them independently).
+ * Passes system and user prompts as distinct arguments to every provider.
  * Throws on unknown provider names.
  */
 async function callProvider(
@@ -257,31 +339,13 @@ async function callProvider(
   userContent: string,
   temperature = 0.2,
 ): Promise<string> {
-  const combined = `${systemPrompt}\n\n${userContent}`;
-
-  switch (provider) {
-    case "gemini":
-      return callGemini(model, combined, temperature);
-    case "openai":
-      return callOpenAI(model, combined, temperature);
-    case "openrouter":
-      return callOpenRouter(model, combined, temperature);
-    case "deepseek":
-      return callDeepSeek(model, combined, temperature);
-    case "opencode":
-      return callOpenCode(model, combined, temperature);
-    case "anthropic":
-      return callAnthropic({
-        model: model || "claude-haiku-4-5-20251001",
-        systemPrompt,
-        compiledPrompt: userContent,
-        temperature,
-      });
-    default:
-      throw new Error(
-        `Unknown provider: ${provider}. Use gemini | openai | openrouter | anthropic | deepseek | opencode.`,
-      );
+  const fn = PROVIDER_CALL_REGISTRY[provider];
+  if (!fn) {
+    throw new Error(
+      `Unknown provider: ${provider}. Use ${Object.keys(PROVIDER_CALL_REGISTRY).join(" | ")}.`,
+    );
   }
+  return fn(model, systemPrompt, userContent, temperature);
 }
 
 /**
@@ -459,27 +523,4 @@ export async function getMentorFeedback(
   } catch {
     return { feedback: FALLBACK_FEEDBACK };
   }
-}
-
-async function callOpenAICompat({
-  baseURL,
-  apiKey,
-  model,
-  prompt,
-  temperature,
-}: {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  prompt: string;
-  temperature?: number;
-}): Promise<string> {
-  const { OpenAI } = await import("openai");
-  const client = new OpenAI({ apiKey, baseURL });
-  const response = await client.chat.completions.create({
-    model,
-    messages: [{ role: "system", content: prompt }],
-    ...(temperature !== undefined && { temperature }),
-  });
-  return response.choices[0]?.message.content || "";
 }

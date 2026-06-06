@@ -665,43 +665,44 @@ describe("provider success paths", () => {
     });
     const body = parseBody<OpenAiCompatRequest>(call0.init);
     expect(body.model).toBe("openrouter/model");
-    const content = body.messages[0]?.content ?? "";
-    expect(content).toContain("Goal: goal text");
-    expect(content).toContain("Plan: plan text");
-    expect(content).toContain("Progress: half done");
-    expect(content).toContain("Uncertainties: risk one, risk two");
-    expect(content).toContain("Task Context: task context");
-    expect(content).toContain("User Prompt: user prompt");
-    expect(content).toContain("History Context: history summary");
-    expect(content).toContain("Misalignment");
-    expect(content).toContain("Assumption lock-in");
-    expect(content).toContain("Learning patterns");
-    expect(content).toContain("Constitution");
-    expect(content).toContain("Irreversibility");
-    expect(content).toContain("adjacent");
-    expect(content).toContain("rollback");
-    expect(content).toContain("Hard risk");
-    expect(content).toContain("Soft risk");
-    expect(content).toContain("actionable");
-    expect(content).toContain("highest-weight");
-    expect(content).toContain("blast radius");
-    expect(content.indexOf("Goal: goal text")).toBeLessThan(
-      content.indexOf("Plan: plan text"),
+    const sysContent = body.messages[0]?.content ?? "";
+    const userContent = body.messages[1]?.content ?? "";
+    expect(userContent).toContain("Goal: goal text");
+    expect(userContent).toContain("Plan: plan text");
+    expect(userContent).toContain("Progress: half done");
+    expect(userContent).toContain("Uncertainties: risk one, risk two");
+    expect(userContent).toContain("Task Context: task context");
+    expect(userContent).toContain("User Prompt: user prompt");
+    expect(userContent).toContain("History Context: history summary");
+    expect(sysContent).toContain("Misalignment");
+    expect(sysContent).toContain("Assumption lock-in");
+    expect(sysContent).toContain("Learning patterns");
+    expect(sysContent).toContain("Constitution");
+    expect(sysContent).toContain("Irreversibility");
+    expect(sysContent).toContain("adjacent");
+    expect(sysContent).toContain("rollback");
+    expect(sysContent).toContain("Hard risk");
+    expect(sysContent).toContain("Soft risk");
+    expect(sysContent).toContain("actionable");
+    expect(sysContent).toContain("highest-weight");
+    expect(sysContent).toContain("blast radius");
+    expect(userContent.indexOf("Goal: goal text")).toBeLessThan(
+      userContent.indexOf("Plan: plan text"),
     );
-    expect(content.indexOf("Plan: plan text")).toBeLessThan(
-      content.indexOf("User Prompt: user prompt"),
+    expect(userContent.indexOf("Plan: plan text")).toBeLessThan(
+      userContent.indexOf("User Prompt: user prompt"),
     );
-    expect(content.indexOf("User Prompt: user prompt")).toBeLessThan(
-      content.indexOf("Progress: half done"),
+    expect(userContent.indexOf("User Prompt: user prompt")).toBeLessThan(
+      userContent.indexOf("Progress: half done"),
     );
-    expect(content.indexOf("Progress: half done")).toBeLessThan(
-      content.indexOf("Uncertainties: risk one, risk two"),
+    expect(userContent.indexOf("Progress: half done")).toBeLessThan(
+      userContent.indexOf("Uncertainties: risk one, risk two"),
     );
-    expect(content.indexOf("Uncertainties: risk one, risk two")).toBeLessThan(
-      content.indexOf("Task Context: task context"),
-    );
-    expect(content.indexOf("Task Context: task context")).toBeLessThan(
-      content.indexOf("History Context: history summary"),
+    expect(
+      userContent.indexOf("Uncertainties: risk one, risk two"),
+    ).toBeLessThan(userContent.indexOf("Task Context: task context"));
+    expect(userContent.indexOf("Task Context: task context")).toBeLessThan(
+      userContent.indexOf("History Context: history summary"),
     );
   });
 
@@ -749,15 +750,15 @@ describe("provider success paths", () => {
 
     const call0 = requireValue(fetchCalls[0], "fetch call 0");
     const body = parseBody<OpenAiCompatRequest>(call0.init);
-    const content = body.messages[0]?.content ?? "";
-    expect(content).toContain("Goal: goal text");
-    expect(content).toContain("Plan: plan text");
-    expect(content).not.toContain("None");
-    expect(content).not.toContain("User Prompt:");
-    expect(content).not.toContain("Progress:");
-    expect(content).not.toContain("Uncertainties:");
-    expect(content).not.toContain("Task Context:");
-    expect(content).not.toContain("History Context:");
+    const userContent = body.messages[1]?.content ?? "";
+    expect(userContent).toContain("Goal: goal text");
+    expect(userContent).toContain("Plan: plan text");
+    expect(userContent).not.toContain("None");
+    expect(userContent).not.toContain("User Prompt:");
+    expect(userContent).not.toContain("Progress:");
+    expect(userContent).not.toContain("Uncertainties:");
+    expect(userContent).not.toContain("Task Context:");
+    expect(userContent).not.toContain("History Context:");
   });
 
   test("getMentorFeedback includes constitution before history", async () => {
@@ -784,10 +785,10 @@ describe("provider success paths", () => {
 
       const call0 = requireValue(fetchCalls[0], "fetch call 0");
       const body = parseBody<OpenAiCompatRequest>(call0.init);
-      const content = body.messages[0]?.content ?? "";
-      expect(content).toContain("Constitution:\n- Follow session rule");
-      expect(content.indexOf("Constitution:")).toBeLessThan(
-        content.indexOf("History Context: history summary"),
+      const userContent = body.messages[1]?.content ?? "";
+      expect(userContent).toContain("Constitution:\n- Follow session rule");
+      expect(userContent.indexOf("Constitution:")).toBeLessThan(
+        userContent.indexOf("History Context: history summary"),
       );
     } finally {
       if (originalHome === undefined) delete process.env.HOME;
@@ -826,12 +827,21 @@ describe("provider success paths", () => {
 
     const call0 = requireValue(fetchCalls[0], "fetch call 0");
     const body = parseBody<OpenAiCompatRequest>(call0.init);
-    const content = body.messages[0]?.content ?? "";
-    expect(content).toContain("Output ONLY one line of valid JSON");
-    expect(content).toContain("0.5 = uncertain");
-    expect(content).toContain("≥0.8 = clear");
-    expect(content).toContain("feedback confirms sound");
-    expect(content).toContain("constitution violation");
+    // Verify system/user message separation
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[0]?.role).toBe("system");
+    const sysContent = body.messages[0]?.content ?? "";
+    expect(sysContent).toContain("Output ONLY one line of valid JSON");
+    expect(sysContent).toContain("0.5 = uncertain");
+    expect(sysContent).toContain("≥0.8 = clear");
+    expect(sysContent).toContain("feedback confirms sound");
+    expect(sysContent).toContain("constitution violation");
+    expect(sysContent).not.toContain("Goal: ship");
+    expect(body.messages[1]?.role).toBe("user");
+    const userContent = body.messages[1]?.content ?? "";
+    expect(userContent).toContain("Goal: ship");
+    expect(userContent).toContain("Plan: test first");
+    expect(userContent).toContain("Feedback: looks safe");
   });
 
   test("revisePlan omits block reason when provided as empty string", async () => {
@@ -858,6 +868,90 @@ describe("provider success paths", () => {
       "Safety feedback: missing rollback",
     );
     expect(body.messages[0]?.content).not.toContain("Block reason:");
+  });
+
+  test("revisePlan with OpenRouter sends system/user messages separately", async () => {
+    process.env.OPENROUTER_API_KEY = "or-key";
+    mockFetch(() =>
+      Response.json({
+        choices: [{ message: { content: "revised via openrouter" } }],
+      }),
+    );
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "openrouter", model: "openrouter/model" },
+    });
+
+    expect(result).toBe("revised via openrouter");
+    const call0 = requireValue(fetchCalls[0], "fetch call 0");
+    expect(call0.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    const body = parseBody<OpenAiCompatRequest>(call0.init);
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[0]?.role).toBe("system");
+    expect(body.messages[0]?.content).toContain("plan reviser");
+    expect(body.messages[0]?.content).toContain("preserve everything else");
+    expect(body.messages[1]?.role).toBe("user");
+    expect(body.messages[1]?.content).toContain("Blocked plan: old plan");
+    expect(body.messages[1]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
+  });
+
+  test("revisePlan with DeepSeek sends system/user messages separately", async () => {
+    process.env.DEEPSEEK_API_KEY = "ds-key";
+    openAiResponseText = "deepseek revised";
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "deepseek" },
+    });
+
+    expect(result).toBe("deepseek revised");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("plan reviser");
+    expect(req0.request.messages[0]?.content).toContain(
+      "Prioritize goal alignment",
+    );
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain(
+      "Blocked plan: old plan",
+    );
+    expect(req0.request.messages[1]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
+  });
+
+  test("revisePlan with OpenCode sends system/user messages separately", async () => {
+    process.env.OPENCODE_API_KEY = "oc-key";
+    openAiResponseText = "opencode revised";
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "opencode" },
+    });
+
+    expect(result).toBe("opencode revised");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("plan reviser");
+    expect(req0.request.messages[0]?.content).toContain("resolve the concern");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain(
+      "Blocked plan: old plan",
+    );
+    expect(req0.request.messages[1]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
   });
 
   test("revisePlan propagates provider resolution errors", async () => {
@@ -957,6 +1051,13 @@ describe("provider success paths", () => {
       baseURL: "https://api.deepseek.com/v1",
     });
     expect(dsReq0.request.model).toBe(defaultModel("deepseek"));
+    // Verify system/user message separation
+    expect(dsReq0.request.messages).toHaveLength(2);
+    expect(dsReq0.request.messages[0]?.role).toBe("system");
+    expect(dsReq0.request.messages[0]?.content).toContain("Misalignment");
+    expect(dsReq0.request.messages[1]?.role).toBe("user");
+    expect(dsReq0.request.messages[1]?.content).toContain("Goal: goal");
+    expect(dsReq0.request.messages[1]?.content).toContain("Plan: plan");
   });
 
   test("OpenCode uses the OpenAI-compatible client", async () => {
@@ -975,6 +1076,12 @@ describe("provider success paths", () => {
       baseURL: "https://opencode.ai/zen/go/v1",
     });
     expect(ocReq0.request.model).toBe(defaultModel("opencode"));
+    // Verify system/user message separation
+    expect(ocReq0.request.messages).toHaveLength(2);
+    expect(ocReq0.request.messages[0]?.role).toBe("system");
+    expect(ocReq0.request.messages[0]?.content).toContain("blast radius");
+    expect(ocReq0.request.messages[1]?.role).toBe("user");
+    expect(ocReq0.request.messages[1]?.content).toContain("Goal: goal");
   });
 
   test("verifyConnection returns ok response with latency and preview", async () => {
@@ -1009,6 +1116,13 @@ describe("provider success paths", () => {
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(req0.options).toEqual({ apiKey: "openai-key" });
     expect(req0.request.model).toBe("gpt-test");
+    // Verify system/user message separation
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("Assumption lock-in");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: goal");
+    expect(req0.request.messages[1]?.content).toContain("Plan: plan");
   });
 });
 
@@ -1231,6 +1345,7 @@ describe("callGemini fallback to flash model", () => {
   let geminiCalls: Array<{
     model: string;
     prompt: string;
+    systemInstruction?: string;
     generationConfig?: { temperature?: number };
   }> = [];
   let geminiResponses: string[] = [];
@@ -1238,7 +1353,13 @@ describe("callGemini fallback to flash model", () => {
   let geminiErrorMessages: Array<string | undefined> = [];
 
   const mockGenAI = {
-    getGenerativeModel: ({ model }: { model: string }) => ({
+    getGenerativeModel: ({
+      model,
+      systemInstruction,
+    }: {
+      model: string;
+      systemInstruction?: string;
+    }) => ({
       generateContent: async (
         input:
           | string
@@ -1249,9 +1370,18 @@ describe("callGemini fallback to flash model", () => {
         const generationConfig =
           typeof input === "object" ? input.generationConfig : undefined;
         if (generationConfig !== undefined) {
-          geminiCalls.push({ model, prompt, generationConfig });
+          geminiCalls.push({
+            model,
+            prompt,
+            ...(systemInstruction !== undefined && { systemInstruction }),
+            generationConfig,
+          });
         } else {
-          geminiCalls.push({ model, prompt });
+          geminiCalls.push({
+            model,
+            prompt,
+            ...(systemInstruction !== undefined && { systemInstruction }),
+          });
         }
         const customError = geminiErrorMessages[geminiCalls.length - 1];
         if (customError !== undefined) {
@@ -1492,6 +1622,166 @@ describe("callGemini fallback to flash model", () => {
     // would send the prompt as a raw string).
     expect(geminiCalls[0]?.generationConfig).toBeDefined();
   });
+
+  test("systemInstruction receives system prompt, userContent in contents", async () => {
+    geminiResponses = ["ok"];
+
+    await getMentorFeedback({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(geminiCalls).toHaveLength(1);
+    expect(geminiCalls[0]?.systemInstruction).toBeDefined();
+    expect(geminiCalls[0]?.systemInstruction).toContain("Misalignment");
+    expect(geminiCalls[0]?.systemInstruction).toContain("Assumption lock-in");
+    expect(geminiCalls[0]?.systemInstruction).toContain("Constitution");
+    expect(geminiCalls[0]?.systemInstruction).toContain("Irreversibility");
+    expect(geminiCalls[0]?.systemInstruction).toContain("blast radius");
+    expect(geminiCalls[0]?.systemInstruction).toContain("Hard risk");
+    expect(geminiCalls[0]?.systemInstruction).toContain("Soft risk");
+    expect(geminiCalls[0]?.systemInstruction).toContain("actionable");
+    // systemInstruction must NOT contain user-specific context
+    expect(geminiCalls[0]?.systemInstruction).not.toContain("Goal: g");
+    expect(geminiCalls[0]?.systemInstruction).not.toContain("Plan: p");
+    // userContent (prompt) contains user context
+    expect(geminiCalls[0]?.prompt).toContain("Goal: g");
+    expect(geminiCalls[0]?.prompt).toContain("Plan: p");
+  });
+
+  test("systemInstruction for gate decision uses GATE_SYSTEM_PROMPT", async () => {
+    geminiResponses = [
+      JSON.stringify({ proceed: true, confidence: 0.9, reason: "ok" }),
+    ];
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(geminiCalls[0]?.systemInstruction).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(geminiCalls[0]?.systemInstruction).toContain("Go/no-go");
+    // GATE prompt must NOT contain "blast radius" (that's in SYSTEM_PROMPT)
+    expect(geminiCalls[0]?.systemInstruction).not.toContain("blast radius");
+  });
+
+  test("systemInstruction carried to flash fallback in getMentorFeedback", async () => {
+    geminiErrorMessages = ["model not found", undefined];
+    geminiResponses = ["flash response"];
+
+    await getMentorFeedback({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(geminiCalls).toHaveLength(2);
+    // Both pro and flash calls should receive systemInstruction
+    expect(geminiCalls[0]?.systemInstruction).toBeDefined();
+    expect(geminiCalls[0]?.systemInstruction).toContain("Misalignment");
+    expect(geminiCalls[1]?.systemInstruction).toBeDefined();
+    expect(geminiCalls[1]?.systemInstruction).toContain("Misalignment");
+    expect(geminiCalls[1]?.systemInstruction).not.toContain("Goal: g");
+  });
+
+  test("systemInstruction carried to flash fallback in getGateDecision", async () => {
+    geminiErrorMessages = ["not found", undefined];
+    geminiResponses = [
+      JSON.stringify({ proceed: true, confidence: 0.9, reason: "ok" }),
+    ];
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(geminiCalls).toHaveLength(2);
+    // Both pro and flash calls should use GATE_SYSTEM_PROMPT
+    expect(geminiCalls[0]?.systemInstruction).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(geminiCalls[1]?.systemInstruction).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(geminiCalls[1]?.systemInstruction).not.toContain("blast radius");
+  });
+
+  test("revisePlan with gemini passes PLAN_REVISION_SYSTEM_PROMPT as systemInstruction", async () => {
+    geminiResponses = ["revised"];
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result).toBe("revised");
+    expect(geminiCalls).toHaveLength(1);
+    expect(geminiCalls[0]?.systemInstruction).toContain("plan reviser");
+    expect(geminiCalls[0]?.systemInstruction).toContain(
+      "preserve everything else",
+    );
+    expect(geminiCalls[0]?.systemInstruction).toContain(
+      "Prioritize goal alignment",
+    );
+    expect(geminiCalls[0]?.prompt).toContain("Blocked plan: old plan");
+    expect(geminiCalls[0]?.prompt).toContain(
+      "Safety feedback: missing rollback",
+    );
+  });
+
+  test("revisePlan with gemini includes blockReason in user content", async () => {
+    geminiResponses = ["revised with reason"];
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      blockReason: "irreversible op without safe-stop",
+      modelOverride: { provider: "gemini", model: "gemini-2.5-pro" },
+    });
+
+    expect(result).toBe("revised with reason");
+    expect(geminiCalls[0]?.prompt).toContain(
+      "Block reason: irreversible op without safe-stop",
+    );
+  });
+
+  test("revisePlan with OpenAI passes PLAN_REVISION_SYSTEM_PROMPT as system message", async () => {
+    process.env.OPENAI_API_KEY = "openai-key";
+    openAiResponseText = "openai revised";
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "openai", model: "gpt-test" },
+    });
+
+    expect(result).toBe("openai revised");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("plan reviser");
+    expect(req0.request.messages[0]?.content).toContain(
+      "preserve everything else",
+    );
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain(
+      "Blocked plan: old plan",
+    );
+    expect(req0.request.messages[1]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1499,7 +1789,7 @@ describe("callGemini fallback to flash model", () => {
 // ---------------------------------------------------------------------------
 
 describe("temperature forwarding", () => {
-  test("OpenAI receives temperature in request body", async () => {
+  test("OpenAI receives temperature and separate system/user messages in gate decision", async () => {
     process.env.OPENAI_API_KEY = "openai-key";
 
     await getGateDecision({
@@ -1511,9 +1801,20 @@ describe("temperature forwarding", () => {
 
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(req0.request.temperature).toBe(0.1);
+    // Verify system/user message separation
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(req0.request.messages[0]?.content).not.toContain("Goal: g");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: g");
+    expect(req0.request.messages[1]?.content).toContain("Plan: p");
+    expect(req0.request.messages[1]?.content).toContain("Feedback: f");
   });
 
-  test("DeepSeek receives temperature in request body", async () => {
+  test("DeepSeek receives temperature and separate system/user messages in gate decision", async () => {
     process.env.DEEPSEEK_API_KEY = "ds-key";
 
     await getGateDecision({
@@ -1525,9 +1826,20 @@ describe("temperature forwarding", () => {
 
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(req0.request.temperature).toBe(0.1);
+    // Verify system/user message separation
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(req0.request.messages[0]?.content).not.toContain("Goal: g");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: g");
+    expect(req0.request.messages[1]?.content).toContain("Plan: p");
+    expect(req0.request.messages[1]?.content).toContain("Feedback: f");
   });
 
-  test("OpenCode receives temperature in request body", async () => {
+  test("OpenCode receives temperature and separate system/user messages in gate decision", async () => {
     process.env.OPENCODE_API_KEY = "oc-key";
 
     await getGateDecision({
@@ -1539,6 +1851,17 @@ describe("temperature forwarding", () => {
 
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(req0.request.temperature).toBe(0.1);
+    // Verify system/user message separation
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(req0.request.messages[0]?.content).not.toContain("Goal: g");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: g");
+    expect(req0.request.messages[1]?.content).toContain("Plan: p");
+    expect(req0.request.messages[1]?.content).toContain("Feedback: f");
   });
 
   test("OpenAI defaults temperature to 0.2 via callProvider", async () => {
