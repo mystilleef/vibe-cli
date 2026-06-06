@@ -77,6 +77,9 @@ function assertOpenSideEffects(handle: VibeDatabase): void {
   const journalMode = handle.db.query("PRAGMA journal_mode").get() as {
     journal_mode: string;
   };
+  const busyTimeout = handle.db.query("PRAGMA busy_timeout").get() as {
+    timeout: number;
+  };
   const legacyImportsTable = handle.db
     .query(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'legacy_imports'",
@@ -84,6 +87,7 @@ function assertOpenSideEffects(handle: VibeDatabase): void {
     .get() as { name: string } | null;
 
   expect(journalMode.journal_mode).toBe("wal");
+  expect(busyTimeout.timeout).toBe(5000);
   expect(legacyImportsTable).toEqual({ name: "legacy_imports" });
 }
 
