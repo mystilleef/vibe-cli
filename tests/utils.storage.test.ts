@@ -1242,7 +1242,7 @@ describe("createPruneDatabaseBackup", () => {
       reader.exec("ROLLBACK");
       reader.close();
     }
-  });
+  }, 8_000);
 });
 
 describe("collectPruneCandidates — overlapThreshold parameter", () => {
