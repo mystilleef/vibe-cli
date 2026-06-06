@@ -66,6 +66,8 @@ Skip trivial, reversible, single-step plans.
 
 - Check before execution, not after.
 - Keep validation payloads concise but sufficiently grounded.
+- Fully form each revised plan before resubmitting — no incremental or
+  speculative calls.
 - Continue revision loops only while the mentor returns actionable next
   steps.
 
@@ -82,6 +84,12 @@ Skip trivial, reversible, single-step plans.
 - Abort rather than guessing when the mentor exhausts attempts.
 - Never pass file paths, URLs, or references to `--context`; the mentor
   can't read or resolve them.
+- `vibe check` has blocking semantics — wait for it to return before
+  any further action; never treat it as a polling mechanism.
+- One call per decision point, hard limit — never invoke again for the
+  same goal/plan pair, whether pending or already returned.
+- Never retry a slow or pending call — wait; each call consumes quota,
+  tokens, and budget.
 
 ## Verification
 
