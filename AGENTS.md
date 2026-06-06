@@ -28,8 +28,8 @@
 ### Testing rules
 
 - Before writing tests, read relevant `bun` testing guides, on demand,
-  in `./docs/bun`. The agent file in that folder indexes what each guide
-  documents.
+  in `./docs/bun/testing`. The agent file in that folder indexes what
+  each guide documents.
 
 ## Gotchas
 
