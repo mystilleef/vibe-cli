@@ -27,6 +27,7 @@ const PROVIDER_KEYS = [
   "OPENROUTER_API_KEY",
   "DEEPSEEK_API_KEY",
   "OPENCODE_API_KEY",
+  "MIMO_API_KEY",
   "DEFAULT_MODEL",
   "USE_LEARNING_HISTORY",
 ] as const;
@@ -176,6 +177,11 @@ describe("detectProvider", () => {
     expect(detectProvider()).toBe("opencode");
   });
 
+  test("mimo wins when only MIMO_API_KEY set", () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+    expect(detectProvider()).toBe("mimo");
+  });
+
   test("falls back to gemini when no keys are set", () => {
     expect(detectProvider()).toBe("gemini");
   });
@@ -194,6 +200,7 @@ describe("DEFAULT_MODELS", () => {
       "openrouter",
       "deepseek",
       "opencode",
+      "mimo",
     ]) {
       expect(provider in DEFAULT_MODELS).toBe(true);
     }
@@ -528,6 +535,14 @@ describe("callProvider error paths via verifyConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.provider).toBe("opencode");
     expect(result.error).toMatch(/OPENCODE_API_KEY/);
+  });
+
+  test("mimo missing API key returns structured error", async () => {
+    process.env.DEFAULT_LLM_PROVIDER = "mimo";
+    const result = await verifyConnection();
+    expect(result.ok).toBe(false);
+    expect(result.provider).toBe("mimo");
+    expect(result.error).toMatch(/MIMO_API_KEY/);
   });
 
   test("anthropic missing API key returns structured error", async () => {
@@ -1082,6 +1097,71 @@ describe("provider success paths", () => {
     expect(ocReq0.request.messages[0]?.content).toContain("blast radius");
     expect(ocReq0.request.messages[1]?.role).toBe("user");
     expect(ocReq0.request.messages[1]?.content).toContain("Goal: goal");
+  });
+
+  test("Mimo uses the OpenAI-compatible client with correct baseURL", async () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+
+    const result = await getMentorFeedback({
+      goal: "goal",
+      plan: "plan",
+      modelOverride: { provider: "mimo" },
+    });
+
+    expect(result.feedback).toBe("mock provider response");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.options).toEqual({
+      apiKey: "mimo-key",
+      baseURL: "https://api.xiaomimimo.com/v1",
+    });
+    expect(req0.request.model).toBe(defaultModel("mimo"));
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("blast radius");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: goal");
+    expect(req0.request.messages[1]?.content).toContain("Plan: plan");
+  });
+
+  test("Mimo uses explicit model override", async () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+    openAiResponseText = "mimo flash response";
+
+    const result = await getMentorFeedback({
+      goal: "goal",
+      plan: "plan",
+      modelOverride: { provider: "mimo", model: "mimo-v2-flash" },
+    });
+
+    expect(result.feedback).toBe("mimo flash response");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.model).toBe("mimo-v2-flash");
+  });
+
+  test("revisePlan with Mimo sends system/user messages separately", async () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+    openAiResponseText = "mimo revised";
+
+    const result = await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "mimo" },
+    });
+
+    expect(result).toBe("mimo revised");
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain("plan reviser");
+    expect(req0.request.messages[0]?.content).toContain("resolve the concern");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain(
+      "Blocked plan: old plan",
+    );
+    expect(req0.request.messages[1]?.content).toContain(
+      "Safety feedback: missing rollback",
+    );
   });
 
   test("verifyConnection returns ok response with latency and preview", async () => {
@@ -1872,6 +1952,44 @@ describe("temperature forwarding", () => {
       goal: "g",
       plan: "p",
       modelOverride: { provider: "openai" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.2);
+  });
+
+  test("Mimo receives temperature 0.1 in gate decision", async () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+
+    await getGateDecision({
+      goal: "g",
+      plan: "p",
+      feedback: "f",
+      modelOverride: { provider: "mimo" },
+    });
+
+    const req0 = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(req0.request.temperature).toBe(0.1);
+    expect(req0.request.messages).toHaveLength(2);
+    expect(req0.request.messages[0]?.role).toBe("system");
+    expect(req0.request.messages[0]?.content).toContain(
+      "Output ONLY one line of valid JSON",
+    );
+    expect(req0.request.messages[0]?.content).not.toContain("Goal: g");
+    expect(req0.request.messages[1]?.role).toBe("user");
+    expect(req0.request.messages[1]?.content).toContain("Goal: g");
+    expect(req0.request.messages[1]?.content).toContain("Plan: p");
+    expect(req0.request.messages[1]?.content).toContain("Feedback: f");
+  });
+
+  test("Mimo defaults temperature to 0.2 in mentor feedback", async () => {
+    process.env.MIMO_API_KEY = "mimo-key";
+    openAiResponseText = "ok";
+
+    await getMentorFeedback({
+      goal: "g",
+      plan: "p",
+      modelOverride: { provider: "mimo" },
     });
 
     const req0 = requireValue(openAiRequests[0], "OpenAI request 0");

@@ -15,6 +15,7 @@ let openaiClient: OpenAI | null = null;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+const MIMO_BASE_URL = "https://api.xiaomimimo.com/v1";
 
 /** System prompt injected into every mentor feedback generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
@@ -82,6 +83,7 @@ const PROVIDER_DETECTION_ORDER: Array<{ envVar: string; provider: string }> = [
   { envVar: "OPENROUTER_API_KEY", provider: "openrouter" },
   { envVar: "DEEPSEEK_API_KEY", provider: "deepseek" },
   { envVar: "OPENCODE_API_KEY", provider: "opencode" },
+  { envVar: "MIMO_API_KEY", provider: "mimo" },
 ];
 
 /** Detect the active LLM provider from environment variables. Priority: DEFAULT_LLM_PROVIDER > ANTHROPIC > GEMINI > OPENAI > OPENROUTER > DEEPSEEK > OPENCODE > gemini (fallback). */
@@ -101,6 +103,7 @@ export const DEFAULT_MODELS: Record<string, string> = {
   openrouter: "",
   deepseek: "deepseek-v4-pro",
   opencode: "kimi-k2.6",
+  mimo: "mimo-v2.5-pro",
 };
 
 /**
@@ -284,6 +287,24 @@ async function callDeepSeek(
   });
 }
 
+async function callMimo(
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  temperature?: number,
+): Promise<string> {
+  const apiKey = process.env.MIMO_API_KEY;
+  if (!apiKey) throw new Error("MIMO_API_KEY not set.");
+  return callOpenAICompat({
+    baseURL: MIMO_BASE_URL,
+    apiKey,
+    model: model || "mimo-v2.5-pro",
+    systemPrompt,
+    userContent,
+    ...(temperature !== undefined && { temperature }),
+  });
+}
+
 async function callOpenCode(
   model: string,
   systemPrompt: string,
@@ -317,6 +338,7 @@ const PROVIDER_CALL_REGISTRY: Record<string, ProviderCallFn> = {
   openrouter: callOpenRouter,
   deepseek: callDeepSeek,
   opencode: callOpenCode,
+  mimo: callMimo,
   anthropic: (model, systemPrompt, userContent, temperature) =>
     callAnthropic({
       model: model || DEFAULT_MODELS.anthropic || "claude-haiku-4-5-20251001",
