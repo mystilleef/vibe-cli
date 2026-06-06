@@ -2101,4 +2101,165 @@ describe("CLI autosession surface", () => {
     expect(captured).not.toHaveProperty("learnings");
     expect(captured).not.toHaveProperty("sessions");
   });
+
+  test("prune rejects non-numeric --age via CLI fatal", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune", "--learnings", "--age", "abc"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain("--age must be a valid integer");
+  });
+
+  test("prune rejects non-numeric --overlap via CLI fatal", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(["prune", "--duplicates", "--overlap", "abc"], {
+      home: home.home,
+    });
+    const payload = JSON.parse(result.stderr) as { error: string };
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(payload.error).toContain(
+      "--overlap must be a valid number between 0 and 1",
+    );
+  });
+
+  test("learn --type preference succeeds without --solution", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      [
+        "learn",
+        "--observation",
+        "Prefer small incremental deploys.",
+        "--category",
+        "deployment",
+        "--type",
+        "preference",
+      ],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      added: boolean;
+      alreadyKnown: boolean;
+      categoryCount: number;
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      added: true,
+      alreadyKnown: false,
+      categoryCount: 1,
+    });
+  });
+
+  test("learn --type success without --solution emits validation failure", async () => {
+    const home = await useTempHome();
+
+    const result = runCli(
+      [
+        "learn",
+        "--observation",
+        "Safe rollback pattern.",
+        "--category",
+        "safety",
+        "--type",
+        "success",
+      ],
+      { home: home.home },
+    );
+    const payload = JSON.parse(result.stdout) as {
+      added: boolean;
+      alreadyKnown: boolean;
+      categoryCount: number;
+      topCategories: unknown[];
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      "--solution is required for mistake and success types",
+    );
+    expect(payload).toEqual({
+      added: false,
+      alreadyKnown: false,
+      categoryCount: 0,
+      topCategories: [],
+    });
+  });
+
+  test("constitution reset --rule replaces existing rules", async () => {
+    const home = await useTempHome();
+    const cwd = await createCwd();
+
+    const initial = runCli(
+      ["constitution", "set", "--rule", "Rule A", "Rule B"],
+      { cwd, home: home.home },
+    );
+    const initialPayload = JSON.parse(initial.stdout) as { rules: string[] };
+    expect(initialPayload.rules).toEqual(["Rule A", "Rule B"]);
+
+    const replaced = runCli(["constitution", "reset", "--rule", "Rule C"], {
+      cwd,
+      home: home.home,
+    });
+    const replacedPayload = JSON.parse(replaced.stdout) as {
+      session: string;
+      rules: string[];
+    };
+
+    expect(replaced.exitCode).toBe(0);
+    expect(replaced.stderr).toBe("");
+    expect(replacedPayload.rules).toEqual(["Rule C"]);
+
+    const get = runCli(["constitution", "get"], { cwd, home: home.home });
+    const getPayload = JSON.parse(get.stdout) as { rules: string[] };
+    expect(getPayload.rules).toEqual(["Rule C"]);
+  });
+
+  test("check with --model only resolves model override without provider", async () => {
+    const { result, payload } = await runVibeCheck(["--model", "mock-claude"], {
+      VIBE_TEST_ANTHROPIC_MODE: "proceed",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(payload).toMatchObject({
+      proceed: true,
+      confidence: 0.91,
+      attempts: 1,
+    });
+  });
+
+  test("demo command runs walkthrough with mocked LLM and exits cleanly", async () => {
+    const home = await useTempHome();
+    const cwd = await createCwd();
+
+    const result = runCli(
+      ["demo", "--provider", "anthropic", "--model", "mock-claude"],
+      {
+        cwd,
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "proceed",
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("vibe demo");
+    expect(result.stdout).toContain("Demo complete");
+    expect(result.stdout).toContain("constitution");
+    expect(result.stdout).toContain("vibe check");
+  });
 });
