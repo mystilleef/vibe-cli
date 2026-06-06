@@ -520,9 +520,11 @@ export function createPruneDatabaseBackup({
       throw new Error("cannot back up an in-memory database");
     }
 
+    handle.db.exec("PRAGMA busy_timeout = 0");
     const checkpoint = handle.db
       .query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)")
       .get();
+    handle.db.exec("PRAGMA busy_timeout = 5000");
     if ((checkpoint?.busy ?? 1) !== 0) {
       throw new Error("database checkpoint could not complete before backup");
     }
