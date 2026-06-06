@@ -12,7 +12,8 @@
   - `OPENROUTER_API_KEY`,
   - `ANTHROPIC_API_KEY`,
   - `DEEPSEEK_API_KEY`,
-  - `OPENCODE_API_KEY` (requires at least one provider key)
+  - `OPENCODE_API_KEY`,
+  - `MIMO_API_KEY` (requires at least one provider key)
 
 ## Workflow
 
