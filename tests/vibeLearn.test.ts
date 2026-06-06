@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { type VibeLearnInput, vibeLearnTool } from "../src/tools/vibeLearn";
 import {
   addLearningEntry,
@@ -8,15 +16,13 @@ import {
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext | undefined;
-const originalConsoleError = console.error;
-
 beforeEach(async () => {
   home = await createTempHome();
-  console.error = () => {};
+  spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(async () => {
-  console.error = originalConsoleError;
+  mock.restore();
   if (home) await home.cleanup();
   home = undefined;
 });

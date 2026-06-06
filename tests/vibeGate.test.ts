@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +27,6 @@ interface AnthropicBody {
 let home: TempHomeContext | undefined;
 let cwd: string | undefined;
 let originalFetch: typeof fetch;
-let originalConsoleError: typeof console.error;
 let savedEnv: Partial<Record<string, string | undefined>>;
 const requests: AnthropicBody[] = [];
 const responseQueue: Array<string | { status: number; text: string }> = [];
@@ -63,7 +70,6 @@ function gateDecision(proceed: boolean, confidence: number, reason: string) {
 
 beforeEach(async () => {
   originalFetch = globalThis.fetch;
-  originalConsoleError = console.error;
   savedEnv = {
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     DEFAULT_LLM_PROVIDER: process.env.DEFAULT_LLM_PROVIDER,
@@ -75,7 +81,7 @@ beforeEach(async () => {
   process.chdir(cwd);
   requests.length = 0;
   responseQueue.length = 0;
-  console.error = () => {};
+  spyOn(console, "error").mockImplementation(() => {});
   configureAnthropicEnv();
   installAnthropicFetch();
 });
@@ -83,7 +89,7 @@ beforeEach(async () => {
 afterEach(async () => {
   process.chdir(import.meta.dir.replace(/\/tests$/, ""));
   globalThis.fetch = originalFetch;
-  console.error = originalConsoleError;
+  mock.restore();
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;

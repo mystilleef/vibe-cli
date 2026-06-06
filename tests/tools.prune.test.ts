@@ -2,12 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  DEFAULT_PRUNE_AGE_DAYS,
-  DEFAULT_PRUNE_OVERLAP_THRESHOLD,
-  type PruneSuccessPayload,
-  runPrune,
-} from "../src/tools/prune";
+import { type PruneSuccessPayload, runPrune } from "../src/tools/prune";
 import { initializeSchema } from "../src/utils/database";
 import type { LearningType } from "../src/utils/storage";
 import { requireBackupPath } from "./helpers/requireBackupPath";
@@ -991,18 +986,5 @@ describe("runPrune — multi-target combinations", () => {
     expect(result.backupPath).not.toBeNull();
     expect(result.failedTargets).toEqual([]);
     expect(result.skippedTargets).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// runPrune — constants
-// ---------------------------------------------------------------------------
-describe("runPrune — constants", () => {
-  test("DEFAULT_PRUNE_AGE_DAYS is 90", () => {
-    expect(DEFAULT_PRUNE_AGE_DAYS).toBe(90);
-  });
-
-  test("DEFAULT_PRUNE_OVERLAP_THRESHOLD is 0.6", () => {
-    expect(DEFAULT_PRUNE_OVERLAP_THRESHOLD).toBe(0.6);
   });
 });

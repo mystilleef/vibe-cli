@@ -73,6 +73,65 @@ class MockOpenAI {
 
 mock.module("openai", () => ({ OpenAI: MockOpenAI }));
 
+let geminiCalls: Array<{
+  model: string;
+  prompt: string;
+  systemInstruction?: string;
+  generationConfig?: { temperature?: number };
+}> = [];
+let geminiResponses: string[] = [];
+let throwOnCall: number | undefined;
+let geminiErrorMessages: Array<string | undefined> = [];
+
+const mockGenAI = {
+  getGenerativeModel: ({
+    model,
+    systemInstruction,
+  }: {
+    model: string;
+    systemInstruction?: string;
+  }) => ({
+    generateContent: async (
+      input:
+        | string
+        | { contents: unknown; generationConfig?: { temperature?: number } },
+    ) => {
+      const prompt =
+        typeof input === "string" ? input : JSON.stringify(input.contents);
+      const generationConfig =
+        typeof input === "object" ? input.generationConfig : undefined;
+      if (generationConfig !== undefined) {
+        geminiCalls.push({
+          model,
+          prompt,
+          ...(systemInstruction !== undefined && { systemInstruction }),
+          generationConfig,
+        });
+      } else {
+        geminiCalls.push({
+          model,
+          prompt,
+          ...(systemInstruction !== undefined && { systemInstruction }),
+        });
+      }
+      const customError = geminiErrorMessages[geminiCalls.length - 1];
+      if (customError !== undefined) {
+        throw new Error(customError);
+      }
+      if (geminiCalls.length === throwOnCall) {
+        throw new Error("simulated gemini failure");
+      }
+      return { response: { text: () => geminiResponses.shift() ?? "" } };
+    },
+  }),
+};
+
+mock.module("@google/generative-ai", () => ({
+  GoogleGenerativeAI: class {
+    getGenerativeModel = mockGenAI.getGenerativeModel;
+  },
+}));
+
 interface FetchCall {
   url: string;
   init: RequestInit;
@@ -776,11 +835,23 @@ describe("provider success paths", () => {
     expect(userContent).not.toContain("History Context:");
   });
 
-  test("getMentorFeedback includes constitution before history", async () => {
-    const originalHome = process.env.HOME;
-    const tempHome = mkdtempSync(path.join(tmpdir(), "vibe-llm-test-"));
-    try {
+  describe("getMentorFeedback includes constitution before history", () => {
+    let tempHome: string;
+    let savedHome: string | undefined;
+
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      tempHome = mkdtempSync(path.join(tmpdir(), "vibe-llm-test-"));
       process.env.HOME = tempHome;
+    });
+
+    afterEach(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    });
+
+    test("includes constitution before history", async () => {
       resetConstitution(["Follow session rule"]);
       process.env.DEFAULT_LLM_PROVIDER = "openrouter";
       process.env.OPENROUTER_API_KEY = "or-key";
@@ -805,11 +876,7 @@ describe("provider success paths", () => {
       expect(userContent.indexOf("Constitution:")).toBeLessThan(
         userContent.indexOf("History Context: history summary"),
       );
-    } finally {
-      if (originalHome === undefined) delete process.env.HOME;
-      else process.env.HOME = originalHome;
-      rmSync(tempHome, { recursive: true, force: true });
-    }
+    });
   });
 
   test("getGateDecision parses a successful OpenRouter decision", async () => {
@@ -1422,65 +1489,6 @@ describe("callAnthropic response handling", () => {
 // ---------------------------------------------------------------------------
 
 describe("callGemini fallback to flash model", () => {
-  let geminiCalls: Array<{
-    model: string;
-    prompt: string;
-    systemInstruction?: string;
-    generationConfig?: { temperature?: number };
-  }> = [];
-  let geminiResponses: string[] = [];
-  let throwOnCall: number | undefined;
-  let geminiErrorMessages: Array<string | undefined> = [];
-
-  const mockGenAI = {
-    getGenerativeModel: ({
-      model,
-      systemInstruction,
-    }: {
-      model: string;
-      systemInstruction?: string;
-    }) => ({
-      generateContent: async (
-        input:
-          | string
-          | { contents: unknown; generationConfig?: { temperature?: number } },
-      ) => {
-        const prompt =
-          typeof input === "string" ? input : JSON.stringify(input.contents);
-        const generationConfig =
-          typeof input === "object" ? input.generationConfig : undefined;
-        if (generationConfig !== undefined) {
-          geminiCalls.push({
-            model,
-            prompt,
-            ...(systemInstruction !== undefined && { systemInstruction }),
-            generationConfig,
-          });
-        } else {
-          geminiCalls.push({
-            model,
-            prompt,
-            ...(systemInstruction !== undefined && { systemInstruction }),
-          });
-        }
-        const customError = geminiErrorMessages[geminiCalls.length - 1];
-        if (customError !== undefined) {
-          throw new Error(customError);
-        }
-        if (geminiCalls.length === throwOnCall) {
-          throw new Error("simulated gemini failure");
-        }
-        return { response: { text: () => geminiResponses.shift() ?? "" } };
-      },
-    }),
-  };
-
-  mock.module("@google/generative-ai", () => ({
-    GoogleGenerativeAI: class {
-      getGenerativeModel = mockGenAI.getGenerativeModel;
-    },
-  }));
-
   beforeEach(() => {
     geminiCalls = [];
     geminiResponses = [];
