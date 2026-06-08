@@ -34,25 +34,23 @@ cp dist/vibe ~/.local/bin/vibe
 # Create the vibe configuration directory.
 mkdir -p ~/.vibe-cli
 # Copy the example provider configuration.
-cp .env.example ~/.vibe-cli/.env
+cp settings.example.json ~/.vibe-cli/settings.json
 ```
 
-Fill `~/.vibe-cli/.env` with one provider key and optional defaults:
+Edit `~/.vibe-cli/settings.json` to choose provider entries, models,
+protocol specs, base URLs, and credential environment variable names.
+The CLI never stores API tokens in settings. Export secrets through the
+parent process environment before running provider commands:
 
-```env
-DEFAULT_LLM_PROVIDER=gemini
-DEFAULT_MODEL=gemini-2.5-pro
-GEMINI_API_KEY=<key>
+```sh
+export GEMINI_API_KEY=<key>
 ```
 
-Supported providers:
+Supported protocol specs:
 
 - `gemini`
 - `openai`
-- `openrouter`
 - `anthropic`
-- `deepseek`
-- `opencode`
 
 Build the executable:
 
@@ -124,45 +122,62 @@ The `Makefile` mirrors common workflows with `make install`,
 
 ## Configuration
 
-`vibe` loads `~/.vibe-cli/.env` at startup. Provider selection follows
-this order:
+`vibe` reads provider configuration from
+`~/.vibe-cli/settings.json` only when a command needs provider data. Copy
+`settings.example.json` manually; no command auto-installs runtime
+defaults.
 
-1. `--provider`
-2. `DEFAULT_LLM_PROVIDER`
-3. Detected provider key in the environment
-4. `gemini` fallback
+Provider selection follows this order:
+
+1. `--provider` matching a `providers[].name` entry.
+2. Top-level `provider` in `settings.json`.
 
 Model selection follows this order:
 
-1. `--model`
-2. `DEFAULT_MODEL`
-3. Provider default
+1. `--model`.
+2. Top-level `model` in `settings.json`, when present.
+3. Selected provider `defaultModel`, when present.
 
-Provider defaults:
+Provider entries require `name`, supported `spec`, and `envVar`.
+OpenAI-compatible entries also require `baseUrl`. Supported `spec`
+values:
 
-| Provider     | Default model                          |
-| ------------ | -------------------------------------- |
-| `gemini`     | `gemini-2.5-flash`                     |
-| `openai`     | `gpt-4o-mini`                          |
-| `anthropic`  | `claude-haiku-4-5-20251001`            |
-| `deepseek`   | `deepseek-v4-pro`                      |
-| `opencode`   | `kimi-k2.6`                            |
-| `openrouter` | Pass `--model` or set `DEFAULT_MODEL`. |
+- `openai`: OpenAI-compatible HTTP APIs, including OpenAI, OpenRouter,
+  DeepSeek, Mimo, OpenCode, and Qwen/DashScope.
+- `anthropic`: Anthropic Messages API.
+- `gemini`: Gemini API.
+
+`DEFAULT_LLM_PROVIDER` and `DEFAULT_MODEL` no longer select providers or
+models. Provider names, default models, base URLs, Anthropic API version,
+and Anthropic `authTokenEnvVar` belong in `settings.json`. API tokens do
+not; export direct environment variables through the parent process.
+
+Configuration notes:
+
+- OpenRouter entries in `settings.example.json` intentionally omit
+  `defaultModel`; pass `--model` or set top-level `model`.
+- Qwen/DashScope uses `envVar: "DASHSCOPE_API_KEY"` with an
+  OpenAI-compatible `baseUrl`.
+- Anthropic supports `envVar` API-key auth, optional
+  `authTokenEnvVar` bearer-token auth, optional `baseUrl`, and optional
+  `apiVersion`; API keys win when both auth values exist.
+- Missing or invalid settings produce JSON-safe actionable errors for CLI
+  commands.
 
 Extra environment variables:
 
 <!-- prettier-ignore-start -->
 | Variable | Purpose |
 | --- | --- |
-| `GEMINI_API_KEY` | Gemini API key. |
-| `OPENAI_API_KEY` | OpenAI API key. |
-| `OPENROUTER_API_KEY` | OpenRouter API key. |
-| `ANTHROPIC_API_KEY` | Anthropic API key. |
-| `ANTHROPIC_AUTH_TOKEN` | Anthropic `OAuth` bearer token alternative. |
-| `ANTHROPIC_BASE_URL` | Anthropic API base URL override. |
-| `ANTHROPIC_VERSION` | Anthropic API version override. |
-| `DEEPSEEK_API_KEY` | DeepSeek API key. |
-| `OPENCODE_API_KEY` | OpenCode-compatible API key. |
+| `GEMINI_API_KEY` | Gemini API key when referenced by `settings.json`. |
+| `OPENAI_API_KEY` | OpenAI API key when referenced by `settings.json`. |
+| `OPENROUTER_API_KEY` | OpenRouter API key when referenced by `settings.json`. |
+| `ANTHROPIC_API_KEY` | Anthropic API key when referenced by `settings.json`. |
+| `ANTHROPIC_AUTH_TOKEN` | Anthropic bearer-token alternative when referenced by `authTokenEnvVar`. |
+| `DEEPSEEK_API_KEY` | DeepSeek API key when referenced by `settings.json`. |
+| `OPENCODE_API_KEY` | OpenCode-compatible API key when referenced by `settings.json`. |
+| `MIMO_API_KEY` | Mimo API key when referenced by `settings.json`. |
+| `DASHSCOPE_API_KEY` | Qwen/DashScope API key when referenced by `settings.json`. |
 | `USE_LEARNING_HISTORY` | Skip stored entries when set to `false`. |
 | `VIBE_MAX_ATTEMPTS` | Default max refinement attempts for `check` (default `10`). |
 <!-- prettier-ignore-end -->
@@ -190,7 +205,9 @@ Common options:
 - `--uncertainty <text>`: repeat for one or more uncertainties.
 - `--prompt <text>`: original user prompt.
 - `--max-attempts <n>`: refinement loop limit, default `10`.
-- `--provider <name>` / `--model <name>`: per-call override.
+- `--provider <name>`: per-call override matching a `settings.json`
+  provider entry name.
+- `--model <name>`: per-call model override.
 
 ### Record a lesson
 
@@ -244,8 +261,10 @@ bun run src/cli.ts demo
 
 ## Storage
 
-Configuration and local state persist under `~/.vibe-cli/`. The
-`~/.vibe-cli/.env` file stores provider keys and defaults. SQLite-backed
+Configuration and local state persist under `~/.vibe-cli/`.
+`settings.json` stores provider metadata only; provide secrets through
+the parent process environment. Legacy `~/.vibe-cli/.env` provider
+settings get ignored with a deprecation diagnostic. SQLite-backed
 storage stores:
 
 - `autosessions` keyed by working directory

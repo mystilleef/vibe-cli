@@ -1,0 +1,61 @@
+{
+  "provider": "gemini",
+  "providers": [
+    {
+      "name": "gemini",
+      "spec": "gemini",
+      "envVar": "GEMINI_API_KEY",
+      "defaultModel": "gemini-2.5-flash"
+    },
+    {
+      "name": "openai",
+      "spec": "openai",
+      "envVar": "OPENAI_API_KEY",
+      "baseUrl": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o-mini"
+    },
+    {
+      "name": "anthropic",
+      "spec": "anthropic",
+      "envVar": "ANTHROPIC_API_KEY",
+      "defaultModel": "claude-haiku-4-5-20251001",
+      "baseUrl": "https://api.anthropic.com",
+      "apiVersion": "2023-06-01",
+      "authTokenEnvVar": "ANTHROPIC_AUTH_TOKEN"
+    },
+    {
+      "name": "openrouter",
+      "spec": "openai",
+      "envVar": "OPENROUTER_API_KEY",
+      "baseUrl": "https://openrouter.ai/api/v1"
+    },
+    {
+      "name": "deepseek",
+      "spec": "openai",
+      "envVar": "DEEPSEEK_API_KEY",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "defaultModel": "deepseek-v4-pro"
+    },
+    {
+      "name": "mimo",
+      "spec": "openai",
+      "envVar": "MIMO_API_KEY",
+      "baseUrl": "https://api.mimo.ai/v1",
+      "defaultModel": "kimi-k2.6"
+    },
+    {
+      "name": "opencode",
+      "spec": "openai",
+      "envVar": "OPENCODE_API_KEY",
+      "baseUrl": "https://api.opencode.ai/v1",
+      "defaultModel": "kimi-k2.6"
+    },
+    {
+      "name": "qwen-dashscope",
+      "spec": "openai",
+      "envVar": "DASHSCOPE_API_KEY",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "defaultModel": "qwen-plus"
+    }
+  ]
+}

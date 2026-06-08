@@ -6,14 +6,17 @@
 - **Test:** `bun coverage`
 - **Lint:** `bun check`
 - **Verify:** `bun verify`
-- **Environment variables required:**
-  - `GEMINI_API_KEY`,
-  - `OPENAI_API_KEY`,
-  - `OPENROUTER_API_KEY`,
-  - `ANTHROPIC_API_KEY`,
-  - `DEEPSEEK_API_KEY`,
-  - `OPENCODE_API_KEY`,
-  - `MIMO_API_KEY` (requires at least one provider key)
+- **Provider configuration required for model commands:**
+  - Copy `settings.example.json` to `~/.vibe-cli/settings.json`
+  - Export at least one secret matching a configured `envVar`, such as:
+    - `GEMINI_API_KEY`,
+    - `OPENAI_API_KEY`,
+    - `OPENROUTER_API_KEY`,
+    - `ANTHROPIC_API_KEY`,
+    - `DEEPSEEK_API_KEY`,
+    - `OPENCODE_API_KEY`,
+    - `MIMO_API_KEY`,
+    - `DASHSCOPE_API_KEY`
 
 ## Workflow
 
@@ -33,7 +36,7 @@
 
 ## Gotchas
 
-- Environment configuration requires `~/.vibe-cli/.env`.
+- Provider metadata requires `~/.vibe-cli/settings.json`; legacy `.env` provider settings get ignored.
 - CLI commands emit JSON to `stdout` on success, and error JSON
   `{"error":"..."}` to `stderr` with exit code 1 on failure.
 - `Autosessions` expire after four hours of inactivity.
