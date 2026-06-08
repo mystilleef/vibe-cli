@@ -35,38 +35,39 @@ Skip trivial, reversible, single-step plans.
 
 ## Workflow
 
-1. **Load CLI schema once per session**—run `vibe schema`; treat output
-   as authoritative for commands, options, outputs, and exit codes.
-2. **Confirm constitution before every check**—run
-   `vibe constitution get`; fix missing, stale, or contradictory rules
-   with `vibe constitution set` or `vibe constitution reset` before
-   continuing.
-3. **Build compact validation request**:
+1. **GATE**—Guard preconditions; make no changes:
+   - Run `vibe schema` once per session; treat as authoritative for
+     commands, options, outputs, and exit codes.
+   - Run `vibe constitution get`; fix missing, stale, or contradictory
+     rules before continuing.
+2. **ORIENT**—Goal: confirm the plan before execution. Won't change: the
+   original goal and any completed progress.
+3. **PLAN**—Build a compact validation request:
    - `--goal`: one sentence.
-   - `--plan`: ordered, concrete, execution-ready.
-   - `--uncertainty`: one per material risk, assumption, or open
+   - `--plan`: ordered, concrete, execution-ready steps.
+   - `--uncertainty`: one entry per material risk, assumption, or open
      concern.
-   - `--context`: constraints and grounding the mentor needs to judge
-     the plan. Pass text verbatim—the mentor has no file access, tools,
-     or external context.
+   - `--context`: constraints and grounding the mentor needs; pass text
+     verbatim—the mentor has no file access, tools, or external context.
    - `--progress`: include when resuming after partial work.
-4. **Run** `vibe check` before execution.
-5. **Handle returned state**:
+4. **ACT**—Run `vibe check`.
+5. **VERIFY**—Handle returned state:
    - `proceed=true`: execute the returned `plan` exactly, not the
      original.
-   - `proceed=false` without exhaustion: revise from `reason`,
-     `feedback`, and returned `plan`; resubmit.
-   - `exhausted=true`: stop; report that the mentor failed to safely
-     approve the plan within the attempt limit.
-6. **Record notable outcomes**—after task completion, run `vibe learn`
-   when work revealed a mistake, reusable success, or durable
-   correction.
+   - `proceed=false`, not exhausted: revise from `reason`, `feedback`,
+     and returned `plan`; fully form the revised plan; return to step 4.
+   - `exhausted=true`: halt; report that the mentor failed to approve
+     the plan within the attempt limit.
+6. **PERSIST**—Run `vibe learn` when work revealed a mistake, reusable
+   success, or durable correction.
+7. **REPORT**—Surface the mentor's decision and approved plan to the
+   calling agent unchanged.
 
 ## Directives
 
 - Check before execution, not after.
 - Keep validation payloads concise but sufficiently grounded.
-- Fully form each revised plan before resubmitting — no incremental or
+- Fully form each revised plan before resubmitting—no incremental or
   speculative calls.
 - Continue revision loops only while the mentor returns actionable next
   steps.
@@ -84,11 +85,13 @@ Skip trivial, reversible, single-step plans.
 - Abort rather than guessing when the mentor exhausts attempts.
 - Never pass file paths, URLs, or references to `--context`; the mentor
   can't read or resolve them.
-- `vibe check` has blocking semantics — wait for it to return before
-  any further action; never treat it as a polling mechanism.
-- One call per decision point, hard limit — never invoke again for the
+- `vibe check` has blocking semantics—wait for it to return before any
+  further action; never treat it as a polling mechanism.
+- Calls routinely take several minutes; never pass a Bash `timeout` or
+  any equivalent deadline—wait unconditionally.
+- One call per decision point, hard limit—never invoke again for the
   same goal/plan pair, whether pending or already returned.
-- Never retry a slow or pending call — wait; each call consumes quota,
+- Never retry a slow or pending call—wait; each call consumes quota,
   tokens, and budget.
 
 ## Verification
