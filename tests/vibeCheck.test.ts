@@ -7,7 +7,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type VibeCheckInput, vibeCheckTool } from "../src/tools/vibeCheck";
@@ -54,6 +54,25 @@ function configureAnthropicEnv(): void {
   process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
+async function writeAnthropicSettings(): Promise<void> {
+  if (home === undefined) throw new Error("temp home not initialized");
+  await mkdir(home.dataRoot, { recursive: true });
+  await writeFile(
+    join(home.dataRoot, "settings.json"),
+    JSON.stringify({
+      provider: "anthropic",
+      providers: [
+        {
+          name: "anthropic",
+          spec: "anthropic",
+          envVar: "ANTHROPIC_API_KEY",
+          defaultModel: "claude-test-default",
+        },
+      ],
+    }),
+  );
+}
+
 function latestPrompt(): string {
   return requests.at(-1)?.messages?.[0]?.content ?? "";
 }
@@ -67,6 +86,7 @@ beforeEach(async () => {
     USE_LEARNING_HISTORY: process.env["USE_LEARNING_HISTORY"],
   };
   home = await createTempHome();
+  await writeAnthropicSettings();
   cwd = await mkdtemp(join(tmpdir(), "vibe-check-tool-"));
   process.chdir(cwd);
   requests.length = 0;

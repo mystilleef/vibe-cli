@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConstitution, resetConstitution } from "../src/tools/constitution";
@@ -40,6 +40,25 @@ function configureAnthropicEnv(): void {
   process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
   process.env["DEFAULT_MODEL"] = "default-demo-model";
   process.env["USE_LEARNING_HISTORY"] = "false";
+}
+
+async function writeAnthropicSettings(): Promise<void> {
+  if (home === undefined) throw new Error("temp home not initialized");
+  await mkdir(home.dataRoot, { recursive: true });
+  await writeFile(
+    join(home.dataRoot, "settings.json"),
+    JSON.stringify({
+      provider: "anthropic",
+      providers: [
+        {
+          name: "anthropic",
+          spec: "anthropic",
+          envVar: "ANTHROPIC_API_KEY",
+          defaultModel: "default-demo-model",
+        },
+      ],
+    }),
+  );
 }
 
 function gateDecision(proceed: boolean, confidence: number, reason: string) {
@@ -88,6 +107,7 @@ beforeEach(async () => {
   savedEnv = {};
   for (const key of PROVIDER_ENV) savedEnv[key] = process.env[key];
   home = await createTempHome();
+  await writeAnthropicSettings();
   cwd = await mkdtemp(join(tmpdir(), "vibe-demo-tool-"));
   process.chdir(cwd);
   requests.length = 0;
@@ -211,7 +231,9 @@ describe("runDemo", () => {
 
     await expect(
       runDemo({ modelOverride: { provider: "unsupported-provider" } }),
-    ).rejects.toThrow(/Unknown provider/);
+    ).rejects.toThrow(
+      /Provider 'unsupported-provider' not found in settings\.json/,
+    );
 
     expect(requests).toHaveLength(0);
     expect(visibleOutput()).toContain("Step 1/4: Set a constitution rule");

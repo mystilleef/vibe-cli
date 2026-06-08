@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withDatabase } from "../src/utils/database";
@@ -38,21 +38,52 @@ import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 let home: TempHomeContext;
 let cwd: string;
 const originalCwd = process.cwd();
-const originalProvider = process.env["DEFAULT_LLM_PROVIDER"];
+
+async function writeSettings(value: unknown): Promise<void> {
+  await mkdir(home.dataRoot, { recursive: true });
+  await writeFile(
+    join(home.dataRoot, "settings.json"),
+    JSON.stringify(value, null, 2),
+  );
+}
+
+function listSettings(overrides: Record<string, unknown> = {}) {
+  return {
+    provider: "deepseek",
+    providers: [
+      {
+        name: "deepseek",
+        spec: "openai",
+        envVar: "DEEPSEEK_API_KEY",
+        baseUrl: "https://api.deepseek.com/v1",
+        defaultModel: "deepseek-v4-pro",
+      },
+      {
+        name: "gemini",
+        spec: "gemini",
+        envVar: "GEMINI_API_KEY",
+        defaultModel: "gemini-2.5-flash",
+      },
+      {
+        name: "openrouter",
+        spec: "openai",
+        envVar: "OPENROUTER_API_KEY",
+        baseUrl: "https://openrouter.ai/api/v1",
+      },
+    ],
+    ...overrides,
+  };
+}
 
 beforeEach(async () => {
   home = await createTempHome();
+  await writeSettings(listSettings());
   cwd = await mkdtemp(join(tmpdir(), "vibe-cli-list-data-"));
   process.chdir(cwd);
 });
 
 afterEach(async () => {
   process.chdir(originalCwd);
-  if (originalProvider === undefined) {
-    delete process.env["DEFAULT_LLM_PROVIDER"];
-  } else {
-    process.env["DEFAULT_LLM_PROVIDER"] = originalProvider;
-  }
   await rm(cwd, { recursive: true, force: true });
   await home.cleanup();
 });
@@ -314,6 +345,7 @@ describe("list data foundations", () => {
     expect(toProvidersJson(providers)).toMatchObject({
       deepseek: "deepseek-v4-pro",
       gemini: "gemini-2.5-flash",
+      openrouter: "",
     });
 
     expect(readListStats()).toEqual({
@@ -446,6 +478,56 @@ describe("list data foundations", () => {
     const result = formatListSessions([]);
     expect(result).toContain("Sessions");
     expect(result).toContain("(none)");
+  });
+
+  test("readListProviders uses settings-backed names, sorting, active provider, and empty models", async () => {
+    await writeSettings(
+      listSettings({
+        provider: "openrouter",
+        providers: [
+          {
+            name: "zeta",
+            spec: "gemini",
+            envVar: "ZETA_API_KEY",
+            defaultModel: "zeta-model",
+          },
+          {
+            name: "openrouter",
+            spec: "openai",
+            envVar: "OPENROUTER_API_KEY",
+            baseUrl: "https://openrouter.ai/api/v1",
+          },
+          {
+            name: "alpha",
+            spec: "anthropic",
+            envVar: "ALPHA_API_KEY",
+            defaultModel: "alpha-model",
+          },
+        ],
+      }),
+    );
+
+    const providers = readListProviders();
+
+    expect(providers.activeProvider).toBe("openrouter");
+    expect(Object.keys(providers.providers)).toEqual([
+      "alpha",
+      "openrouter",
+      "zeta",
+    ]);
+    expect(toProvidersJson(providers)).toEqual({
+      alpha: "alpha-model",
+      openrouter: "",
+      zeta: "zeta-model",
+    });
+  });
+
+  test("readListProviders rejects unmatched active provider from settings", async () => {
+    await writeSettings(listSettings({ provider: "missing" }));
+
+    expect(() => readListProviders()).toThrow(
+      "Provider 'missing' not found in settings.json",
+    );
   });
 
   test("formatListProviders marks active provider and uses fallback for empty model", () => {

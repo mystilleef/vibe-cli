@@ -7,7 +7,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -36,6 +36,25 @@ function configureAnthropicEnv(): void {
   process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
   process.env["DEFAULT_MODEL"] = "";
   process.env["USE_LEARNING_HISTORY"] = "false";
+}
+
+async function writeAnthropicSettings(): Promise<void> {
+  if (home === undefined) throw new Error("temp home not initialized");
+  await mkdir(home.dataRoot, { recursive: true });
+  await writeFile(
+    join(home.dataRoot, "settings.json"),
+    JSON.stringify({
+      provider: "anthropic",
+      providers: [
+        {
+          name: "anthropic",
+          spec: "anthropic",
+          envVar: "ANTHROPIC_API_KEY",
+          defaultModel: "claude-test-default",
+        },
+      ],
+    }),
+  );
 }
 
 function installAnthropicFetch(): void {
@@ -77,6 +96,7 @@ beforeEach(async () => {
     USE_LEARNING_HISTORY: process.env["USE_LEARNING_HISTORY"],
   };
   home = await createTempHome();
+  await writeAnthropicSettings();
   cwd = await mkdtemp(join(tmpdir(), "vibe-gate-tool-"));
   process.chdir(cwd);
   requests.length = 0;
@@ -149,7 +169,9 @@ describe("vibeGateTool", () => {
     } catch (e) {
       thrown = e as Error;
     }
-    expect(thrown?.message).toMatch(/Unknown provider/);
+    expect(thrown?.message).toMatch(
+      /Provider 'unsupported-provider' not found in settings\.json/,
+    );
     expect(requests).toHaveLength(0);
   });
 });
@@ -306,7 +328,9 @@ describe("vibeGateLoop", () => {
       );
       expect.unreachable("should have thrown");
     } catch (err) {
-      expect((err as Error).message).toMatch(/Unknown provider/);
+      expect((err as Error).message).toMatch(
+        /Provider 'unsupported-provider' not found in settings\.json/,
+      );
     }
     expect(requests).toHaveLength(0);
   });

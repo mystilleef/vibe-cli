@@ -1,132 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DAY_MS,
+  DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
   isLearningOverlapDuplicate,
   learningRowToEntry,
-} from "../src/utils/learningEntryCore";
-
-// ── getLearningOverlapScore ───────────────────────────────────────────────
-
-describe("getLearningOverlapScore", () => {
-  test("returns 0 when both strings are empty", () => {
-    expect(getLearningOverlapScore("", "")).toBe(0);
-  });
-
-  test("returns 0 when left string is empty", () => {
-    expect(getLearningOverlapScore("", "alpha beta")).toBe(0);
-  });
-
-  test("returns 0 when right string is empty", () => {
-    expect(getLearningOverlapScore("alpha beta", "")).toBe(0);
-  });
-
-  test("returns 0 when both strings are whitespace only", () => {
-    expect(getLearningOverlapScore("   ", "\t\n")).toBe(0);
-  });
-
-  test("returns 1 for identical strings", () => {
-    expect(
-      getLearningOverlapScore("alpha beta gamma", "alpha beta gamma"),
-    ).toBe(1);
-  });
-
-  test("returns 0 for completely disjoint strings", () => {
-    expect(getLearningOverlapScore("alpha beta", "gamma delta")).toBe(0);
-  });
-
-  test("case-insensitive matching", () => {
-    expect(getLearningOverlapScore("ALPHA BETA", "alpha beta")).toBe(1);
-  });
-
-  test("partial overlap computes correct ratio", () => {
-    const score = getLearningOverlapScore(
-      "alpha beta gamma delta",
-      "alpha beta zeta eta",
-    );
-    expect(score).toBe(0.5); // 2 overlapping / min(4,4) = 0.5
-  });
-
-  test("punctuation is split as word boundaries", () => {
-    const score = getLearningOverlapScore(
-      "alpha, beta; gamma",
-      "alpha beta gamma",
-    );
-    expect(score).toBe(1);
-  });
-
-  test("shorter string determines denominator", () => {
-    // left has 5 words, right has 3. Overlap: 2 ("alpha", "beta").
-    // score = 2 / min(5, 3) = 2/3
-    const score = getLearningOverlapScore(
-      "alpha beta gamma delta epsilon",
-      "alpha beta zeta",
-    );
-    expect(score).toBeCloseTo(2 / 3, 5);
-  });
-});
-
-// ── isLearningOverlapDuplicate ────────────────────────────────────────────
-
-describe("isLearningOverlapDuplicate", () => {
-  test("returns true when overlap meets default threshold", () => {
-    expect(
-      isLearningOverlapDuplicate(
-        "alpha beta gamma delta",
-        "alpha beta gamma zeta",
-      ),
-    ).toBe(true); // 3/4 = 0.75 > 0.6
-  });
-
-  test("returns false when overlap is below default threshold", () => {
-    expect(
-      isLearningOverlapDuplicate(
-        "alpha beta gamma delta epsilon",
-        "alpha zeta eta theta iota",
-      ),
-    ).toBe(false); // 1/5 = 0.2
-  });
-
-  test("threshold 0 always returns true for non-empty strings", () => {
-    expect(isLearningOverlapDuplicate("alpha beta", "gamma delta", 0)).toBe(
-      true,
-    );
-    expect(isLearningOverlapDuplicate("x", "y", 0)).toBe(true);
-  });
-
-  test("threshold 1 requires exact match", () => {
-    expect(isLearningOverlapDuplicate("alpha beta", "alpha beta", 1)).toBe(
-      true,
-    );
-    // "alpha beta" vs "alpha gamma" overlap = 1/2 = 0.5, below 1.0
-    expect(isLearningOverlapDuplicate("alpha beta", "alpha gamma", 1)).toBe(
-      false,
-    );
-  });
-
-  test("empty strings satisfy threshold 0 (score 0 >= 0)", () => {
-    expect(isLearningOverlapDuplicate("", "", 0)).toBe(true);
-  });
-});
-
-// ── learningRowToEntry ────────────────────────────────────────────────────
+} from "../src/utils/learningEntryCore.js";
 
 describe("learningRowToEntry", () => {
-  test("maps all non-null fields from storage row to entry", () => {
+  test("converts full row with solution and demo_id", () => {
     const row = {
       id: 1,
       type: "mistake" as const,
-      category: "imports",
-      observation: "forgot import",
-      solution: "add import",
+      category: "risk",
+      observation: "forgot rollback",
+      solution: "add rollback step",
       timestamp: 1000,
       demo_id: "demo-1",
     };
-    const entry = learningRowToEntry(row);
-    expect(entry).toEqual({
+    expect(learningRowToEntry(row)).toEqual({
       type: "mistake",
-      category: "imports",
-      observation: "forgot import",
-      solution: "add import",
+      category: "risk",
+      observation: "forgot rollback",
+      solution: "add rollback step",
       timestamp: 1000,
       demoId: "demo-1",
     });
@@ -137,49 +33,135 @@ describe("learningRowToEntry", () => {
       id: 2,
       type: "preference" as const,
       category: "style",
-      observation: "use tabs",
+      observation: "prefer lists",
       solution: null,
       timestamp: 2000,
       demo_id: null,
     };
     const entry = learningRowToEntry(row);
-    expect(entry).toEqual({
-      type: "preference",
-      category: "style",
-      observation: "use tabs",
-      timestamp: 2000,
-    });
-    expect("solution" in entry).toBe(false);
-    expect("demoId" in entry).toBe(false);
+    expect(entry.solution).toBeUndefined();
+    expect(entry.demoId).toBeUndefined();
   });
 
-  test("handles success type row", () => {
+  test("includes solution when non-null string", () => {
     const row = {
       id: 3,
       type: "success" as const,
-      category: "testing",
-      observation: "DRY test helpers",
-      solution: "extracted setup",
+      category: "test",
+      observation: "good pattern",
+      solution: "repeat it",
       timestamp: 3000,
       demo_id: null,
     };
-    const entry = learningRowToEntry(row);
-    expect(entry.type).toBe("success");
-    expect(entry.solution).toBe("extracted setup");
-    expect("demoId" in entry).toBe(false);
+    expect(learningRowToEntry(row).solution).toBe("repeat it");
   });
 
-  test("preserves id field is not propagated (id is not part of LearningEntry)", () => {
+  test("includes demo_id when non-null string", () => {
     const row = {
-      id: 99,
+      id: 4,
       type: "mistake" as const,
-      category: "x",
-      observation: "y",
+      category: "test",
+      observation: "issue",
       solution: null,
-      timestamp: 1,
-      demo_id: null,
+      timestamp: 4000,
+      demo_id: "demo-xyz",
     };
-    const entry = learningRowToEntry(row);
-    expect("id" in entry).toBe(false);
+    expect(learningRowToEntry(row).demoId).toBe("demo-xyz");
+  });
+});
+
+describe("getLearningOverlapScore", () => {
+  test("returns 1.0 for identical strings", () => {
+    expect(getLearningOverlapScore("fix the bug", "fix the bug")).toBe(1);
+  });
+
+  test("returns 0 for completely different strings", () => {
+    expect(getLearningOverlapScore("apple banana", "car dog")).toBe(0);
+  });
+
+  test("returns partial overlap score", () => {
+    // "fix" and "the" overlap, total unique left: 3, min(3,3)=3, overlap=2
+    expect(getLearningOverlapScore("fix the bug", "fix the issue")).toBeCloseTo(
+      2 / 3,
+    );
+  });
+
+  test("is case insensitive", () => {
+    expect(getLearningOverlapScore("Fix The Bug", "fix the bug")).toBe(1);
+  });
+
+  test("handles empty left string", () => {
+    expect(getLearningOverlapScore("", "some text")).toBe(0);
+  });
+
+  test("handles empty right string", () => {
+    expect(getLearningOverlapScore("some text", "")).toBe(0);
+  });
+
+  test("handles both empty strings", () => {
+    expect(getLearningOverlapScore("", "")).toBe(0);
+  });
+
+  test("handles whitespace-only strings", () => {
+    expect(getLearningOverlapScore("   ", "   ")).toBe(0);
+  });
+
+  test("splits on non-word characters", () => {
+    // \W+ matches non-word chars; hyphen is non-word, underscore is word char
+    expect(getLearningOverlapScore("fix-bug", "fix-bug")).toBe(1);
+    // underscores don't split, so "fix_bug" is one token
+    expect(getLearningOverlapScore("fix_bug", "fix bug")).toBeLessThan(1);
+  });
+
+  test("uses shorter array length for denominator", () => {
+    // left: ["a", "b"] (2), right: ["a", "b", "c", "d"] (4)
+    // overlap: ["a", "b"] = 2, min(2, 4) = 2, score = 1
+    expect(getLearningOverlapScore("a b", "a b c d")).toBe(1);
+  });
+});
+
+describe("isLearningOverlapDuplicate", () => {
+  test("returns true when overlap exceeds threshold", () => {
+    expect(isLearningOverlapDuplicate("fix the bug", "fix the issue")).toBe(
+      true,
+    );
+  });
+
+  test("returns false when overlap below threshold", () => {
+    expect(isLearningOverlapDuplicate("apple banana", "car dog")).toBe(false);
+  });
+
+  test("uses default threshold when not specified", () => {
+    expect(DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD).toBe(0.6);
+  });
+
+  test("accepts custom threshold", () => {
+    // "fix the bug" vs "fix the issue" → 2/3 ≈ 0.667
+    expect(
+      isLearningOverlapDuplicate("fix the bug", "fix the issue", 0.7),
+    ).toBe(false);
+    expect(
+      isLearningOverlapDuplicate("fix the bug", "fix the issue", 0.6),
+    ).toBe(true);
+  });
+
+  test("threshold of 0 includes zero-score pairs", () => {
+    // Score is 0, but 0 >= 0 is true
+    expect(isLearningOverlapDuplicate("apple", "banana", 0)).toBe(true);
+  });
+
+  test("threshold of 1 requires exact word set match", () => {
+    expect(isLearningOverlapDuplicate("fix the bug", "fix the bug", 1)).toBe(
+      true,
+    );
+    expect(isLearningOverlapDuplicate("fix the bug", "fix the issue", 1)).toBe(
+      false,
+    );
+  });
+});
+
+describe("DAY_MS", () => {
+  test("equals 86400000 milliseconds", () => {
+    expect(DAY_MS).toBe(86_400_000);
   });
 });

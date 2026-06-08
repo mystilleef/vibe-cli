@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,9 @@ const capturePruneInput = join(
   "capturePruneInput.ts",
 );
 const EXPECTED_MIGRATION_IDS = getMigrationIds();
+const EMPTY_CLI_HOME = join(tmpdir(), "vibe-cli-empty-home");
+const LEGACY_DOTENV_WARNING =
+  "Deprecated ~/.vibe-cli/.env ignored. Move provider settings to ~/.vibe-cli/settings.json and provide secrets through the parent process environment.";
 
 interface CliResult {
   stdout: string;
@@ -51,6 +55,51 @@ async function createCwd(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "vibe-cli-surface-"));
   cwdRoots.push(cwd);
   return cwd;
+}
+
+async function writeSettings(
+  home: TempHomeContext,
+  value: unknown,
+): Promise<void> {
+  await mkdir(home.dataRoot, { recursive: true });
+  await writeFile(
+    join(home.dataRoot, "settings.json"),
+    JSON.stringify(value, null, 2),
+  );
+}
+
+function listSettings(overrides: Record<string, unknown> = {}) {
+  return {
+    provider: "deepseek",
+    providers: [
+      {
+        name: "anthropic",
+        spec: "anthropic",
+        envVar: "ANTHROPIC_API_KEY",
+        defaultModel: "claude-haiku-4-5-20251001",
+      },
+      {
+        name: "deepseek",
+        spec: "openai",
+        envVar: "DEEPSEEK_API_KEY",
+        baseUrl: "https://api.deepseek.com/v1",
+        defaultModel: "deepseek-v4-pro",
+      },
+      {
+        name: "gemini",
+        spec: "gemini",
+        envVar: "GEMINI_API_KEY",
+        defaultModel: "gemini-2.5-flash",
+      },
+      {
+        name: "openrouter",
+        spec: "openai",
+        envVar: "OPENROUTER_API_KEY",
+        baseUrl: "https://openrouter.ai/api/v1",
+      },
+    ],
+    ...overrides,
+  };
 }
 
 function parseMigrationReport(result: CliResult): {
@@ -133,9 +182,10 @@ function runCli(
     preload?: string;
   } = {},
 ): CliResult {
+  mkdirSync(EMPTY_CLI_HOME, { recursive: true });
   const env: Record<string, string> = {
     ...process.env,
-    HOME: options.home ?? process.env["HOME"] ?? "",
+    HOME: options.home ?? EMPTY_CLI_HOME,
   };
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (value === undefined) {
@@ -168,7 +218,12 @@ function runCli(
 function expectHelpWithoutSession(command: string[]): void {
   const result = runCli([...command, "--help"]);
   expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain("--session");
+}
+
+function expectLegacyDotenvWarningOnce(stderr: string): void {
+  expect(stderr.trim().split("\n")).toEqual([LEGACY_DOTENV_WARNING]);
 }
 
 type SeedLearningEntry = {
@@ -263,6 +318,7 @@ async function runVibeCheck(
   payload: Record<string, unknown>;
 }> {
   const home = await useTempHome();
+  await writeSettings(home, listSettings({ provider: "anthropic" }));
   const result = runCli(
     [
       "check",
@@ -317,6 +373,16 @@ describe("CLI autosession surface", () => {
     expectHelpWithoutSession(["constitution", "reset"]);
 
     expectHelpWithoutSession(["demo"]);
+  });
+
+  test("provider help describes settings entry names without hardcoded providers", () => {
+    const result = runCli(["check", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("settings provider entry name");
+    expect(result.stdout).not.toContain(
+      "gemini | openai | openrouter | anthropic | deepseek | opencode",
+    );
   });
 
   test("removed --session options fail through Commander", () => {
@@ -645,31 +711,91 @@ describe("CLI autosession surface", () => {
     expect(pretty.stdout).toContain("session-without-cwd");
   });
 
-  test("list providers returns static JSON and marks the active provider", async () => {
+  test("list providers returns settings JSON and marks the active provider", async () => {
     const home = await useTempHome();
+    await writeSettings(home, listSettings());
 
     const json = runCli(["list", "providers", "--json"], {
       home: home.home,
-      env: { DEFAULT_LLM_PROVIDER: "deepseek" },
     });
     const pretty = runCli(["list", "providers"], {
       home: home.home,
-      env: { DEFAULT_LLM_PROVIDER: "deepseek" },
     });
     const payload = JSON.parse(json.stdout) as Record<string, string>;
 
     expect(json.exitCode).toBe(0);
     expect(json.stderr).toBe("");
-    expect(payload).toMatchObject({
+    expect(payload).toEqual({
       anthropic: "claude-haiku-4-5-20251001",
       deepseek: "deepseek-v4-pro",
       gemini: "gemini-2.5-flash",
+      openrouter: "",
     });
     expect(payload).not.toHaveProperty("activeProvider");
     expect(pretty.exitCode).toBe(0);
     expect(pretty.stderr).toBe("");
     expect(pretty.stdout).toContain("Providers");
     expect(pretty.stdout).toMatch(/deepseek\s+deepseek-v4-pro\s+\*/);
+    expect(pretty.stdout).toMatch(/openrouter\s+\(required via --model\)/);
+  });
+
+  test("list providers emits JSON stderr when settings cannot resolve active provider", async () => {
+    const home = await useTempHome();
+    await writeSettings(home, listSettings({ provider: "missing" }));
+
+    const result = runCli(["list", "providers", "--json"], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "Provider 'missing' not found in settings.json",
+    });
+  });
+
+  test("legacy env warning prints once for local-only JSON commands without settings", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+
+    for (const args of [
+      ["session"],
+      ["constitution", "get"],
+      ["list", "learnings", "--json"],
+    ]) {
+      const result = runCli(args, { home: home.home });
+
+      expect(result.exitCode).toBe(0);
+      expect(() => JSON.parse(result.stdout)).not.toThrow();
+      expectLegacyDotenvWarningOnce(result.stderr);
+    }
+  });
+
+  test("legacy env warning prints once for settings-backed provider lists", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+    await writeSettings(home, listSettings());
+
+    const providers = runCli(["list", "providers", "--json"], {
+      home: home.home,
+    });
+    const all = runCli(["list", "all", "--json"], { home: home.home });
+
+    expect(providers.exitCode).toBe(0);
+    expect(JSON.parse(providers.stdout)).toMatchObject({
+      deepseek: "deepseek-v4-pro",
+      openrouter: "",
+    });
+    expectLegacyDotenvWarningOnce(providers.stderr);
+
+    expect(all.exitCode).toBe(0);
+    expect(JSON.parse(all.stdout).providers).toMatchObject({
+      activeProvider: "deepseek",
+      providers: expect.objectContaining({ deepseek: "deepseek-v4-pro" }),
+    });
+    expectLegacyDotenvWarningOnce(all.stderr);
   });
 
   test("list checks filters, limits, parses, and truncates reasons", async () => {
@@ -757,6 +883,8 @@ describe("CLI autosession surface", () => {
       ANTHROPIC_API_KEY: "ak",
       DEFAULT_LLM_PROVIDER: "anthropic",
     };
+    await writeSettings(home, listSettings());
+
     const commands = [
       ["list"],
       ["list", "--json"],
@@ -880,6 +1008,8 @@ describe("CLI autosession surface", () => {
       ],
     );
 
+    await writeSettings(home, listSettings());
+
     const statsJson = runCli(["list", "stats", "--json"], {
       cwd,
       home: home.home,
@@ -888,12 +1018,10 @@ describe("CLI autosession surface", () => {
     const allJson = runCli(["list", "all", "--json"], {
       cwd,
       home: home.home,
-      env: { DEFAULT_LLM_PROVIDER: "deepseek" },
     });
     const allPretty = runCli(["list", "all"], {
       cwd,
       home: home.home,
-      env: { DEFAULT_LLM_PROVIDER: "deepseek" },
     });
     const stats = JSON.parse(statsJson.stdout);
     const all = JSON.parse(allJson.stdout) as {
@@ -1365,7 +1493,7 @@ describe("CLI autosession surface", () => {
     });
   });
 
-  test("schema loads home env file without overriding shell env vars", async () => {
+  test("schema reports settings config without loading home env provider defaults", async () => {
     const home = await useTempHome();
     await mkdir(home.dataRoot, { recursive: true });
     await writeFile(
@@ -1378,6 +1506,8 @@ describe("CLI autosession surface", () => {
         "EMPTY_VALUE=",
       ].join("\n"),
     );
+
+    await writeSettings(home, listSettings());
 
     const result = runCli(["schema"], {
       home: home.home,
@@ -1398,14 +1528,36 @@ describe("CLI autosession surface", () => {
     };
 
     expect(result.exitCode).toBe(0);
+    expectLegacyDotenvWarningOnce(result.stderr);
     expect(schema.config).toEqual({
       provider: "deepseek",
-      model: "shell-model",
+      model: "deepseek-v4-pro",
     });
+  });
+
+  test("verify ignores provider API keys from legacy home env files", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEEPSEEK_API_KEY=file-key\n");
+    await writeSettings(home, listSettings());
+
+    const result = runCli(["verify"], {
+      home: home.home,
+      env: { DEEPSEEK_API_KEY: undefined, DEFAULT_MODEL: undefined },
+    });
+    const payload = JSON.parse(result.stdout) as { ok: boolean; error: string };
+
+    expect(result.exitCode).toBe(1);
+    expectLegacyDotenvWarningOnce(result.stderr);
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toBe(
+      "DEEPSEEK_API_KEY is not set in the environment",
+    );
   });
 
   test("verify emits JSON failure and exits 1 for unsupported providers", async () => {
     const home = await useTempHome();
+    await writeSettings(home, listSettings());
 
     const result = runCli(["verify", "--provider", "bogus"], {
       home: home.home,
@@ -1425,11 +1577,14 @@ describe("CLI autosession surface", () => {
       provider: "bogus",
       model: "(default)",
     });
-    expect(payload.error).toContain("Unknown provider: bogus");
+    expect(payload.error).toContain(
+      "Provider 'bogus' not found in settings.json",
+    );
   });
 
   test("check emits fatal JSON when gate provider resolution fails", async () => {
     const home = await useTempHome();
+    await writeSettings(home, listSettings());
 
     const result = runCli(
       ["check", "--goal", "g", "--plan", "p", "--provider", "bogus"],
@@ -1439,7 +1594,9 @@ describe("CLI autosession surface", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
-    expect(payload.error).toContain("Unknown provider: bogus");
+    expect(payload.error).toContain(
+      "Provider 'bogus' not found in settings.json",
+    );
   });
 
   test("check emits approval JSON and exits 0 with mocked Anthropic", async () => {
@@ -1545,6 +1702,7 @@ describe("CLI autosession surface", () => {
 
   test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
     const home = await useTempHome();
+    await writeSettings(home, listSettings({ provider: "anthropic" }));
 
     const result = runCli(
       ["verify", "--provider", "anthropic", "--model", "mock-verify"],
@@ -2223,6 +2381,20 @@ describe("CLI autosession surface", () => {
     expect(getPayload.rules).toEqual(["Rule C"]);
   });
 
+  test("help and fatal error stderr stay on baseline when legacy env is absent", () => {
+    const help = runCli(["check", "--help"]);
+    const error = runCli(["unknown-command"]);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toBe("");
+    expect(help.stdout).toContain("--provider");
+    expect(error.exitCode).toBe(1);
+    expect(error.stdout).toBe("");
+    expect(JSON.parse(error.stderr)).toEqual({
+      error: "error: unknown command 'unknown-command'",
+    });
+  });
+
   test("check with --model only resolves model override without provider", async () => {
     const { result, payload } = await runVibeCheck(["--model", "mock-claude"], {
       VIBE_TEST_ANTHROPIC_MODE: "proceed",
@@ -2240,6 +2412,7 @@ describe("CLI autosession surface", () => {
   test("demo command runs walkthrough with mocked LLM and exits cleanly", async () => {
     const home = await useTempHome();
     const cwd = await createCwd();
+    await writeSettings(home, listSettings({ provider: "anthropic" }));
 
     const result = runCli(
       ["demo", "--provider", "anthropic", "--model", "mock-claude"],
