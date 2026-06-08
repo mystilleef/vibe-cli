@@ -1,3 +1,4 @@
+// fallow-ignore-file unused-file
 /**
  * Preload helper: captures the input object passed to runPrune() and
  * writes it to the file named in VIBE_PRUNE_CAPTURE.

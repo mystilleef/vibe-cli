@@ -1,3 +1,4 @@
+// fallow-ignore-file unused-file
 const mode = process.env["VIBE_TEST_ANTHROPIC_MODE"] ?? "proceed";
 
 function anthropicMessage(text: string): Response {

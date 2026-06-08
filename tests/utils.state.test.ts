@@ -66,8 +66,12 @@ describe("getHistorySummary", () => {
 
 describe("addToHistory", () => {
   test("keeps session capped at 10 entries by shifting oldest", async () => {
-    const { addToHistory, clearSession } = await getState();
-    await clearSession("cap");
+    const { addToHistory } = await getState();
+    // Clear session directly via database
+    const handle0 = openVibeDatabase({ legacyImports: "none" });
+    handle0.db
+      .prepare("DELETE FROM interactions WHERE session_id = ?")
+      .run("cap");
 
     for (let i = 0; i < 11; i++) {
       await addToHistory("cap", { goal: `g${i}`, plan: `p${i}` }, `out${i}`);
@@ -133,12 +137,15 @@ describe("addToHistory", () => {
   });
 });
 
-describe("clearSession", () => {
-  test("removes session so getHistorySummary returns empty", async () => {
-    const { addToHistory, clearSession, getHistorySummary } = await getState();
+describe("clearSession (internal)", () => {
+  test("removing interactions makes getHistorySummary return empty", async () => {
+    const { addToHistory, getHistorySummary } = await getState();
     await addToHistory("del", { goal: "g", plan: "p" }, "o");
-    await clearSession("del");
+    // Delete directly via database (clearSession is no longer exported)
     const handle = openVibeDatabase({ legacyImports: "none" });
+    handle.db
+      .prepare("DELETE FROM interactions WHERE session_id = ?")
+      .run("del");
     const count = handle.db
       .query("SELECT count(*) AS count FROM interactions WHERE session_id = ?")
       .get("del") as { count: number };
@@ -146,10 +153,14 @@ describe("clearSession", () => {
     expect(getHistorySummary("del")).toBe("");
   });
 
-  test("persists the deletion across connections", async () => {
-    const { addToHistory, clearSession, getHistorySummary } = await getState();
+  test("deletion persists across connections", async () => {
+    const { addToHistory, getHistorySummary } = await getState();
     await addToHistory("del2", { goal: "g", plan: "p" }, "o");
-    await clearSession("del2");
+    // Delete directly via database
+    const handle = openVibeDatabase({ legacyImports: "none" });
+    handle.db
+      .prepare("DELETE FROM interactions WHERE session_id = ?")
+      .run("del2");
     expect(getHistorySummary("del2")).toBe("");
   });
 });

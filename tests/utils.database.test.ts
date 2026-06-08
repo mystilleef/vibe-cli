@@ -765,3 +765,54 @@ describe("openVibeDatabase", () => {
     expect(totalCount.count).toBe(2);
   });
 });
+
+describe("openVibeDatabase branch coverage", () => {
+  test("custom path creates parent directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-cli-db-mkdir-"));
+    roots.push(root);
+    const nestedPath = join(root, "deep", "nested", "dir", DATABASE_FILENAME);
+
+    const handle = openTracked(nestedPath);
+
+    expect(handle.path).toBe(nestedPath);
+    const tables = handle.db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'",
+      )
+      .get() as { name: string } | null;
+    expect(tables).toEqual({ name: "sessions" });
+  });
+
+  test("in-memory database skips journal mode and caching", () => {
+    const handle = openVibeDatabase({ path: ":memory:" });
+    handles.push(handle);
+
+    expect(handle.path).toBe(":memory:");
+    const journalMode = handle.db.query("PRAGMA journal_mode").get() as {
+      journal_mode: string;
+    };
+    // :memory: databases don't get WAL mode set
+    expect(journalMode.journal_mode).not.toBe("wal");
+  });
+
+  test("legacyImports all with default path triggers importAllLegacyData", async () => {
+    const home = await useTempHome();
+    const handle = openVibeDatabase({ legacyImports: "all" });
+    handles.push(handle);
+
+    expect(handle.path).toBe(join(home.dataRoot, DATABASE_FILENAME));
+    expect(readMigrationIds(handle)).toEqual(EXPECTED_MIGRATION_IDS);
+  });
+
+  test("openVibeDatabaseWithMigrationReport with custom path and captureReport", async () => {
+    const databasePath = await tempDatabasePath("report-capture");
+    const { database, report } = openVibeDatabaseWithMigrationReport({
+      path: databasePath,
+    });
+    handles.push(database);
+
+    expect(report.pending.length).toBeGreaterThan(0);
+    expect(report.status).toBe("migrated");
+    expect(readMigrationIds(database)).toEqual(EXPECTED_MIGRATION_IDS);
+  });
+});

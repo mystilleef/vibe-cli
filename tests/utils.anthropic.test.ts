@@ -315,4 +315,78 @@ describe("callAnthropic error handling", () => {
 
     expect(result).toBe("");
   });
+
+  test("auth error without request id omits suffix", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "unauthorized" } }), {
+        status: 401,
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "bad-key",
+      }),
+    ).rejects.toThrow(
+      "Anthropic auth failed (401). Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.",
+    );
+  });
+
+  test("generic error uses x-request-id when anthropic-request-id absent", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "overloaded" } }), {
+        status: 500,
+        headers: { "x-request-id": "xreq-789" },
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow("request id: xreq-789");
+  });
+
+  test("includes system prompt in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      systemPrompt: "system instructions",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.system).toBe("system instructions");
+  });
+
+  test("omits system key from body when systemPrompt absent", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.system).toBeUndefined();
+  });
+
+  test("error with empty parsed object falls back to raw text", async () => {
+    mockFetch(new Response("", { status: 500 }));
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow("Anthropic error 500");
+  });
 });

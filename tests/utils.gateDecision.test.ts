@@ -210,4 +210,75 @@ describe("parseGateDecision", () => {
     expect(result.confidence).toBe(0.9);
     expect(result.reason).toBe("final answer");
   });
+
+  test("findMatchingCloseBrace handles backslash at end of string value", () => {
+    // The reason value ends with a single backslash
+    const raw = 'data {"proceed":true,"confidence":0.7,"reason":"path \\"}';
+    const result = parseGateDecision(raw);
+    expect(typeof result.proceed).toBe("boolean");
+    expect(typeof result.confidence).toBe("number");
+  });
+
+  test("findMatchingCloseBrace handles multiple escaped sequences in string", () => {
+    const raw =
+      'prefix {"proceed":false,"confidence":0.55,"reason":"line1 \\n line2 \\t tab"}';
+    const result = parseGateDecision(raw);
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.55);
+  });
+
+  test("lastIndexOf picks brace inside string causing brace extraction to fail", () => {
+    // { inside the reason value — lastIndexOf finds it, not the outer {
+    const raw =
+      'text {"proceed":true,"confidence":0.8,"reason":"has { inside"}';
+    const result = parseGateDecision(raw);
+    // Stage 2 fails because brace extraction targets the wrong { → blocking default
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+  });
+
+  test("findMatchingCloseBrace skips brace inside string value", () => {
+    const raw =
+      'text {"proceed":false,"confidence":0.45,"reason":"has } inside"}';
+    const result = parseGateDecision(raw);
+    // The } inside the string is skipped; outer braces match correctly
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.45);
+    expect(result.reason).toBe("has } inside");
+  });
+
+  test("adjacent braces in string value cause brace extraction to fail", () => {
+    const raw = 'x {"proceed":true,"confidence":0.6,"reason":"a{}b"}';
+    const result = parseGateDecision(raw);
+    // lastIndexOf finds { inside "a{}b" → brace extraction fails
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+  });
+
+  test("findMatchingCloseBrace with no matching close returns blocking default", () => {
+    const raw = '{"proceed":true,"confidence":0.9,"reason":"unclosed';
+    const result = parseGateDecision(raw);
+    // lastOpen finds the { at index 0, findMatchingCloseBrace returns -1
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+  });
+
+  test("findMatchingCloseBrace skips escaped quote correctly", () => {
+    // \\" inside the string is an escaped quote — should not toggle inString
+    const raw =
+      'ctx {"proceed":true,"confidence":0.88,"reason":"say \\"hello\\""}';
+    const result = parseGateDecision(raw);
+    expect(result.proceed).toBe(true);
+    expect(result.confidence).toBe(0.88);
+  });
+
+  test("Stage 2 fails gracefully when brace extraction yields non-JSON", () => {
+    // lastIndexOf finds { inside a string value, not the outer object
+    const raw =
+      'reason is {not json} and {"proceed":true,"confidence":0.9,"reason":"ok"}';
+    const result = parseGateDecision(raw);
+    // lastIndexOf finds the { in the outer JSON object
+    expect(result.proceed).toBe(true);
+    expect(result.confidence).toBe(0.9);
+  });
 });

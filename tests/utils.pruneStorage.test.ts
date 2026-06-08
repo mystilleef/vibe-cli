@@ -367,6 +367,84 @@ describe("collectDuplicateLearningPruneGroups", () => {
     expect(groups[0]?.kept.timestamp).toBe(30);
     expect(groups[0]?.prunable).toHaveLength(2);
   });
+
+  test("forms connected component from chain of three overlapping entries", () => {
+    seedLearningEntries([
+      { category: "chain", observation: "alpha beta gamma", timestamp: 10 },
+      { category: "chain", observation: "alpha beta delta", timestamp: 20 },
+      { category: "chain", observation: "alpha beta epsilon", timestamp: 30 },
+    ]);
+
+    const groups = collectDuplicateLearningPruneGroups();
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.kept.timestamp).toBe(30);
+    expect(groups[0]?.prunable).toHaveLength(2);
+    expect(groups[0]?.overlapScores.length).toBeGreaterThan(0);
+  });
+
+  test("separates disconnected entries into isolated nodes (no group)", () => {
+    seedLearningEntries([
+      {
+        category: "iso",
+        observation: "completely unique phrase",
+        timestamp: 10,
+      },
+      {
+        category: "iso",
+        observation: "totally different words",
+        timestamp: 20,
+      },
+    ]);
+
+    const groups = collectDuplicateLearningPruneGroups({
+      overlapThreshold: 0.8,
+    });
+
+    expect(groups).toHaveLength(0);
+  });
+
+  test("groups duplicates independently per category", () => {
+    seedLearningEntries([
+      { category: "cat-a", observation: "shared pattern one", timestamp: 10 },
+      { category: "cat-a", observation: "shared pattern two", timestamp: 20 },
+      { category: "cat-b", observation: "shared pattern one", timestamp: 30 },
+      { category: "cat-b", observation: "shared pattern two", timestamp: 40 },
+    ]);
+
+    const groups = collectDuplicateLearningPruneGroups();
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.category).toBe("cat-a");
+    expect(groups[1]?.category).toBe("cat-b");
+  });
+
+  test("overlap scores filtered to component membership", () => {
+    seedLearningEntries([
+      { category: "sc", observation: "alpha beta gamma delta", timestamp: 10 },
+      {
+        category: "sc",
+        observation: "alpha beta gamma epsilon",
+        timestamp: 20,
+      },
+      { category: "sc", observation: "alpha beta gamma zeta", timestamp: 30 },
+    ]);
+
+    const groups = collectDuplicateLearningPruneGroups();
+
+    expect(groups).toHaveLength(1);
+    const firstGroup = groups[0];
+    expect(firstGroup).toBeDefined();
+    if (!firstGroup) return;
+    const componentIds = new Set([
+      firstGroup.kept.id,
+      ...firstGroup.prunable.map((p) => p.id),
+    ]);
+    for (const score of firstGroup.overlapScores) {
+      expect(componentIds.has(score.firstId)).toBe(true);
+      expect(componentIds.has(score.secondId)).toBe(true);
+    }
+  });
 });
 
 // ── collectStaleSessionPruneCandidates ────────────────────────────────────

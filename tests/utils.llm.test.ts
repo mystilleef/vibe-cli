@@ -674,7 +674,167 @@ describe("extractContent edge cases", () => {
   });
 });
 
-describe("revisePlan without blockReason", () => {
+describe("buildContextSection through getMentorFeedback", () => {
+  test("includes userPrompt in context when provided", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "response with user prompt";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      userPrompt: "do it carefully",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("response with user prompt");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toContain(
+      "User Prompt: do it carefully",
+    );
+  });
+
+  test("includes progress in context when provided", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "response with progress";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      progress: "50% complete",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("response with progress");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toContain(
+      "Progress: 50% complete",
+    );
+  });
+
+  test("includes uncertainties in context when provided", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "response with uncertainties";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      uncertainties: ["rate limits", "auth scope"],
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("response with uncertainties");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toContain(
+      "Uncertainties: rate limits, auth scope",
+    );
+  });
+
+  test("includes taskContext in context when provided", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "response with task context";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      taskContext: "working on auth module",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("response with task context");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toContain(
+      "Task Context: working on auth module",
+    );
+  });
+
+  test("includes historySummary in context when provided", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "response with history";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      historySummary: "previously fixed auth bug",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("response with history");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toContain(
+      "History Context: previously fixed auth bug",
+    );
+  });
+
+  test("includes all optional fields together", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "full context response";
+
+    const result = await getMentorFeedback({
+      goal: "deploy service",
+      plan: "build and test",
+      userPrompt: "be thorough",
+      progress: "80%",
+      uncertainties: ["network latency"],
+      taskContext: "production deploy",
+      historySummary: "last deploy succeeded",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("full context response");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    const content = request.request.messages[1]?.content as string;
+    expect(content).toContain("Goal: deploy service");
+    expect(content).toContain("Plan: build and test");
+    expect(content).toContain("User Prompt: be thorough");
+    expect(content).toContain("Progress: 80%");
+    expect(content).toContain("Uncertainties: network latency");
+    expect(content).toContain("Task Context: production deploy");
+    expect(content).toContain("History Context: last deploy succeeded");
+  });
+
+  test("excludes empty uncertainties array from context", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "no uncertainties";
+
+    await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      uncertainties: [],
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).not.toContain("Uncertainties");
+  });
+
+  test("includes constitution rules when set", async () => {
+    process.env["USE_LEARNING_HISTORY"] = "false";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "with rules";
+    resetConstitution(["always verify inputs", "log errors"]);
+
+    await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    const content = request.request.messages[1]?.content as string;
+    expect(content).toContain("Constitution:");
+    expect(content).toContain("- always verify inputs");
+    expect(content).toContain("- log errors");
+  });
+});
+
+describe("revisePlan edge cases", () => {
   test("omits block reason line from prompt when blockReason absent", async () => {
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "revised plan";
