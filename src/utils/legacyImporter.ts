@@ -28,6 +28,11 @@ interface LegacyLearningEntry {
   demoId?: string;
 }
 
+interface ValidatedLegacyLearningEntry extends LegacyLearningEntry {
+  mistake: string;
+  timestamp: number;
+}
+
 interface ImportedLearningEntry {
   type?: string;
   category: string;
@@ -198,7 +203,55 @@ function isLegacySessionRecord(value: unknown): value is LegacySessionRecord {
   );
 }
 
-function extractLearningEntries(
+export function validateLegacyLearningEntry(
+  entry: unknown,
+): ValidatedLegacyLearningEntry | null {
+  if (!entry || typeof entry !== "object") return null;
+  const e = entry as LegacyLearningEntry;
+  if (
+    typeof e.mistake !== "string" ||
+    typeof e.timestamp !== "number" ||
+    (e.type !== undefined &&
+      !["mistake", "preference", "success"].includes(e.type)) ||
+    (e.solution !== undefined && typeof e.solution !== "string") ||
+    (e.demoId !== undefined && typeof e.demoId !== "string")
+  ) {
+    return null;
+  }
+  return e as ValidatedLegacyLearningEntry;
+}
+
+export function mapLegacyEntry(
+  entry: ValidatedLegacyLearningEntry,
+  category: string,
+): ImportedLearningEntry {
+  return {
+    ...(entry.type !== undefined && { type: entry.type }),
+    category: entry.category ?? category,
+    observation: entry.mistake,
+    ...(entry.solution !== undefined && { solution: entry.solution }),
+    timestamp: entry.timestamp,
+    ...(entry.demoId !== undefined && { demoId: entry.demoId }),
+  };
+}
+
+export function extractCategoryEntries(
+  category: string,
+  data: unknown,
+): ImportedLearningEntry[] | null {
+  if (!data || typeof data !== "object") return null;
+  const examples = (data as { examples?: unknown }).examples;
+  if (!Array.isArray(examples)) return null;
+  const entries: ImportedLearningEntry[] = [];
+  for (const example of examples) {
+    const validated = validateLegacyLearningEntry(example);
+    if (!validated) return null;
+    entries.push(mapLegacyEntry(validated, category));
+  }
+  return entries;
+}
+
+export function extractLearningEntries(
   value: unknown,
 ): ImportedLearningEntry[] | null {
   if (!value || typeof value !== "object") return null;
@@ -206,31 +259,9 @@ function extractLearningEntries(
   if (!log.mistakes || typeof log.mistakes !== "object") return null;
   const entries: ImportedLearningEntry[] = [];
   for (const [category, data] of Object.entries(log.mistakes)) {
-    if (!data || typeof data !== "object") return null;
-    const examples = (data as { examples?: unknown }).examples;
-    if (!Array.isArray(examples)) return null;
-    for (const example of examples) {
-      if (!example || typeof example !== "object") return null;
-      const entry = example as LegacyLearningEntry;
-      if (
-        typeof entry.mistake !== "string" ||
-        typeof entry.timestamp !== "number" ||
-        (entry.type !== undefined &&
-          !["mistake", "preference", "success"].includes(entry.type)) ||
-        (entry.solution !== undefined && typeof entry.solution !== "string") ||
-        (entry.demoId !== undefined && typeof entry.demoId !== "string")
-      ) {
-        return null;
-      }
-      entries.push({
-        ...(entry.type !== undefined && { type: entry.type }),
-        category: entry.category ?? category,
-        observation: entry.mistake,
-        ...(entry.solution !== undefined && { solution: entry.solution }),
-        timestamp: entry.timestamp,
-        ...(entry.demoId !== undefined && { demoId: entry.demoId }),
-      });
-    }
+    const categoryEntries = extractCategoryEntries(category, data);
+    if (!categoryEntries) return null;
+    entries.push(...categoryEntries);
   }
   return entries;
 }

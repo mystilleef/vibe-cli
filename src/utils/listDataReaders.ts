@@ -17,7 +17,11 @@ import type {
   ListSession,
   ListStats,
 } from "./listDataTypes.js";
-import { applyListLimit, compareListText, groupBy } from "./listDataUtils.js";
+import {
+  applyListLimit,
+  compareListText,
+  groupBy,
+} from "./listDataUtilsCollections.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
 interface RuleRow {

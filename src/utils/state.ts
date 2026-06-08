@@ -60,15 +60,6 @@ export function getHistorySummary(sessionId = "default"): string {
 }
 
 /**
- * Drop all history for `sessionId`. No-op if the session has no rows.
- */
-export async function clearSession(sessionId: string): Promise<void> {
-  withDatabase((db) =>
-    db.prepare("DELETE FROM interactions WHERE session_id = ?").run(sessionId),
-  );
-}
-
-/**
  * Append an interaction to `sessionId`'s history and persist.
  * Caps the buffer at 10 entries (oldest dropped first).
  */

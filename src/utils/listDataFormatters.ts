@@ -10,14 +10,14 @@ import type {
   ListStats,
 } from "./listDataTypes.js";
 import { LIST_COMMAND_NAMES } from "./listDataTypes.js";
+import { groupBy } from "./listDataUtilsCollections.js";
 import {
   formatAlignedRows,
   formatListSection,
   formatRelativeTime,
-  groupBy,
-  parseCheckReason,
   truncateText,
-} from "./listDataUtils.js";
+} from "./listDataUtilsFormatting.js";
+import { parseCheckReason } from "./listDataUtilsParsing.js";
 import type { LearningEntry } from "./storage.js";
 
 /** Pretty overview used by the root `vibe list` group. */

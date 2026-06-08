@@ -12,12 +12,9 @@ export {
   type LearningEntry,
   type LearningType,
 } from "./learningEntryCore.js";
-export type { DestructivePruneResult } from "./pruneStorage.js";
 export {
   collectPruneCandidates,
-  computePruneTargetCounts,
   executeDestructivePrune,
-  PRUNE_TARGET_ORDER,
 } from "./pruneStorage.js";
 
 /**
