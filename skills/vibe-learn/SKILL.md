@@ -37,26 +37,23 @@ Skip speculative, temporary, or in-context-only observations.
 
 ## Workflow
 
-1. **Load CLI schema once per session**—run `vibe schema`; treat output
-   as authoritative for commands, flags, outputs, and exit codes.
-2. **Decide persistence**—record only concrete observations from
-   completed work or explicit user feedback; skip generic or
-   context-only notes.
-3. **Classify one outcome**:
-   - `mistake`: something went wrong; a better future action exists.
-   - `success`: a concrete approach worked and should repeat.
-   - `preference`: the user expressed a durable preference or
-     constraint.
-4. **Build one `vibe learn` call** from the live schema:
+1. **GATE**—Proceed only for concrete outcomes from completed work or
+   explicit user feedback; skip generic, speculative, or in-context-only
+   observations.
+2. **ORIENT**—Goal: append one durable lesson to the vibe log. Won't
+   change: existing log entries.
+3. **ACT**—Run `vibe schema` once per session; classify the outcome as
+   `mistake`, `success`, or `preference`; construct one `vibe learn`
+   call:
    - `observation`: what happened or what the user prefers (one
      sentence).
    - `solution`: action, prevention, or success factor when needed (one
      sentence).
-5. **Run** `vibe learn` for one outcome only.
-6. **Inspect output**:
-   - Added: report the recorded lesson.
-   - Already known: report no added duplicates.
-   - Failed: report the failure; don't retry with guessed flags.
+4. **VERIFY**—Confirm the entry has one observation, no sensitive data,
+   and no duplicate matches.
+5. **PERSIST**—Run `vibe learn`.
+6. **REPORT**—Confirm the added entry, report an existing duplicate, or
+   report the failure without retrying with guessed flags.
 
 ## Directives
 
