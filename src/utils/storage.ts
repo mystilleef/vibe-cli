@@ -8,40 +8,14 @@ import { learningRowToEntry } from "./learningEntryCore.js";
 
 export {
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
-  getLearningOverlapScore,
   isLearningOverlapDuplicate,
-  LEARNING_TYPES,
   type LearningEntry,
-  type LearningEntryStorageRow,
   type LearningType,
-  learningRowToEntry,
 } from "./learningEntryCore.js";
-export type {
-  DestructivePruneOptions,
-  DestructivePruneResult,
-  DuplicateLearningPruneGroup,
-  DuplicateLearningPruneOptions,
-  LearningDuplicateOverlapScore,
-  LearningPruneCandidate,
-  PruneCandidateOptions,
-  PruneCandidateSets,
-  PruneFailureDetail,
-  PruneFailureTarget,
-  PruneTarget,
-  PruneTargetCounts,
-  SessionPruneCandidate,
-  SessionPruneCascadeCounts,
-  StaleLearningPruneOptions,
-  StaleSessionPruneOptions,
-} from "./pruneStorage.js";
+export type { DestructivePruneResult } from "./pruneStorage.js";
 export {
-  collectDemoLearningPruneCandidates,
-  collectDuplicateLearningPruneGroups,
   collectPruneCandidates,
-  collectStaleLearningPruneCandidates,
-  collectStaleSessionPruneCandidates,
   computePruneTargetCounts,
-  createPruneDatabaseBackup,
   executeDestructivePrune,
   PRUNE_TARGET_ORDER,
 } from "./pruneStorage.js";

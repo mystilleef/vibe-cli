@@ -1,7 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { withDatabase } from "./database.js";
 
 /** Duration in milliseconds before an unaccessed session expires (4 hours). */
@@ -26,20 +23,7 @@ interface SessionRow {
   last_accessed_at: string;
 }
 
-/**
- * Returns the vibe-cli data root directory (`~/.vibe-cli`).
- *
- * Uses `$HOME` when set, falling back to `os.homedir()`.
- */
-export function getDataRoot(): string {
-  return path.join(process.env["HOME"] ?? os.homedir(), ".vibe-cli");
-}
-
-/** Creates the data root directory if it does not already exist. */
-export function ensureDataDir(): void {
-  const dataDir = getDataRoot();
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-}
+export { getDataRoot } from "./db-core.js";
 
 /**
  * Derives a deterministic, truncated SHA-256 key from a working directory path.

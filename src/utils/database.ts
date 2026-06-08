@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { ensureDataDir } from "./autosession.js";
+import { ensureDataDir } from "./db-core.js";
 import {
   getLegacyArtifactPath,
   importAllLegacyData,

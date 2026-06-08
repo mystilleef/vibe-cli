@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  createPruneDatabaseBackup,
-  executeDestructivePrune,
-} from "../src/utils/storage";
+import { createPruneDatabaseBackup } from "../src/utils/pruneStorage";
+import { executeDestructivePrune } from "../src/utils/storage";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;

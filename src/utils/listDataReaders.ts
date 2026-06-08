@@ -1,5 +1,11 @@
 import { resolveAutosession } from "./autosession.js";
 import { withDatabase } from "./database.js";
+import {
+  type LearningEntry,
+  type LearningEntryStorageRow,
+  type LearningType,
+  learningRowToEntry,
+} from "./learningEntryCore.js";
 import type {
   ListAllData,
   ListCategorySummary,
@@ -11,15 +17,8 @@ import type {
   ListSession,
   ListStats,
 } from "./listDataTypes.js";
-
 import { applyListLimit, compareListText, groupBy } from "./listDataUtils.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
-import {
-  type LearningEntry,
-  type LearningEntryStorageRow,
-  type LearningType,
-  learningRowToEntry,
-} from "./storage.js";
 
 interface RuleRow {
   rule: string;

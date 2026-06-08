@@ -8,13 +8,15 @@ import {
   withDatabase,
 } from "../src/utils/database";
 import {
-  addLearningEntry,
   collectDemoLearningPruneCandidates,
   collectDuplicateLearningPruneGroups,
-  collectPruneCandidates,
   collectStaleLearningPruneCandidates,
   collectStaleSessionPruneCandidates,
   createPruneDatabaseBackup,
+} from "../src/utils/pruneStorage";
+import {
+  addLearningEntry,
+  collectPruneCandidates,
   executeDestructivePrune,
   getLearningCategorySummary,
   getLearningContextText,

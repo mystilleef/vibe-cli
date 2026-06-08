@@ -4,10 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withDatabase } from "../src/utils/database";
 import {
-  applyListLimit,
-  buildListStats,
-  formatAlignedRows,
-  formatListAll,
   formatListCategories,
   formatListChecks,
   formatListCommandOverview,
@@ -16,8 +12,6 @@ import {
   formatListProviders,
   formatListSessions,
   formatListStats,
-  formatRelativeTime,
-  parseCheckReason,
   parseLearningType,
   parseListLimit,
   readListAll,
@@ -28,11 +22,21 @@ import {
   readListProviders,
   readListSessions,
   readListStats,
-  summarizeLearningCategories,
   toListOverviewJson,
   toProvidersJson,
-  truncateText,
 } from "../src/utils/listData";
+import { formatListAll } from "../src/utils/listDataFormatters";
+import {
+  buildListStats,
+  summarizeLearningCategories,
+} from "../src/utils/listDataReaders";
+import {
+  applyListLimit,
+  formatAlignedRows,
+  formatRelativeTime,
+  parseCheckReason,
+  truncateText,
+} from "../src/utils/listDataUtils";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;

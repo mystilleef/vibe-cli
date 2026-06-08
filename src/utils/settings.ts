@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getDataRoot } from "./db-core.js";
 
 export const SETTINGS_FILE_MISSING_ERROR =
   "No settings found. Copy settings.example.json to ~/.vibe-cli/settings.json";
@@ -31,8 +31,8 @@ export interface ProviderSettingsEntry {
 
 type RawObject = Record<string, unknown>;
 
-export function getSettingsPath(): string {
-  return join(process.env["HOME"] ?? homedir(), ".vibe-cli", "settings.json");
+function getSettingsPath(): string {
+  return join(getDataRoot(), "settings.json");
 }
 
 export function loadProviderSettings(): ProviderSettings {

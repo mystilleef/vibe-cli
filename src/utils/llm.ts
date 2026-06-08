@@ -1,20 +1,10 @@
 import { getConstitution } from "../tools/constitution.js";
 import { type GateDecision, parseGateDecision } from "./gateDecision.js";
-import {
-  callProvider,
-  type ResolvedProviderCredentials,
-  resolveProviderAndModel,
-} from "./provider.js";
+import { callProvider, resolveProviderAndModel } from "./provider.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 import { getLearningContextText } from "./storage.js";
 
-export {
-  callProvider,
-  type GateDecision,
-  parseGateDecision,
-  type ResolvedProviderCredentials,
-  resolveProviderAndModel,
-};
+export { callProvider, type GateDecision, parseGateDecision };
 
 /** System prompt injected into every mentor feedback generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
