@@ -37,19 +37,21 @@ Skip when no concrete rule-management need exists.
 
 ## Workflow
 
-1. **Confirm need**: Proceed only for concrete rule changes; avoid
-   running on every session start.
-2. **Load schema**: Run `vibe schema` once per session to get commands
-   and flags.
-3. **Inspect rules**: Run `vibe constitution get` before any
-   modification.
-4. **Classify actions**:
-   - Constraints match: Make no change.
-   - Rules absent: Run `vibe constitution set`.
-   - Rules stale/conflicting/clearing: Run `vibe constitution reset`.
-5. **Apply**: Set one constraint per rule flag; avoid broad, temporary,
-   or vague rules.
-6. **Verify**: Run `vibe constitution get` to confirm updates.
+1. **GATE**—Proceed only for concrete rule changes; avoid running on
+   every session start.
+2. **ORIENT**—Goal: align constitution rules with user constraints.
+   Won't change: unrelated rules.
+3. **ACT**—Run `vibe schema` once per session; run
+   `vibe constitution get` to inspect current rules.
+4. **VERIFY**—Compare current rules against target constraints;
+   classify:
+   - Match: no change needed.
+   - Absent: `vibe constitution set` required.
+   - Stale or conflicting: `vibe constitution reset` required.
+5. **PERSIST**—Apply the classified action; set one constraint per flag.
+   Skip if rules already match.
+6. **REPORT**—Run `vibe constitution get` to confirm; report final rule
+   state.
 
 ## Directives
 
