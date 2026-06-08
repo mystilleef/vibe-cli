@@ -1700,6 +1700,121 @@ describe("CLI autosession surface", () => {
     expect(payload["attempts"]).toBeGreaterThanOrEqual(1);
   });
 
+  test("settings.json without maxAttempts — falls through to env/default", async () => {
+    const home = await useTempHome();
+    // Write settings WITHOUT maxAttempts — should fall through to env
+    await writeSettings(home, listSettings({ provider: "anthropic" }));
+
+    const result = runCli(
+      [
+        "check",
+        "--goal",
+        "ship safely",
+        "--plan",
+        "run targeted tests",
+        "--provider",
+        "anthropic",
+        "--model",
+        "mock-claude",
+      ],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "block",
+          VIBE_MAX_ATTEMPTS: "2",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    // Should use env var (2) since settings.maxAttempts is absent
+    expect(result.exitCode).toBe(2);
+    expect(payload).toMatchObject({
+      proceed: false,
+      exhausted: true,
+      attempts: 2,
+    });
+  });
+
+  test("settings maxAttempts used when CLI option absent", async () => {
+    const home = await useTempHome();
+    await writeSettings(
+      home,
+      listSettings({ provider: "anthropic", maxAttempts: 1 }),
+    );
+
+    const result = runCli(
+      [
+        "check",
+        "--goal",
+        "ship safely",
+        "--plan",
+        "run targeted tests",
+        "--provider",
+        "anthropic",
+        "--model",
+        "mock-claude",
+      ],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "block",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(result.exitCode).toBe(2);
+    expect(payload).toMatchObject({
+      proceed: false,
+      exhausted: true,
+      attempts: 1,
+    });
+  });
+
+  test("--max-attempts CLI overrides settings maxAttempts", async () => {
+    const home = await useTempHome();
+    await writeSettings(
+      home,
+      listSettings({ provider: "anthropic", maxAttempts: 1 }),
+    );
+
+    const result = runCli(
+      [
+        "check",
+        "--goal",
+        "ship safely",
+        "--plan",
+        "run targeted tests",
+        "--provider",
+        "anthropic",
+        "--model",
+        "mock-claude",
+        "--max-attempts",
+        "3",
+      ],
+      {
+        home: home.home,
+        preload: mockAnthropicFetch,
+        env: {
+          ANTHROPIC_API_KEY: "ak",
+          DEFAULT_MODEL: undefined,
+          VIBE_TEST_ANTHROPIC_MODE: "proceed",
+        },
+      },
+    );
+    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(result.exitCode).toBe(0);
+    expect(payload).toMatchObject({ proceed: true, attempts: 1 });
+  });
+
   test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings({ provider: "anthropic" }));

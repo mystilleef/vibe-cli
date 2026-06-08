@@ -16,6 +16,7 @@ export type ProviderSpec = (typeof SUPPORTED_PROVIDER_SPECS)[number];
 export interface ProviderSettings {
   provider: string;
   model?: string;
+  maxAttempts?: number;
   providers: ProviderSettingsEntry[];
 }
 
@@ -73,9 +74,15 @@ function validateProviderSettings(value: unknown): ProviderSettings {
     "provider not set in settings.json",
   );
   const model = optionalString(root["model"], "settings.json model");
+  const maxAttempts = optionalPositiveInt(root["maxAttempts"], "maxAttempts");
   const providers = validateProviders(root["providers"]);
 
-  return { provider, providers, ...(model !== undefined && { model }) };
+  return {
+    provider,
+    providers,
+    ...(model !== undefined && { model }),
+    ...(maxAttempts !== undefined && { maxAttempts }),
+  };
 }
 
 function validateProviders(value: unknown): ProviderSettingsEntry[] {
@@ -179,4 +186,17 @@ function optionalString(value: unknown, label: string): string | undefined {
     return value;
   }
   throw new Error(`${label} must be a non-empty string in settings.json`);
+}
+
+function optionalPositiveInt(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value >= 1) {
+    return value;
+  }
+  throw new Error(`${label} must be a positive integer in settings.json`);
 }

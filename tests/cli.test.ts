@@ -6,6 +6,25 @@ import {
   resolveModelOverride,
 } from "../src/utils/cliHelpers";
 
+/** Run fn with VIBE_MAX_ATTEMPTS set to value, restoring the original afterward. */
+function withMaxAttemptsEnv(value: string | undefined, fn: () => void): void {
+  const original = process.env["VIBE_MAX_ATTEMPTS"];
+  try {
+    if (value === undefined) {
+      delete process.env["VIBE_MAX_ATTEMPTS"];
+    } else {
+      process.env["VIBE_MAX_ATTEMPTS"] = value;
+    }
+    fn();
+  } finally {
+    if (original === undefined) {
+      delete process.env["VIBE_MAX_ATTEMPTS"];
+    } else {
+      process.env["VIBE_MAX_ATTEMPTS"] = original;
+    }
+  }
+}
+
 describe("resolveModelOverride", () => {
   test("returns empty object when neither provider nor model set", () => {
     expect(resolveModelOverride({})).toEqual({});
@@ -89,6 +108,75 @@ describe("buildCheckParams", () => {
     expect(
       buildCheckParams({ ...baseOpts, maxAttempts: undefined }).maxAttempts,
     ).toBe(10);
+  });
+
+  test("uses settingsMaxAttempts when CLI option absent", () => {
+    const result = buildCheckParams(baseOpts, 7);
+    expect(result.maxAttempts).toBe(7);
+  });
+
+  test("CLI option overrides settingsMaxAttempts", () => {
+    const result = buildCheckParams({ ...baseOpts, maxAttempts: "3" }, 7);
+    expect(result.maxAttempts).toBe(3);
+  });
+
+  test("settingsMaxAttempts overrides env var", () => {
+    withMaxAttemptsEnv("2", () => {
+      const result = buildCheckParams(baseOpts, 7);
+      expect(result.maxAttempts).toBe(7);
+    });
+  });
+
+  test("env var used when settingsMaxAttempts and CLI absent", () => {
+    withMaxAttemptsEnv("4", () => {
+      const result = buildCheckParams(baseOpts);
+      expect(result.maxAttempts).toBe(4);
+    });
+  });
+
+  test("falls back to default 10 when all sources absent", () => {
+    withMaxAttemptsEnv(undefined, () => {
+      const result = buildCheckParams(baseOpts);
+      expect(result.maxAttempts).toBe(10);
+    });
+  });
+
+  test("env var NaN falls back to default 10", () => {
+    withMaxAttemptsEnv("abc", () => {
+      const result = buildCheckParams(baseOpts);
+      expect(result.maxAttempts).toBe(10);
+    });
+  });
+
+  test("env var '0' clamped to 1 by Math.max", () => {
+    withMaxAttemptsEnv("0", () => {
+      const result = buildCheckParams(baseOpts);
+      // parseInt('0') = 0, resolved = 0, Math.max(1, 0) = 1
+      expect(result.maxAttempts).toBe(1);
+    });
+  });
+
+  test("settingsMaxAttempts used when env var is NaN", () => {
+    withMaxAttemptsEnv("abc", () => {
+      const result = buildCheckParams(baseOpts, 5);
+      expect(result.maxAttempts).toBe(5);
+    });
+  });
+
+  test("CLI '0' falls through to settingsMaxAttempts", () => {
+    const result = buildCheckParams({ ...baseOpts, maxAttempts: "0" }, 7);
+    expect(result.maxAttempts).toBe(7);
+  });
+
+  test("CLI NaN falls through to settingsMaxAttempts", () => {
+    const result = buildCheckParams({ ...baseOpts, maxAttempts: "abc" }, 7);
+    expect(result.maxAttempts).toBe(7);
+  });
+
+  test("CLI negative wins over settingsMaxAttempts, clamped to 1", () => {
+    const result = buildCheckParams({ ...baseOpts, maxAttempts: "-5" }, 7);
+    // -5 is valid (not 0, not NaN), so CLI wins; Math.max(1, -5) = 1
+    expect(result.maxAttempts).toBe(1);
   });
 
   test("includes model override when provider set", () => {

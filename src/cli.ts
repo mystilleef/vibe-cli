@@ -49,6 +49,7 @@ import {
 } from "./utils/listData.js";
 import { verifyConnection } from "./utils/llm.js";
 import { buildSchema } from "./utils/schema.js";
+import { loadProviderSettings } from "./utils/settings.js";
 
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
@@ -231,14 +232,16 @@ const checkCmd = program
   .option("--uncertainty <text...>", "Uncertainties (repeatable)")
   .option("--context <text>", "Task context")
   .option("--prompt <text>", "Original user prompt")
-  .option(
-    "--max-attempts <n>",
-    "Max refinement attempts before giving up",
-    process.env["VIBE_MAX_ATTEMPTS"] ?? "10",
-  );
+  .option("--max-attempts <n>", "Max refinement attempts before giving up");
 addModelOptions(checkCmd);
 checkCmd.action(async (opts) => {
-  const { params, maxAttempts } = buildCheckParams(opts);
+  let settingsMaxAttempts: number | undefined;
+  try {
+    settingsMaxAttempts = loadProviderSettings().maxAttempts;
+  } catch {
+    // Graceful degradation: missing/invalid settings fall through to env/default
+  }
+  const { params, maxAttempts } = buildCheckParams(opts, settingsMaxAttempts);
   const result = await vibeGateLoop(params, maxAttempts);
   emit(result);
   if (!result.proceed) process.exit(2);

@@ -392,6 +392,86 @@ describe("loadProviderSettings", () => {
     expect(settings.providers[0]?.apiVersion).toBeUndefined();
     expect(settings.providers[0]?.authTokenEnvVar).toBeUndefined();
   });
+
+  test("loads maxAttempts when set to a positive integer", async () => {
+    await writeSettings(validSettings({ maxAttempts: 5 }));
+
+    const settings = loadProviderSettings();
+
+    expect(settings.maxAttempts).toBe(5);
+  });
+
+  test("omits maxAttempts when not specified", async () => {
+    await writeSettings(validSettings());
+
+    const settings = loadProviderSettings();
+
+    expect(settings.maxAttempts).toBeUndefined();
+  });
+
+  test("fails when maxAttempts is zero", async () => {
+    await writeSettings(validSettings({ maxAttempts: 0 }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is negative", async () => {
+    await writeSettings(validSettings({ maxAttempts: -3 }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is a non-integer number", async () => {
+    await writeSettings(validSettings({ maxAttempts: 2.5 }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is a string", async () => {
+    await writeSettings(validSettings({ maxAttempts: "5" }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is null", async () => {
+    await writeSettings(validSettings({ maxAttempts: null }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is a boolean", async () => {
+    await writeSettings(validSettings({ maxAttempts: true }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is Infinity", async () => {
+    await writeSettings(validSettings({ maxAttempts: Infinity }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  test("fails when maxAttempts is NaN", async () => {
+    await writeSettings(validSettings({ maxAttempts: NaN }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "maxAttempts must be a positive integer in settings.json",
+    );
+  });
 });
 
 describe("resolveProviderEntry", () => {

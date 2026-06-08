@@ -1,5 +1,6 @@
 {
   "provider": "gemini",
+  "maxAttempts": 10,
   "providers": [
     {
       "name": "gemini",
