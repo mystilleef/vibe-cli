@@ -1,5 +1,5 @@
+import { LEARNING_TYPES, type LearningType } from "./learningEntryCore.js";
 import type { ListClock } from "./listDataTypes.js";
-import type { LearningType } from "./storage.js";
 
 const ELLIPSIS = "…";
 
@@ -31,7 +31,6 @@ export function parseListLimit(value?: number | string): number | undefined {
 /** Parse and validate a learning type filter. */
 export function parseLearningType(value?: string): LearningType | undefined {
   if (value === undefined) return undefined;
-  const LEARNING_TYPES = ["mistake", "preference", "success"] as const;
   if (LEARNING_TYPES.includes(value as LearningType))
     return value as LearningType;
   throw new Error("--type must be mistake, preference, or success");

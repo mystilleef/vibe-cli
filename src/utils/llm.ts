@@ -1,21 +1,20 @@
-import type { GoogleGenerativeAI } from "@google/generative-ai";
-import type OpenAI from "openai";
 import { getConstitution } from "../tools/constitution.js";
-import { callAnthropic } from "./anthropic.js";
 import { type GateDecision, parseGateDecision } from "./gateDecision.js";
+import {
+  callProvider,
+  type ResolvedProviderCredentials,
+  resolveProviderAndModel,
+} from "./provider.js";
+import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 import { getLearningContextText } from "./storage.js";
 
-export { type GateDecision, parseGateDecision };
-
-/** Lazily-initialized Gemini client; created on first use when GEMINI_API_KEY is set. */
-let genAI: GoogleGenerativeAI | null = null;
-/** Lazily-initialized OpenAI client; created on first use when OPENAI_API_KEY is set. */
-let openaiClient: OpenAI | null = null;
-
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
-const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
-const MIMO_BASE_URL = "https://api.xiaomimimo.com/v1";
+export {
+  callProvider,
+  type GateDecision,
+  parseGateDecision,
+  type ResolvedProviderCredentials,
+  resolveProviderAndModel,
+};
 
 /** System prompt injected into every mentor feedback generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
@@ -60,318 +59,6 @@ interface ReviewOutput {
   feedback: string;
 }
 
-async function ensureGemini() {
-  if (!genAI && process.env["GEMINI_API_KEY"]) {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    genAI = new GoogleGenerativeAI(process.env["GEMINI_API_KEY"]);
-  }
-}
-
-async function ensureOpenAI() {
-  if (!openaiClient && process.env["OPENAI_API_KEY"]) {
-    const { OpenAI } = await import("openai");
-    openaiClient = new OpenAI({ apiKey: process.env["OPENAI_API_KEY"] });
-  }
-}
-
-/** Priority-ordered provider detection entries: [{envVar, provider}, ...]. First env var set wins. */
-const PROVIDER_DETECTION_ORDER: Array<{ envVar: string; provider: string }> = [
-  { envVar: "ANTHROPIC_API_KEY", provider: "anthropic" },
-  { envVar: "ANTHROPIC_AUTH_TOKEN", provider: "anthropic" },
-  { envVar: "GEMINI_API_KEY", provider: "gemini" },
-  { envVar: "OPENAI_API_KEY", provider: "openai" },
-  { envVar: "OPENROUTER_API_KEY", provider: "openrouter" },
-  { envVar: "DEEPSEEK_API_KEY", provider: "deepseek" },
-  { envVar: "OPENCODE_API_KEY", provider: "opencode" },
-  { envVar: "MIMO_API_KEY", provider: "mimo" },
-];
-
-/** Detect the active LLM provider from environment variables. Priority: DEFAULT_LLM_PROVIDER > ANTHROPIC > GEMINI > OPENAI > OPENROUTER > DEEPSEEK > OPENCODE > gemini (fallback). */
-export function detectProvider(): string {
-  if (process.env["DEFAULT_LLM_PROVIDER"])
-    return process.env["DEFAULT_LLM_PROVIDER"];
-  const entry = PROVIDER_DETECTION_ORDER.find(
-    ({ envVar }) => !!process.env[envVar as keyof typeof process.env],
-  );
-  return entry?.provider ?? "gemini";
-}
-
-/** Default model identifier for each supported provider. Empty string means the provider requires an explicit --model. */
-export const DEFAULT_MODELS: Record<string, string> = {
-  gemini: "gemini-2.5-flash",
-  openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5-20251001",
-  openrouter: "",
-  deepseek: "deepseek-v4-pro",
-  opencode: "kimi-k2.6",
-  mimo: "mimo-v2.5-pro",
-};
-
-/**
- * Resolve the effective provider and model from overrides, env vars, and defaults.
- *
- * Provider resolution order: `modelOverride.provider` → `detectProvider()`.
- * Model resolution order: `modelOverride.model` → `DEFAULT_MODEL` env → `DEFAULT_MODELS[provider]` → "".
- */
-function resolveProviderAndModel(modelOverride?: {
-  provider?: string;
-  model?: string;
-}): { provider: string; model: string } {
-  const provider = modelOverride?.provider || detectProvider();
-  const model =
-    modelOverride?.model ||
-    process.env["DEFAULT_MODEL"] ||
-    DEFAULT_MODELS[provider] ||
-    "";
-  return { provider, model };
-}
-
-/**
- * Classify a Gemini error for retry eligibility.
- *
- * Uses message-substring heuristics since the Gemini SDK may not expose
- * typed error codes at runtime.
- *
- * Retryable (model-not-found, context-length):
- *   - "not found", "context length", "context window"
- *
- * Non-retryable (auth, rate/quota, network, unknown):
- *   - everything else, including "api key", "api_key", "quota", "rate",
- *     "429", "exceeded"
- */
-function isRetryableGeminiError(err: unknown): boolean {
-  const msg =
-    err instanceof Error
-      ? err.message.toLowerCase()
-      : String(err).toLowerCase();
-  return (
-    msg.includes("not found") ||
-    msg.includes("context length") ||
-    msg.includes("context window")
-  );
-}
-
-async function callGemini(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature = 0.2,
-): Promise<string> {
-  await ensureGemini();
-  if (!genAI) throw new Error("GEMINI_API_KEY not set.");
-
-  const request = {
-    contents: [{ role: "user", parts: [{ text: userContent }] }],
-    generationConfig: { temperature },
-  };
-
-  const client = genAI;
-  const generate = (modelName: string) =>
-    client
-      .getGenerativeModel({
-        model: modelName,
-        systemInstruction: systemPrompt,
-      })
-      .generateContent(request);
-
-  try {
-    return (await generate(model || "gemini-2.5-pro")).response.text();
-  } catch (err) {
-    if (isRetryableGeminiError(err)) {
-      return (await generate("gemini-2.5-flash")).response.text();
-    }
-    throw err;
-  }
-}
-
-/** Build a standard chat completion messages array from system and user prompts. */
-function buildMessages(systemPrompt: string, userContent: string) {
-  return [
-    { role: "system" as const, content: systemPrompt },
-    { role: "user" as const, content: userContent },
-  ];
-}
-
-/** Extract the text content from an OpenAI-compatible chat completion response. */
-function extractContent(response: {
-  choices: Array<{ message: { content: string | null } }>;
-}): string {
-  return response.choices[0]?.message.content || "";
-}
-
-async function callOpenAI(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-): Promise<string> {
-  await ensureOpenAI();
-  if (!openaiClient) throw new Error("OPENAI_API_KEY not set.");
-  const res = await openaiClient.chat.completions.create({
-    model: model || DEFAULT_MODELS["openai"] || "gpt-4o-mini",
-    messages: buildMessages(systemPrompt, userContent),
-    ...(temperature !== undefined && { temperature }),
-  });
-  return extractContent(res);
-}
-
-/** Call the OpenRouter API via direct fetch. Requires an explicit --model. */
-async function callOpenRouter(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-): Promise<string> {
-  if (!process.env["OPENROUTER_API_KEY"])
-    throw new Error("OPENROUTER_API_KEY not set.");
-  if (!model) throw new Error("--model is required with provider openrouter.");
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env["OPENROUTER_API_KEY"]}`,
-      "HTTP-Referer": "http://localhost",
-      "X-Title": "Vibe Check CLI",
-    },
-    body: JSON.stringify({
-      model,
-      messages: buildMessages(systemPrompt, userContent),
-      ...(temperature !== undefined && { temperature }),
-    }),
-  });
-  const data = (await res.json()) as {
-    choices: Array<{ message: { content: string | null } }>;
-  };
-  return extractContent(data);
-}
-
-async function callOpenAICompat({
-  baseURL,
-  apiKey,
-  model,
-  systemPrompt,
-  userContent,
-  temperature,
-}: {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  systemPrompt: string;
-  userContent: string;
-  temperature?: number;
-}): Promise<string> {
-  const { OpenAI } = await import("openai");
-  const client = new OpenAI({ apiKey, baseURL });
-  const response = await client.chat.completions.create({
-    model,
-    messages: buildMessages(systemPrompt, userContent),
-    ...(temperature !== undefined && { temperature }),
-  });
-  return extractContent(response);
-}
-
-async function callDeepSeek(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-): Promise<string> {
-  if (!process.env["DEEPSEEK_API_KEY"])
-    throw new Error("DEEPSEEK_API_KEY not set.");
-  return callOpenAICompat({
-    baseURL: DEEPSEEK_BASE_URL,
-    apiKey: process.env["DEEPSEEK_API_KEY"],
-    model: model || "deepseek-chat",
-    systemPrompt,
-    userContent,
-    ...(temperature !== undefined && { temperature }),
-  });
-}
-
-async function callMimo(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-): Promise<string> {
-  const apiKey = process.env["MIMO_API_KEY"];
-  if (!apiKey) throw new Error("MIMO_API_KEY not set.");
-  return callOpenAICompat({
-    baseURL: MIMO_BASE_URL,
-    apiKey,
-    model: model || "mimo-v2.5-pro",
-    systemPrompt,
-    userContent,
-    ...(temperature !== undefined && { temperature }),
-  });
-}
-
-async function callOpenCode(
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-): Promise<string> {
-  const apiKey = process.env["OPENCODE_API_KEY"];
-  if (!apiKey) throw new Error("OPENCODE_API_KEY not set.");
-  return callOpenAICompat({
-    baseURL: OPENCODE_GO_BASE_URL,
-    apiKey,
-    model: model || "kimi-k2.6",
-    systemPrompt,
-    userContent,
-    ...(temperature !== undefined && { temperature }),
-  });
-}
-
-/** Provider call function signature shared by all dispatchers. */
-type ProviderCallFn = (
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-) => Promise<string>;
-
-/** Registry of provider call functions keyed by provider name. Add new providers here. */
-const PROVIDER_CALL_REGISTRY: Record<string, ProviderCallFn> = {
-  gemini: callGemini,
-  openai: callOpenAI,
-  openrouter: callOpenRouter,
-  deepseek: callDeepSeek,
-  opencode: callOpenCode,
-  mimo: callMimo,
-  anthropic: (model, systemPrompt, userContent, temperature) =>
-    callAnthropic({
-      model:
-        model || DEFAULT_MODELS["anthropic"] || "claude-haiku-4-5-20251001",
-      systemPrompt,
-      compiledPrompt: userContent,
-      ...(temperature !== undefined && { temperature }),
-    }),
-};
-
-/**
- * Dispatch an LLM call to the resolved provider.
- *
- * Passes system and user prompts as distinct arguments to every provider.
- * Throws on unknown provider names.
- */
-async function callProvider(
-  provider: string,
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature = 0.2,
-): Promise<string> {
-  const fn = PROVIDER_CALL_REGISTRY[provider];
-  if (!fn) {
-    throw new Error(
-      `Unknown provider: ${provider}. Use ${Object.keys(PROVIDER_CALL_REGISTRY).join(" | ")}.`,
-    );
-  }
-  return fn(model, systemPrompt, userContent, temperature);
-}
-
 /**
  * Assemble the full context block sent to the metacognitive LLM.
  *
@@ -405,9 +92,12 @@ function buildContextSection(input: ReviewInput): string {
 }
 
 async function generateResponse(input: ReviewInput): Promise<ReviewOutput> {
-  const { provider, model } = resolveProviderAndModel(input.modelOverride);
+  const { provider, model, credentials } = resolveProviderAndModel(
+    input.modelOverride,
+  );
   const responseText = await callProvider(
     provider,
+    credentials,
     model,
     SYSTEM_PROMPT,
     buildContextSection(input),
@@ -435,7 +125,9 @@ export async function revisePlan(input: {
   blockReason?: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<string> {
-  const { provider, model } = resolveProviderAndModel(input.modelOverride);
+  const { provider, model, credentials } = resolveProviderAndModel(
+    input.modelOverride,
+  );
   const userContent = [
     `Goal: ${input.goal}`,
     `Blocked plan: ${input.plan}`,
@@ -444,6 +136,7 @@ export async function revisePlan(input: {
   ].join("\n");
   return callProvider(
     provider,
+    credentials,
     model,
     PLAN_REVISION_SYSTEM_PROMPT,
     userContent,
@@ -474,10 +167,13 @@ export async function getGateDecision(input: {
   feedback: string;
   modelOverride?: { provider?: string; model?: string };
 }): Promise<GateDecision> {
-  const { provider, model } = resolveProviderAndModel(input.modelOverride);
+  const { provider, model, credentials } = resolveProviderAndModel(
+    input.modelOverride,
+  );
   const userContent = `Goal: ${input.goal}\nPlan: ${input.plan}\nFeedback: ${input.feedback}`;
   const raw = await callProvider(
     provider,
+    credentials,
     model,
     GATE_SYSTEM_PROMPT,
     userContent,
@@ -505,33 +201,45 @@ export async function verifyConnection(opts?: {
   provider?: string;
   model?: string;
 }): Promise<VerifyResult> {
-  const provider = opts?.provider || detectProvider();
-  const model =
-    opts?.model ||
-    process.env["DEFAULT_MODEL"] ||
-    DEFAULT_MODELS[provider] ||
-    "";
   const probe =
     "Reply with exactly one sentence confirming you are reachable and working.";
   const start = Date.now();
+  let providerName = opts?.provider ?? "";
+  let modelName = opts?.model ?? "";
   try {
-    const result = await generateResponse({
-      goal: probe,
-      plan: probe,
-      modelOverride: { provider, ...(model && { model }) },
-    });
+    const resolved = resolveProviderAndModel(opts);
+    providerName = resolved.provider.name;
+    modelName = resolved.model;
+    const responseText = await callProvider(
+      resolved.provider,
+      resolved.credentials,
+      resolved.model,
+      SYSTEM_PROMPT,
+      buildContextSection({ goal: probe, plan: probe }),
+    );
     return {
       ok: true,
-      provider,
-      model: model || "(default)",
+      provider: providerName,
+      model: modelName,
       latency_ms: Date.now() - start,
-      response: result.feedback.slice(0, 200),
+      response: responseText.slice(0, 200),
     };
   } catch (err) {
+    if (!providerName || !modelName) {
+      try {
+        const settings = loadProviderSettings();
+        const provider = resolveProviderEntry(settings, opts?.provider);
+        providerName = provider.name;
+        modelName =
+          opts?.model ?? settings.model ?? provider.defaultModel ?? "";
+      } catch {
+        // Keep the original configuration error in the result.
+      }
+    }
     return {
       ok: false,
-      provider,
-      model: model || "(default)",
+      provider: providerName,
+      model: modelName || "(default)",
       error: err instanceof Error ? err.message : String(err),
     };
   }

@@ -88,7 +88,7 @@ export function formatListSessions(sessions: readonly ListSession[]): string {
   return formatListSection("Sessions", body);
 }
 
-/** Render static providers and mark the locally detected active provider. */
+/** Render configured providers and mark the settings-selected active provider. */
 export function formatListProviders(state: ListProviderState): string {
   const rows = Object.entries(state.providers).map(([provider, model]) => [
     provider,

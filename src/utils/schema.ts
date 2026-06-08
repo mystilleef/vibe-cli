@@ -1,17 +1,23 @@
-import { DEFAULT_MODELS, detectProvider } from "./llm.js";
+import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
 /**
  * Build the compact agent-facing schema for commands, outputs, and exits.
  *
- * The schema reports the currently detected provider and model so agents can
+ * The schema reports the settings-resolved provider and model so agents can
  * inspect runtime configuration without invoking an LLM request.
  */
 export function buildSchema() {
-  const provider = detectProvider();
-  const model =
-    process.env["DEFAULT_MODEL"] ||
-    DEFAULT_MODELS[provider] ||
-    "(required via --model)";
+  let provider = "unresolved";
+  let model = "(settings.json required)";
+  try {
+    const settings = loadProviderSettings();
+    const providerEntry = resolveProviderEntry(settings);
+    provider = providerEntry.name;
+    model =
+      settings.model ?? providerEntry.defaultModel ?? "(required via --model)";
+  } catch (error) {
+    model = error instanceof Error ? error.message : String(error);
+  }
   return {
     v: "1.0.0",
     data: "~/.vibe-cli/",
@@ -26,7 +32,7 @@ export function buildSchema() {
           "--uncertainty": "str (repeatable)",
           "--context": "str",
           "--prompt": "str",
-          "--provider": "gemini|openai|openrouter|anthropic|deepseek|opencode",
+          "--provider": "settings provider entry name",
           "--model": "str",
           "--max-attempts": "int=10 (refinement loop limit)",
         },

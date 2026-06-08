@@ -3,6 +3,13 @@
 /** Discriminator for the kind of learning entry. */
 export type LearningType = "mistake" | "preference" | "success";
 
+/** Canonical ordered tuple of all learning types for validation. */
+export const LEARNING_TYPES: readonly LearningType[] = [
+  "mistake",
+  "preference",
+  "success",
+];
+
 /**
  * A single persisted learning record.
  *

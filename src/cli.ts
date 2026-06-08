@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import { loadDotenv } from "./utils/dotenv.js";
-
-loadDotenv();
-
 /**
  * Register the `vibe` command surface and preserve JSON-only process output.
  *
@@ -22,6 +18,7 @@ import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
+import { warnLegacyDotenv } from "./utils/dotenv.js";
 import {
   formatListAll,
   formatListCategories,
@@ -61,10 +58,7 @@ function fatal(message: string): never {
 
 function addModelOptions(cmd: Command) {
   return cmd
-    .option(
-      "--provider <name>",
-      "LLM provider: gemini | openai | openrouter | anthropic | deepseek | opencode",
-    )
+    .option("--provider <name>", "settings provider entry name")
     .option("--model <name>", "Model name override");
 }
 
@@ -176,7 +170,7 @@ const LIST_COMMANDS = [
   },
   {
     name: "providers",
-    description: "List static provider model defaults",
+    description: "List configured provider model defaults",
     options: [],
     action: buildListAction(
       readListProviders,
@@ -366,7 +360,7 @@ demoCmd.action(async (opts) => {
 
 const list = program
   .command("list")
-  .description("List local stored data and static provider configuration")
+  .description("List local stored data and configured providers")
   .option("--json", "Emit machine-readable JSON instead of pretty text");
 list.action(() => {
   emitListResult(list, toListOverviewJson(), formatListCommandOverview());
@@ -379,7 +373,7 @@ for (const cmd of LIST_COMMANDS) {
     cmd.name,
     cmd.description,
     [...cmd.options],
-    cmd.action,
+    (opts) => cmd.action(opts),
   );
 }
 
@@ -423,6 +417,9 @@ program
 program
   .command("schema")
   .description("Emit compact JSON schema for agent consumption")
-  .action(() => emit(buildSchema()));
+  .action(() => {
+    emit(buildSchema());
+  });
 
+warnLegacyDotenv();
 program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));

@@ -1,21 +1,13 @@
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export function loadDotenv(): void {
-  try {
-    const lines = readFileSync(
-      join(homedir(), ".vibe-cli", ".env"),
-      "utf8",
-    ).split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim();
-      if (key && val && !process.env[key]) process.env[key] = val;
-    }
-  } catch {}
+const LEGACY_DOTENV_WARNING =
+  "Deprecated ~/.vibe-cli/.env ignored. Move provider settings to ~/.vibe-cli/settings.json and provide secrets through the parent process environment.";
+
+export function warnLegacyDotenv(): void {
+  const home = process.env["HOME"] ?? homedir();
+  if (existsSync(join(home, ".vibe-cli", ".env"))) {
+    process.stderr.write(`${LEGACY_DOTENV_WARNING}\n`);
+  }
 }

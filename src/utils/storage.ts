@@ -10,6 +10,7 @@ export {
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
   isLearningOverlapDuplicate,
+  LEARNING_TYPES,
   type LearningEntry,
   type LearningEntryStorageRow,
   type LearningType,

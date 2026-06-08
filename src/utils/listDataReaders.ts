@@ -13,7 +13,7 @@ import type {
 } from "./listDataTypes.js";
 
 import { applyListLimit, compareListText, groupBy } from "./listDataUtils.js";
-import { DEFAULT_MODELS, detectProvider } from "./llm.js";
+import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 import {
   type LearningEntry,
   type LearningEntryStorageRow,
@@ -103,16 +103,17 @@ export function readListSessions(): ListSession[] {
   );
 }
 
-/** Read static providers plus the locally detected active provider marker. */
+/** Read configured providers plus the settings-selected active provider marker. */
 export function readListProviders(): ListProviderState {
-  return {
-    activeProvider: detectProvider(),
-    providers: Object.fromEntries(
-      Object.entries(DEFAULT_MODELS).sort(([left], [right]) =>
-        compareListText(left, right),
-      ),
-    ),
-  };
+  const settings = loadProviderSettings();
+  const activeProvider = resolveProviderEntry(settings).name;
+  const providers = Object.fromEntries(
+    settings.providers
+      .map((provider) => [provider.name, provider.defaultModel ?? ""] as const)
+      .sort(([left], [right]) => compareListText(left, right)),
+  );
+
+  return { activeProvider, providers };
 }
 
 /** Convert provider state to the exact JSON provider-model map. */
