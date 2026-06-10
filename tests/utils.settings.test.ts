@@ -153,6 +153,7 @@ describe("loadProviderSettings", () => {
       "deepseek",
       "mimo",
       "opencode",
+      "opencode-anthropic",
       "qwen-dashscope",
     ]);
     expect(
