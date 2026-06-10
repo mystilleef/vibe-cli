@@ -28,6 +28,8 @@ export interface ProviderSettingsEntry {
   baseUrl?: string;
   apiVersion?: string;
   authTokenEnvVar?: string;
+  /** Pin or suppress temperature for this provider. `null` omits it entirely. */
+  temperature?: number | null;
 }
 
 type RawObject = Record<string, unknown>;
@@ -130,6 +132,10 @@ function validateProviderEntry(
     provider["authTokenEnvVar"],
     `${name}.authTokenEnvVar`,
   );
+  const temperature = optionalNullableNumber(
+    provider["temperature"],
+    `${name}.temperature`,
+  );
 
   if (spec === "openai" && baseUrl === undefined) {
     throw new Error(
@@ -145,6 +151,7 @@ function validateProviderEntry(
     ...(baseUrl !== undefined && { baseUrl }),
     ...(apiVersion !== undefined && { apiVersion }),
     ...(authTokenEnvVar !== undefined && { authTokenEnvVar }),
+    ...(temperature !== undefined && { temperature }),
   };
 }
 
@@ -199,4 +206,14 @@ function optionalPositiveInt(
     return value;
   }
   throw new Error(`${label} must be a positive integer in settings.json`);
+}
+
+function optionalNullableNumber(
+  value: unknown,
+  label: string,
+): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new Error(`${label} must be a finite number or null in settings.json`);
 }

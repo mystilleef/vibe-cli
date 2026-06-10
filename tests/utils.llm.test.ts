@@ -462,7 +462,7 @@ describe("LLM call surfaces", () => {
 
     expect(result).toBe("revised plan");
     const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.temperature).toBe(0.3);
+    expect(request.request.temperature).toBe(0.1);
     expect(request.request.messages[0]?.content).toContain("plan reviser");
     expect(request.request.messages[1]?.content).toContain(
       "Blocked plan: old plan",
@@ -963,5 +963,281 @@ describe("callProvider credential guards", () => {
         "user",
       ),
     ).rejects.toThrow("Resolved provider API key is unavailable.");
+  });
+});
+
+describe("temperature resolution via provider settings", () => {
+  test("provider temperature null omits temperature from OpenAI request", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "custom-openai"
+            ? { ...provider, temperature: null }
+            : provider,
+        ),
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    await verifyConnection();
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBeUndefined();
+  });
+
+  test("provider temperature null omits temperature from Anthropic request", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "anthropic",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "anthropic"
+            ? { ...provider, temperature: null }
+            : provider,
+        ),
+      }),
+    );
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
+    mockFetch(() =>
+      Response.json({ content: [{ type: "text", text: "anth ok" }] }),
+    );
+
+    await verifyConnection();
+
+    const body = parseBody<Record<string, unknown>>(
+      requireValue(fetchCalls[0], "fetch call 0").init,
+    );
+    expect(body["temperature"]).toBeUndefined();
+  });
+
+  test("provider temperature null omits temperature from Gemini request", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "gemini",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "gemini"
+            ? { ...provider, temperature: null }
+            : provider,
+        ),
+      }),
+    );
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["ok"];
+
+    await verifyConnection();
+
+    expect(geminiCalls[0]?.generationConfig?.temperature).toBeUndefined();
+  });
+
+  test("provider explicit temperature is used for OpenAI", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "custom-openai"
+            ? { ...provider, temperature: 0.7 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    await verifyConnection();
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBe(0.7);
+  });
+
+  test("provider explicit temperature is used for Anthropic", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "anthropic",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "anthropic"
+            ? { ...provider, temperature: 0.7 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
+    mockFetch(() =>
+      Response.json({ content: [{ type: "text", text: "anth ok" }] }),
+    );
+
+    await verifyConnection();
+
+    const body = parseBody<Record<string, unknown>>(
+      requireValue(fetchCalls[0], "fetch call 0").init,
+    );
+    expect(body["temperature"]).toBe(0.7);
+  });
+
+  test("provider explicit temperature is used for Gemini", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "gemini",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "gemini"
+            ? { ...provider, temperature: 0.7 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["ok"];
+
+    await verifyConnection();
+
+    expect(geminiCalls[0]?.generationConfig?.temperature).toBe(0.7);
+  });
+
+  test("default temperature 0.1 used when provider has no temperature set", async () => {
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    await getMentorFeedback({
+      goal: "goal",
+      plan: "plan",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBe(0.1);
+  });
+
+  test("provider temperature zero is sent to OpenAI", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "custom-openai"
+            ? { ...provider, temperature: 0 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    await verifyConnection();
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBe(0);
+  });
+
+  test("modelOverride temperature wins over model selection only", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "custom-openai"
+            ? { ...provider, temperature: 0.7 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    await getGateDecision({
+      goal: "goal",
+      plan: "plan",
+      feedback: "feedback",
+      modelOverride: { provider: "custom-openai", model: "custom-model" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBe(0.7);
+    expect(request.request.model).toBe("custom-model");
+  });
+
+  test("revisePlan uses provider temperature when set", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "custom-openai"
+            ? { ...provider, temperature: 0.5 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "revised plan";
+
+    await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.temperature).toBe(0.5);
+  });
+
+  test("provider temperature zero is sent to Anthropic", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "anthropic",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "anthropic"
+            ? { ...provider, temperature: 0 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
+    mockFetch(() =>
+      Response.json({ content: [{ type: "text", text: "anth ok" }] }),
+    );
+
+    await verifyConnection();
+
+    const body = parseBody<Record<string, unknown>>(
+      requireValue(fetchCalls[0], "fetch call 0").init,
+    );
+    expect(body["temperature"]).toBe(0);
+  });
+
+  test("provider temperature zero is sent to Gemini", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "gemini",
+        providers: mockSettings().providers.map((provider) =>
+          provider.name === "gemini"
+            ? { ...provider, temperature: 0 }
+            : provider,
+        ),
+      }),
+    );
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["ok"];
+
+    await verifyConnection();
+
+    expect(geminiCalls[0]?.generationConfig?.temperature).toBe(0);
+  });
+
+  test("default temperature 0.1 used for Anthropic when provider has no temperature set", async () => {
+    await writeSettings(mockSettings({ provider: "anthropic" }));
+    process.env["ANTHROPIC_API_KEY"] = "anth-key";
+    mockFetch(() =>
+      Response.json({ content: [{ type: "text", text: "anth ok" }] }),
+    );
+
+    await verifyConnection();
+
+    const body = parseBody<Record<string, unknown>>(
+      requireValue(fetchCalls[0], "fetch call 0").init,
+    );
+    expect(body["temperature"]).toBe(0.1);
+  });
+
+  test("default temperature 0.1 used for Gemini when provider has no temperature set", async () => {
+    await writeSettings(mockSettings({ provider: "gemini" }));
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["ok"];
+
+    await verifyConnection();
+
+    expect(geminiCalls[0]?.generationConfig?.temperature).toBe(0.1);
   });
 });

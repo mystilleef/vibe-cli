@@ -130,7 +130,6 @@ export async function revisePlan(input: {
     model,
     PLAN_REVISION_SYSTEM_PROMPT,
     userContent,
-    0.3,
   );
 }
 
@@ -148,8 +147,8 @@ Output ONLY one line of valid JSON — no markdown, no extra text:
 /**
  * Request a go/no-go gate decision from the configured LLM.
  *
- * Uses low temperature (0.1) for deterministic verdicts. The returned `GateDecision`
- * always has valid fields — `parseGateDecision` applies a blocking default on parse failure.
+ * The returned `GateDecision` always has valid fields — `parseGateDecision` applies
+ * a blocking default on parse failure.
  */
 export async function getGateDecision(input: {
   goal: string;
@@ -167,7 +166,6 @@ export async function getGateDecision(input: {
     model,
     GATE_SYSTEM_PROMPT,
     userContent,
-    0.1,
   );
   return parseGateDecision(raw);
 }

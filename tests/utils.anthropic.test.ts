@@ -378,6 +378,47 @@ describe("callAnthropic error handling", () => {
     expect(body.system).toBeUndefined();
   });
 
+  test("omits temperature from body when temperature undefined", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBeUndefined();
+  });
+
+  test("includes temperature in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0.5,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(0.5);
+  });
+
+  test("includes temperature zero in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(0);
+  });
+
   test("error with empty parsed object falls back to raw text", async () => {
     mockFetch(new Response("", { status: 500 }));
 

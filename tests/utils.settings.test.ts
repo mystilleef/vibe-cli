@@ -391,6 +391,151 @@ describe("loadProviderSettings", () => {
     expect(settings.providers[0]?.baseUrl).toBeUndefined();
     expect(settings.providers[0]?.apiVersion).toBeUndefined();
     expect(settings.providers[0]?.authTokenEnvVar).toBeUndefined();
+    expect(settings.providers[0]?.temperature).toBeUndefined();
+  });
+
+  test("loads provider temperature when set to a finite number", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: 0.7,
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.temperature).toBe(0.7);
+  });
+
+  test("loads provider temperature when set to zero", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: 0,
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.temperature).toBe(0);
+  });
+
+  test("loads provider temperature null as null", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: null,
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.temperature).toBeNull();
+  });
+
+  test("fails when provider temperature is a string", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: "0.7",
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.temperature must be a finite number or null in settings.json",
+    );
+  });
+
+  test("fails when provider temperature is boolean", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: true,
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.temperature must be a finite number or null in settings.json",
+    );
+  });
+
+  test("provider temperature as negative number is accepted", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: -0.5,
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.temperature).toBe(-0.5);
+  });
+
+  test("fails when provider temperature is an object", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: { value: 0.5 },
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.temperature must be a finite number or null in settings.json",
+    );
+  });
+
+  test("fails when provider temperature is an array", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            temperature: [0.5],
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.temperature must be a finite number or null in settings.json",
+    );
   });
 
   test("loads maxAttempts when set to a positive integer", async () => {

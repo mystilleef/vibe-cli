@@ -81,14 +81,16 @@ async function callGemini(
   model: string,
   systemPrompt: string,
   userContent: string,
-  temperature = 0.2,
+  temperature?: number,
 ): Promise<string> {
   await ensureGemini(apiKey);
   if (!genAI) throw new Error("Gemini client unavailable.");
 
   const request = {
     contents: [{ role: "user", parts: [{ text: userContent }] }],
-    generationConfig: { temperature },
+    generationConfig: {
+      ...(temperature !== undefined && { temperature }),
+    },
   };
 
   const client = genAI;
@@ -154,8 +156,13 @@ export async function callProvider(
   model: string,
   systemPrompt: string,
   userContent: string,
-  temperature = 0.2,
+  temperature = 0.1,
 ): Promise<string> {
+  const resolvedTemp =
+    provider.temperature === null
+      ? undefined
+      : (provider.temperature ?? temperature);
+
   const spec = provider.spec;
   if (spec === "openai") {
     return callOpenAICompat({
@@ -164,7 +171,7 @@ export async function callProvider(
       model,
       systemPrompt,
       userContent,
-      temperature,
+      ...(resolvedTemp !== undefined && { temperature: resolvedTemp }),
     });
   }
 
@@ -173,7 +180,7 @@ export async function callProvider(
       model,
       systemPrompt,
       compiledPrompt: userContent,
-      ...(temperature !== undefined && { temperature }),
+      ...(resolvedTemp !== undefined && { temperature: resolvedTemp }),
       ...(provider.baseUrl !== undefined && { baseUrl: provider.baseUrl }),
       ...(provider.apiVersion !== undefined && {
         version: provider.apiVersion,
@@ -191,7 +198,7 @@ export async function callProvider(
       model,
       systemPrompt,
       userContent,
-      temperature,
+      resolvedTemp,
     );
   }
 

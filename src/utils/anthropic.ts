@@ -180,7 +180,7 @@ export async function callAnthropic({
   compiledPrompt,
   systemPrompt,
   maxTokens = 1024,
-  temperature = 0.2,
+  temperature,
   baseUrl,
   apiKey,
   authToken,
@@ -206,8 +206,8 @@ export async function callAnthropic({
   const body: Record<string, unknown> = {
     model,
     max_tokens: maxTokens,
-    temperature,
     messages: [{ role: "user", content: compiledPrompt }],
+    ...(temperature !== undefined && { temperature }),
   };
   if (systemPrompt) body["system"] = systemPrompt;
 
