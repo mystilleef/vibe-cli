@@ -2,10 +2,8 @@
 
 ## Commands
 
-- **Install:** `bun install`
-- **Test:** `bun coverage`
 - **Lint:** `bun check`
-- **Verify:** `bun verify`
+- **Test:** `bun verify`
 - **Provider configuration required for model commands:**
   - Copy `settings.example.json` to `~/.vibe-cli/settings.json`
   - Export at least one secret matching a configured `envVar`, such as:
@@ -26,7 +24,7 @@
 
 - After edits:
   - Run `bun check` to address lint issues
-  - Run `bun verify`, at your discretion, for comprehensive validation.
+  - Run `bun verify` for full suite comprehensive tests.
 
 ### Testing rules
 
@@ -36,7 +34,8 @@
 
 ## Gotchas
 
-- Provider metadata requires `~/.vibe-cli/settings.json`; legacy `.env` provider settings get ignored.
+- Provider metadata requires `~/.vibe-cli/settings.json`; legacy `.env`
+  provider settings get ignored.
 - CLI commands emit JSON to `stdout` on success, and error JSON
   `{"error":"..."}` to `stderr` with exit code 1 on failure.
 - `Autosessions` expire after four hours of inactivity.
