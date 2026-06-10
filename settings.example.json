@@ -6,7 +6,7 @@
       "name": "gemini",
       "spec": "gemini",
       "envVar": "GEMINI_API_KEY",
-      "defaultModel": "gemini-2.5-flash"
+      "defaultModel": "gemini-3.5-flash"
     },
     {
       "name": "openai",
@@ -48,8 +48,15 @@
       "name": "opencode",
       "spec": "openai",
       "envVar": "OPENCODE_API_KEY",
-      "baseUrl": "https://api.opencode.ai/v1",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
       "defaultModel": "kimi-k2.6"
+    },
+    {
+      "name": "opencode-anthropic",
+      "spec": "anthropic",
+      "envVar": "OPENCODE_API_KEY",
+      "baseUrl": "https://opencode.ai/zen/go",
+      "defaultModel": "qwen3.7-max"
     },
     {
       "name": "qwen-dashscope",
