@@ -133,7 +133,7 @@ async function seedSchemaMigrationsOnly(
 ): Promise<void> {
   await mkdir(home.dataRoot, { recursive: true });
   const db = new Database(join(home.dataRoot, "vibe.db"));
-  db.exec(`
+  db.run(`
     CREATE TABLE schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
@@ -151,7 +151,7 @@ async function seedSchemaMigrationsOnly(
 async function seedInitialMigrationOnly(home: TempHomeContext): Promise<void> {
   await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
   const db = new Database(join(home.dataRoot, "vibe.db"));
-  db.exec(`
+  db.run(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       cwd_key TEXT NOT NULL UNIQUE,
@@ -1326,7 +1326,7 @@ describe("CLI autosession surface", () => {
 
     await mkdir(home.dataRoot, { recursive: true });
     const db = new Database(dbPath);
-    db.exec(`
+    db.run(`
       CREATE TABLE schema_migrations (
         id TEXT PRIMARY KEY,
         applied_at TEXT NOT NULL
