@@ -43,6 +43,7 @@ const DEFAULT_PROVIDERS = [
 export function mockSettings(overrides: Record<string, unknown> = {}) {
   return {
     provider: "gemini",
+    useLearningHistory: false,
     providers: [...DEFAULT_PROVIDERS],
     ...overrides,
   };

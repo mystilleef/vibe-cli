@@ -31,6 +31,7 @@ const openAiRequests: Array<{
   request: OpenAiCompatRequest;
 }> = [];
 let openAiResponseText = "mock provider response";
+let openAiThrowValue: unknown;
 
 class MockOpenAI {
   private readonly options: MockOpenAiOptions;
@@ -42,6 +43,9 @@ class MockOpenAI {
   chat = {
     completions: {
       create: async (request: OpenAiCompatRequest) => {
+        if (openAiThrowValue !== undefined) {
+          throw openAiThrowValue;
+        }
         openAiRequests.push({ options: this.options, request });
         return { choices: [{ message: { content: openAiResponseText } }] };
       },
@@ -120,7 +124,6 @@ const PROVIDER_KEYS = [
   "CUSTOM_ANTHROPIC_TOKEN",
   "DEFAULT_LLM_PROVIDER",
   "DEFAULT_MODEL",
-  "USE_LEARNING_HISTORY",
 ] as const;
 
 type ProviderKey = (typeof PROVIDER_KEYS)[number];
@@ -167,11 +170,11 @@ beforeEach(async () => {
   for (const key of PROVIDER_KEYS) delete process.env[key];
   tempHome = await createTempHome();
   await writeSettings(mockSettings());
-  process.env["USE_LEARNING_HISTORY"] = "false";
   globalThis.fetch = originalFetch;
   fetchCalls.length = 0;
   openAiRequests.length = 0;
   openAiResponseText = "mock provider response";
+  openAiThrowValue = undefined;
   geminiCalls = [];
   geminiResponses = [];
   geminiErrorMessages = [];
@@ -676,7 +679,6 @@ describe("extractContent edge cases", () => {
 
 describe("buildContextSection through getMentorFeedback", () => {
   test("includes userPrompt in context when provided", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "response with user prompt";
 
@@ -695,7 +697,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes progress in context when provided", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "response with progress";
 
@@ -714,7 +715,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes uncertainties in context when provided", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "response with uncertainties";
 
@@ -733,7 +733,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes taskContext in context when provided", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "response with task context";
 
@@ -752,7 +751,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes historySummary in context when provided", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "response with history";
 
@@ -771,7 +769,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes all optional fields together", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "full context response";
 
@@ -799,7 +796,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("excludes empty uncertainties array from context", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "no uncertainties";
 
@@ -815,7 +811,6 @@ describe("buildContextSection through getMentorFeedback", () => {
   });
 
   test("includes constitution rules when set", async () => {
-    process.env["USE_LEARNING_HISTORY"] = "false";
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "with rules";
     resetConstitution(["always verify inputs", "log errors"]);
@@ -831,6 +826,72 @@ describe("buildContextSection through getMentorFeedback", () => {
     expect(content).toContain("Constitution:");
     expect(content).toContain("- always verify inputs");
     expect(content).toContain("- log errors");
+  });
+
+  test("includes learning context when useLearningHistory is true", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        useLearningHistory: true,
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "learning response";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    // With useLearningHistory: true, the call succeeds even if the
+    // learning store is empty (the empty section gets filtered out).
+    expect(result.feedback).toBe("learning response");
+  });
+
+  test("excludes learning context when useLearningHistory is false", async () => {
+    await writeSettings(
+      mockSettings({
+        provider: "custom-openai",
+        useLearningHistory: false,
+      }),
+    );
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "no learning response";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    expect(result.feedback).toBe("no learning response");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).not.toContain(
+      "Learning Context:",
+    );
+  });
+
+  test("includes learning context when useLearningHistory defaults to true", async () => {
+    // Build settings without the useLearningHistory key entirely.
+    const settings = mockSettings({ provider: "custom-openai" });
+    const { useLearningHistory: _, ...withoutLearning } = settings as Record<
+      string,
+      unknown
+    > & { useLearningHistory?: boolean };
+    await writeSettings(withoutLearning);
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "default learning response";
+
+    const result = await getMentorFeedback({
+      goal: "test goal",
+      plan: "test plan",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    // Default is true, so the call succeeds (empty learning store is
+    // filtered out by buildContextSection).
+    expect(result.feedback).toBe("default learning response");
   });
 });
 
@@ -911,6 +972,19 @@ describe("verifyConnection edge cases", () => {
     expect(result.ok).toBe(true);
     expect(result.response).toHaveLength(200);
     expect(result.response).toBe("x".repeat(200));
+  });
+
+  test("handles non-Error throw during connection", async () => {
+    openAiThrowValue = "connection refused";
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+
+    const result = await verifyConnection({
+      provider: "custom-openai",
+      model: "test-model",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("connection refused");
   });
 });
 

@@ -20,7 +20,6 @@ const PROVIDER_ENV = [
   "ANTHROPIC_API_KEY",
   "DEFAULT_LLM_PROVIDER",
   "DEFAULT_MODEL",
-  "USE_LEARNING_HISTORY",
 ] as const;
 
 type ProviderEnvKey = (typeof PROVIDER_ENV)[number];
@@ -39,7 +38,6 @@ function configureAnthropicEnv(): void {
   process.env["ANTHROPIC_API_KEY"] = "test-key";
   process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
   process.env["DEFAULT_MODEL"] = "default-demo-model";
-  process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
 async function writeAnthropicSettings(): Promise<void> {
@@ -49,6 +47,7 @@ async function writeAnthropicSettings(): Promise<void> {
     join(home.dataRoot, "settings.json"),
     JSON.stringify({
       provider: "anthropic",
+      useLearningHistory: false,
       providers: [
         {
           name: "anthropic",

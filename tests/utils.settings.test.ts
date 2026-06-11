@@ -227,6 +227,110 @@ describe("loadProviderSettings", () => {
     );
   });
 
+  test("fails when providers key is absent", async () => {
+    await writeSettings({ provider: "gemini" });
+
+    expect(() => loadProviderSettings()).toThrow(
+      "settings.json providers must not be empty",
+    );
+  });
+
+  test("fails when providers is null", async () => {
+    await writeSettings(validSettings({ providers: null }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "settings.json providers must not be empty",
+    );
+  });
+
+  test("fails when providers is a string", async () => {
+    await writeSettings(validSettings({ providers: "not-array" }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "settings.json providers must not be empty",
+    );
+  });
+
+  test("fails when providers is an object", async () => {
+    await writeSettings(validSettings({ providers: {} }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "settings.json providers must not be empty",
+    );
+  });
+
+  test("fails when a provider entry is null", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [null],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "providers[0] must be an object",
+    );
+  });
+
+  test("fails when a provider entry is a number", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [42],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "providers[0] must be an object",
+    );
+  });
+
+  test("fails when a provider entry is a string", async () => {
+    await writeSettings(
+      validSettings({
+        providers: ["not-object"],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "providers[0] must be an object",
+    );
+  });
+
+  test("loads useLearningHistory true", async () => {
+    await writeSettings(validSettings({ useLearningHistory: true }));
+
+    expect(loadProviderSettings().useLearningHistory).toBe(true);
+  });
+
+  test("fails when useLearningHistory is a number", async () => {
+    await writeSettings(validSettings({ useLearningHistory: 1 }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "useLearningHistory must be a boolean in settings.json",
+    );
+  });
+
+  test("fails when useLearningHistory is a string", async () => {
+    await writeSettings(validSettings({ useLearningHistory: "yes" }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "useLearningHistory must be a boolean in settings.json",
+    );
+  });
+
+  test("fails when useLearningHistory is null", async () => {
+    await writeSettings(validSettings({ useLearningHistory: null }));
+
+    expect(() => loadProviderSettings()).toThrow(
+      "useLearningHistory must be a boolean in settings.json",
+    );
+  });
+
+  test("loads useLearningHistory false", async () => {
+    await writeSettings(validSettings({ useLearningHistory: false }));
+
+    expect(loadProviderSettings().useLearningHistory).toBe(false);
+  });
+
   test("fails when settings.json root is a JSON array", async () => {
     await writeSettings([1, 2, 3]);
 
@@ -612,11 +716,26 @@ describe("loadProviderSettings", () => {
   });
 
   test("fails when maxAttempts is NaN", async () => {
+    await writeSettings(validSettings({ maxAttempts: undefined }));
+    // Write NaN separately since JSON.stringify(NaN) produces null.
+    // The existing test covers the null case; this test covers the
+    // explicit null path via the NaN JSON serialization quirk.
     await writeSettings(validSettings({ maxAttempts: NaN }));
 
     expect(() => loadProviderSettings()).toThrow(
       "maxAttempts must be a positive integer in settings.json",
     );
+  });
+
+  test("omits useLearningHistory when not specified", async () => {
+    // Build settings without the useLearningHistory key entirely.
+    const { useLearningHistory: _, ...withoutLearning } =
+      validSettings() as Record<string, unknown> & {
+        useLearningHistory?: boolean;
+      };
+    await writeSettings(withoutLearning);
+
+    expect(loadProviderSettings().useLearningHistory).toBeUndefined();
   });
 });
 

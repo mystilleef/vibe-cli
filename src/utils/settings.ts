@@ -17,6 +17,7 @@ export interface ProviderSettings {
   provider: string;
   model?: string;
   maxAttempts?: number;
+  useLearningHistory?: boolean;
   providers: ProviderSettingsEntry[];
 }
 
@@ -77,6 +78,10 @@ function validateProviderSettings(value: unknown): ProviderSettings {
   );
   const model = optionalString(root["model"], "settings.json model");
   const maxAttempts = optionalPositiveInt(root["maxAttempts"], "maxAttempts");
+  const useLearningHistory = optionalBoolean(
+    root["useLearningHistory"],
+    "useLearningHistory",
+  );
   const providers = validateProviders(root["providers"]);
 
   return {
@@ -84,6 +89,7 @@ function validateProviderSettings(value: unknown): ProviderSettings {
     providers,
     ...(model !== undefined && { model }),
     ...(maxAttempts !== undefined && { maxAttempts }),
+    ...(useLearningHistory !== undefined && { useLearningHistory }),
   };
 }
 
@@ -206,6 +212,12 @@ function optionalPositiveInt(
     return value;
   }
   throw new Error(`${label} must be a positive integer in settings.json`);
+}
+
+function optionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  throw new Error(`${label} must be a boolean in settings.json`);
 }
 
 function optionalNullableNumber(

@@ -51,7 +51,6 @@ function configureAnthropicEnv(): void {
   process.env["ANTHROPIC_API_KEY"] = "test-key";
   process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
   process.env["DEFAULT_MODEL"] = "";
-  process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
 async function writeAnthropicSettings(): Promise<void> {
@@ -61,6 +60,7 @@ async function writeAnthropicSettings(): Promise<void> {
     join(home.dataRoot, "settings.json"),
     JSON.stringify({
       provider: "anthropic",
+      useLearningHistory: false,
       providers: [
         {
           name: "anthropic",
@@ -83,7 +83,6 @@ beforeEach(async () => {
     ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
     DEFAULT_LLM_PROVIDER: process.env["DEFAULT_LLM_PROVIDER"],
     DEFAULT_MODEL: process.env["DEFAULT_MODEL"],
-    USE_LEARNING_HISTORY: process.env["USE_LEARNING_HISTORY"],
   };
   home = await createTempHome();
   await writeAnthropicSettings();

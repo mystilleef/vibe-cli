@@ -54,11 +54,11 @@ interface ReviewOutput {
  *
  * Includes goal, plan, optional progress/uncertainties/task context, active constitution
  * rules, prior session history, and learning-pattern history. Learning context is
- * controlled by the USE_LEARNING_HISTORY env var (default: "true").
+ * controlled by the `useLearningHistory` setting (default: true).
  */
 function buildContextSection(input: ReviewInput): string {
-  const useLearning =
-    (process.env["USE_LEARNING_HISTORY"] ?? "true") === "true";
+  const settings = loadProviderSettings();
+  const useLearning = settings.useLearningHistory ?? true;
   const learningContext = useLearning ? getLearningContextText() : "";
   const rules = getConstitution();
   return [
