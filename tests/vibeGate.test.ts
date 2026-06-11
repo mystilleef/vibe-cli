@@ -35,7 +35,6 @@ function configureAnthropicEnv(): void {
   process.env["ANTHROPIC_API_KEY"] = "test-key";
   process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
   process.env["DEFAULT_MODEL"] = "";
-  process.env["USE_LEARNING_HISTORY"] = "false";
 }
 
 async function writeAnthropicSettings(): Promise<void> {
@@ -45,6 +44,7 @@ async function writeAnthropicSettings(): Promise<void> {
     join(home.dataRoot, "settings.json"),
     JSON.stringify({
       provider: "anthropic",
+      useLearningHistory: false,
       providers: [
         {
           name: "anthropic",
@@ -93,7 +93,6 @@ beforeEach(async () => {
     ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
     DEFAULT_LLM_PROVIDER: process.env["DEFAULT_LLM_PROVIDER"],
     DEFAULT_MODEL: process.env["DEFAULT_MODEL"],
-    USE_LEARNING_HISTORY: process.env["USE_LEARNING_HISTORY"],
   };
   home = await createTempHome();
   await writeAnthropicSettings();
@@ -232,7 +231,9 @@ describe("vibeGateLoop", () => {
     const result = await vibeGateLoop(input(), 0);
 
     expect(result.exhausted).toBe(true);
-    expect(Object.keys(result)).toEqual(["exhausted"]);
+    expect(result.proceed).toBe(false);
+    expect(result.plan).toBe(input().plan);
+    expect(result.attempts).toBe(0);
     expect(requests).toHaveLength(0);
   });
 
@@ -240,7 +241,9 @@ describe("vibeGateLoop", () => {
     const result = await vibeGateLoop(input(), -1);
 
     expect(result.exhausted).toBe(true);
-    expect(Object.keys(result)).toEqual(["exhausted"]);
+    expect(result.proceed).toBe(false);
+    expect(result.plan).toBe(input().plan);
+    expect(result.attempts).toBe(0);
     expect(requests).toHaveLength(0);
   });
 

@@ -63,29 +63,38 @@ export async function vibeGateLoop(
   maxAttempts: number,
 ): Promise<VibeGateOutput> {
   if (maxAttempts <= 0) {
-    return { exhausted: true } as VibeGateOutput;
+    return {
+      proceed: false,
+      confidence: 0,
+      reason: "No attempts remaining",
+      feedback: "",
+      plan: input.plan,
+      attempts: 0,
+      exhausted: true,
+    };
   }
 
   let plan = input.plan;
-  let last: VibeGateOutput | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const toolResult = await vibeGateTool({ ...input, plan });
-    last = { ...toolResult, plan, attempts: attempt };
-    if (last.proceed) return last;
-    if (attempt < maxAttempts) {
-      plan = await revisePlan({
-        goal: input.goal,
-        plan,
-        feedback: last.feedback,
-        blockReason: last.reason,
-        ...(input.modelOverride !== undefined && {
-          modelOverride: input.modelOverride,
-        }),
-      });
+    if (toolResult.proceed) {
+      return { ...toolResult, plan, attempts: attempt };
     }
+    if (attempt === maxAttempts) {
+      return { ...toolResult, plan, attempts: attempt, exhausted: true };
+    }
+    plan = await revisePlan({
+      goal: input.goal,
+      plan,
+      feedback: toolResult.feedback,
+      blockReason: toolResult.reason,
+      ...(input.modelOverride !== undefined && {
+        modelOverride: input.modelOverride,
+      }),
+    });
   }
 
-  // At least one iteration ran: maxAttempts > 0 guard ensures last is assigned.
-  return { ...last, exhausted: true } as VibeGateOutput;
+  // Unreachable: loop always returns.
+  throw new Error("vibeGateLoop: unexpected loop exit");
 }
