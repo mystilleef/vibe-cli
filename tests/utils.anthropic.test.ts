@@ -5,12 +5,7 @@ import {
   resolveAnthropicConfig,
 } from "../src/utils/anthropic";
 
-const ENV_KEYS = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_VERSION",
-] as const;
+const ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
 const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> =
   {};
@@ -74,18 +69,12 @@ describe("resolveAnthropicConfig", () => {
     expect(cfg.apiKey).toBeUndefined();
   });
 
-  test("trims trailing slashes from ANTHROPIC_BASE_URL", () => {
+  test("trims trailing slashes from baseUrl override", () => {
     process.env["ANTHROPIC_API_KEY"] = "k";
-    process.env["ANTHROPIC_BASE_URL"] = "https://proxy.example.com///";
-    const cfg = resolveAnthropicConfig();
+    const cfg = resolveAnthropicConfig({
+      baseUrl: "https://proxy.example.com///",
+    });
     expect(cfg.baseUrl).toBe("https://proxy.example.com");
-  });
-
-  test("respects custom ANTHROPIC_VERSION", () => {
-    process.env["ANTHROPIC_API_KEY"] = "k";
-    process.env["ANTHROPIC_VERSION"] = "2024-01-01";
-    const cfg = resolveAnthropicConfig();
-    expect(cfg.version).toBe("2024-01-01");
   });
 
   test("prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN when both set", () => {
@@ -95,13 +84,39 @@ describe("resolveAnthropicConfig", () => {
     expect(cfg.apiKey).toBe("key-first");
     expect(cfg.authToken).toBe("tok-second");
   });
+
+  test("uses override apiKey when passed directly", () => {
+    const cfg = resolveAnthropicConfig({ apiKey: "override-key" });
+    expect(cfg.apiKey).toBe("override-key");
+    expect(cfg.authToken).toBeUndefined();
+    expect(cfg.baseUrl).toBe("https://api.anthropic.com");
+    expect(cfg.version).toBe("2023-06-01");
+  });
+
+  test("uses override authToken when passed directly", () => {
+    const cfg = resolveAnthropicConfig({ authToken: "override-token" });
+    expect(cfg.authToken).toBe("override-token");
+    expect(cfg.apiKey).toBeUndefined();
+  });
+
+  test("uses override version when passed directly", () => {
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    const cfg = resolveAnthropicConfig({ version: "2024-02-15" });
+    expect(cfg.version).toBe("2024-02-15");
+  });
+
+  test("baseUrl without trailing slashes is not mutated", () => {
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    const cfg = resolveAnthropicConfig({
+      baseUrl: "https://clean.example.com",
+    });
+    expect(cfg.baseUrl).toBe("https://clean.example.com");
+  });
 });
 
 describe("callAnthropic", () => {
-  test("uses injected metadata and credentials instead of environment fallbacks", async () => {
+  test("uses injected metadata and credentials instead of defaults", async () => {
     process.env["ANTHROPIC_API_KEY"] = "env-key";
-    process.env["ANTHROPIC_BASE_URL"] = "https://env.example";
-    process.env["ANTHROPIC_VERSION"] = "env-version";
     mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
 
     const result = await callAnthropic({
@@ -417,6 +432,131 @@ describe("callAnthropic error handling", () => {
 
     const body = JSON.parse(fetchCalls[0]?.init.body as string);
     expect(body.temperature).toBe(0);
+  });
+
+  test("uses custom maxTokens in request body", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      maxTokens: 512,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.max_tokens).toBe(512);
+  });
+
+  test("uses default maxTokens 1024 when not provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.max_tokens).toBe(1024);
+  });
+
+  test("both injected apiKey and authToken prefers apiKey in headers", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "injected-key",
+      authToken: "injected-token",
+    });
+
+    expect(fetchCalls[0]?.init.headers).toMatchObject({
+      "x-api-key": "injected-key",
+    });
+    expect(fetchCalls[0]?.init.headers).not.toMatchObject({
+      authorization: expect.any(String),
+    });
+  });
+
+  test("extracts text when first content block is non-text type and second is text", async () => {
+    mockFetch(
+      Response.json({
+        content: [
+          { type: "image", source: "base64" },
+          { type: "text", text: "second block" },
+        ],
+      }),
+    );
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("second block");
+  });
+
+  test("extracts text from bare content block without type field", async () => {
+    mockFetch(Response.json({ content: [{ text: "bare text block" }] }));
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("bare text block");
+  });
+
+  test("prefers anthropic-request-id over x-request-id in error", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "server error" } }), {
+        status: 500,
+        headers: {
+          "anthropic-request-id": "anth-req-123",
+          "x-request-id": "xreq-456",
+        },
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow("request id: anth-req-123");
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "key",
+      }),
+    ).rejects.not.toThrow("xreq-456");
+  });
+
+  test("429 rate limit with retry-after and request id", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+        status: 429,
+        headers: {
+          "retry-after": "15",
+          "anthropic-request-id": "req-rate",
+        },
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow(
+      "Anthropic rate limited (429) (request id: req-rate). Retry after 15s.",
+    );
   });
 
   test("error with empty parsed object falls back to raw text", async () => {

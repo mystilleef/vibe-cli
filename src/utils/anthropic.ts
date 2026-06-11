@@ -31,27 +31,25 @@ export interface AnthropicCallOptions {
 }
 
 /**
- * Build an `AnthropicConfig` from environment variables.
+ * Build an `AnthropicConfig` from overrides and auth environment variables.
  *
  * Resolution order:
- * - Base URL: `ANTHROPIC_BASE_URL` (trailing slashes stripped) → `https://api.anthropic.com`.
+ * - Base URL: override → `https://api.anthropic.com` (trailing slashes stripped).
  * - Auth: `ANTHROPIC_API_KEY` preferred; falls back to `ANTHROPIC_AUTH_TOKEN`.
- * - Version: `ANTHROPIC_VERSION` → `2023-06-01`.
+ * - Version: override → `2023-06-01`.
  *
  * Throws when neither `ANTHROPIC_API_KEY` nor `ANTHROPIC_AUTH_TOKEN` is set.
  */
 export function resolveAnthropicConfig(
   overrides: Partial<AnthropicConfig> = {},
 ): AnthropicConfig {
-  const baseUrl = (
-    overrides.baseUrl ??
-    process.env["ANTHROPIC_BASE_URL"] ??
-    "https://api.anthropic.com"
-  ).replace(/\/+$/, "");
+  const baseUrl = (overrides.baseUrl ?? "https://api.anthropic.com").replace(
+    /\/+$/,
+    "",
+  );
   const apiKey = overrides.apiKey ?? process.env["ANTHROPIC_API_KEY"];
   const authToken = overrides.authToken ?? process.env["ANTHROPIC_AUTH_TOKEN"];
-  const version =
-    overrides.version ?? process.env["ANTHROPIC_VERSION"] ?? "2023-06-01";
+  const version = overrides.version ?? "2023-06-01";
 
   if (!apiKey && !authToken) {
     throw new Error(
@@ -192,17 +190,7 @@ export async function callAnthropic({
     ...(authToken !== undefined && { authToken }),
     ...(version !== undefined && { version }),
   });
-  const {
-    baseUrl: resolvedBaseUrl,
-    apiKey: resolvedApiKey,
-    authToken: resolvedAuthToken,
-    version: resolvedVersion,
-  } = config;
-  const headers = buildAnthropicHeaders({
-    version: resolvedVersion,
-    ...(resolvedApiKey !== undefined && { apiKey: resolvedApiKey }),
-    ...(resolvedAuthToken !== undefined && { authToken: resolvedAuthToken }),
-  });
+  const headers = buildAnthropicHeaders(config);
   const body: Record<string, unknown> = {
     model,
     max_tokens: maxTokens,
@@ -211,7 +199,7 @@ export async function callAnthropic({
   };
   if (systemPrompt) body["system"] = systemPrompt;
 
-  const response = await fetch(`${resolvedBaseUrl}/v1/messages`, {
+  const response = await fetch(`${config.baseUrl}/v1/messages`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
