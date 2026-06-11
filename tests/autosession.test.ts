@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AUTOSESSION_TTL_MS,
-  deleteInactiveAutosessions,
   getCwdKey,
   getDataRoot,
   resolveAutosession,
@@ -91,58 +90,5 @@ describe("autosession resolver", () => {
     );
     const renewed = resolveAutosession(expiredCwd);
     expect(renewed.id).not.toBe(expired.id);
-  });
-
-  test("inactive cleanup deletes session rows and cascades dependent data", async () => {
-    await useTempHome();
-    const cwd = await createCwd("cleanup");
-    const session = resolveAutosession(cwd);
-    const staleTimestamp = new Date(Date.now() - AUTOSESSION_TTL_MS - 1);
-    updateLastAccessed(cwd, staleTimestamp.toISOString());
-
-    const handle = openVibeDatabase();
-    try {
-      handle.db
-        .prepare(
-          "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(session.id, "Keep changes minimal.", 0, new Date().toISOString());
-      handle.db
-        .prepare(
-          "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
-        )
-        .run(session.id, "goal", "output", Date.now());
-    } finally {
-      handle.close();
-    }
-
-    expect(deleteInactiveAutosessions(staleTimestamp)).toBeGreaterThanOrEqual(
-      1,
-    );
-
-    const checked = openVibeDatabase();
-    try {
-      const deletedSession = checked.db
-        .query<{ count: number }, [string]>(
-          "SELECT count(*) AS count FROM sessions WHERE id = ?",
-        )
-        .get(session.id);
-      const rules = checked.db
-        .query<{ count: number }, [string]>(
-          "SELECT count(*) AS count FROM constitution_rules WHERE session_id = ?",
-        )
-        .get(session.id);
-      const interactions = checked.db
-        .query<{ count: number }, [string]>(
-          "SELECT count(*) AS count FROM interactions WHERE session_id = ?",
-        )
-        .get(session.id);
-
-      expect(deletedSession?.count).toBe(0);
-      expect(rules?.count).toBe(0);
-      expect(interactions?.count).toBe(0);
-    } finally {
-      checked.close();
-    }
   });
 });

@@ -58,16 +58,6 @@ function toRecord(row: SessionRow): AutosessionRecord {
   };
 }
 
-/** Deletes inactive autosessions and cascading dependent rows by cutoff timestamp. */
-export function deleteInactiveAutosessions(cutoff: Date): number {
-  return withDatabase((db) => {
-    const result = db
-      .prepare("DELETE FROM sessions WHERE last_accessed_at <= ?")
-      .run(cutoff.toISOString());
-    return result.changes;
-  });
-}
-
 /**
  * Resolves the autosession for the given working directory.
  *
