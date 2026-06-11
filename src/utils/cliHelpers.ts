@@ -38,13 +38,8 @@ export function buildCheckParams(
   maxAttempts: number;
 } {
   const cliRaw = parseInt(opts["maxAttempts"] as string, 10);
-  const envRaw = process.env["VIBE_MAX_ATTEMPTS"]
-    ? parseInt(process.env["VIBE_MAX_ATTEMPTS"], 10)
-    : undefined;
   const fromCli = !Number.isNaN(cliRaw) && cliRaw !== 0 ? cliRaw : undefined;
-  const fromEnv =
-    envRaw !== undefined && !Number.isNaN(envRaw) ? envRaw : undefined;
-  const resolved = fromCli ?? settingsMaxAttempts ?? fromEnv ?? 10;
+  const resolved = fromCli ?? settingsMaxAttempts ?? 10;
 
   return {
     params: {

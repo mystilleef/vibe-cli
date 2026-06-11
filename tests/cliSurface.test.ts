@@ -1627,33 +1627,6 @@ describe("CLI autosession surface", () => {
     expect(payload["feedback"]).toContain("questions:mock-claude");
   });
 
-  test("VIBE_MAX_ATTEMPTS env var sets default max attempts", async () => {
-    const { result, payload } = await runVibeCheck([], {
-      VIBE_MAX_ATTEMPTS: "1",
-      VIBE_TEST_ANTHROPIC_MODE: "block",
-    });
-
-    expect(result.exitCode).toBe(2);
-    expect(payload).toMatchObject({
-      proceed: false,
-      exhausted: true,
-      attempts: 1,
-    });
-  });
-
-  test("--max-attempts flag overrides VIBE_MAX_ATTEMPTS env var", async () => {
-    const { result, payload } = await runVibeCheck(
-      ["--model", "mock-claude", "--max-attempts", "5"],
-      {
-        VIBE_MAX_ATTEMPTS: "1",
-        VIBE_TEST_ANTHROPIC_MODE: "proceed",
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(payload).toMatchObject({ proceed: true, attempts: 1 });
-  });
-
   test("check emits exhausted block JSON and exits 2 at attempt boundary", async () => {
     const { result, payload } = await runVibeCheck(["--max-attempts", "1"], {
       VIBE_TEST_ANTHROPIC_MODE: "block",
@@ -1669,16 +1642,6 @@ describe("CLI autosession surface", () => {
     });
   });
 
-  test("VIBE_MAX_ATTEMPTS non-numeric env var silently falls back to 10", async () => {
-    const { result, payload } = await runVibeCheck(["--model", "mock-claude"], {
-      VIBE_MAX_ATTEMPTS: "abc",
-      VIBE_TEST_ANTHROPIC_MODE: "proceed",
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(payload).toMatchObject({ proceed: true, attempts: 1 });
-  });
-
   test("--max-attempts 0 flag falls back to 10 due to falsy default", async () => {
     const { result, payload } = await runVibeCheck(["--max-attempts", "0"], {
       VIBE_TEST_ANTHROPIC_MODE: "block",
@@ -1687,56 +1650,6 @@ describe("CLI autosession surface", () => {
     expect(result.exitCode).toBe(2);
     expect(payload["exhausted"]).toBe(true);
     expect(payload["attempts"]).toBeGreaterThanOrEqual(1);
-  });
-
-  test("VIBE_MAX_ATTEMPTS=0 env var falls back to 10 due to falsy default", async () => {
-    const { result, payload } = await runVibeCheck([], {
-      VIBE_MAX_ATTEMPTS: "0",
-      VIBE_TEST_ANTHROPIC_MODE: "block",
-    });
-
-    expect(result.exitCode).toBe(2);
-    expect(payload["exhausted"]).toBe(true);
-    expect(payload["attempts"]).toBeGreaterThanOrEqual(1);
-  });
-
-  test("settings.json without maxAttempts — falls through to env/default", async () => {
-    const home = await useTempHome();
-    // Write settings WITHOUT maxAttempts — should fall through to env
-    await writeSettings(home, listSettings({ provider: "anthropic" }));
-
-    const result = runCli(
-      [
-        "check",
-        "--goal",
-        "ship safely",
-        "--plan",
-        "run targeted tests",
-        "--provider",
-        "anthropic",
-        "--model",
-        "mock-claude",
-      ],
-      {
-        home: home.home,
-        preload: mockAnthropicFetch,
-        env: {
-          ANTHROPIC_API_KEY: "ak",
-          DEFAULT_MODEL: undefined,
-          VIBE_TEST_ANTHROPIC_MODE: "block",
-          VIBE_MAX_ATTEMPTS: "2",
-        },
-      },
-    );
-    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
-
-    // Should use env var (2) since settings.maxAttempts is absent
-    expect(result.exitCode).toBe(2);
-    expect(payload).toMatchObject({
-      proceed: false,
-      exhausted: true,
-      attempts: 2,
-    });
   });
 
   test("settings maxAttempts used when CLI option absent", async () => {

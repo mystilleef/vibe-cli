@@ -35,7 +35,7 @@ export function buildSchema() {
           "--provider": "settings provider entry name",
           "--model": "str",
           "--max-attempts":
-            "int (refinement loop limit; fallback: settings.maxAttempts → VIBE_MAX_ATTEMPTS → 10)",
+            "int (refinement loop limit; fallback: settings.maxAttempts → 10)",
         },
         out: {
           proceed: "bool",
