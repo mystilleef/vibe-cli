@@ -178,8 +178,6 @@ Extra environment variables:
 | `OPENCODE_API_KEY` | OpenCode-compatible API key when referenced by `settings.json`. |
 | `MIMO_API_KEY` | Mimo API key when referenced by `settings.json`. |
 | `DASHSCOPE_API_KEY` | Qwen/DashScope API key when referenced by `settings.json`. |
-| `USE_LEARNING_HISTORY` | Skip stored entries when set to `false`. |
-| `VIBE_MAX_ATTEMPTS` | Default max refinement attempts for `check` (default `10`). |
 <!-- prettier-ignore-end -->
 
 ## Usage
