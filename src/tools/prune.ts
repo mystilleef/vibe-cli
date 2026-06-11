@@ -13,12 +13,6 @@ import { DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD } from "../utils/storage.j
 export const DEFAULT_PRUNE_AGE_DAYS = 90;
 export const DEFAULT_PRUNE_OVERLAP_THRESHOLD =
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD;
-const REPR_DETAIL_LIMIT = 5;
-
-function topN<T, U>(items: readonly T[], mapper: (item: T) => U): U[] {
-  return items.slice(0, REPR_DETAIL_LIMIT).map(mapper);
-}
-
 export interface PruneInput {
   learnings?: boolean;
   duplicates?: boolean;
@@ -101,24 +95,24 @@ function extractRepresentativeDetails(
   candidates: PruneCandidateSets,
 ): PruneSuccessPayload["representativeDetails"] {
   return {
-    learnings: topN(candidates.learnings, (entry) => ({
+    learnings: candidates.learnings.slice(0, 5).map((entry) => ({
       id: entry.id,
       category: entry.category,
       observation: entry.observation,
       timestamp: entry.timestamp,
     })),
-    duplicates: topN(candidates.duplicates, (group) => ({
+    duplicates: candidates.duplicates.slice(0, 5).map((group) => ({
       category: group.category,
       keptId: group.kept.id,
       prunableIds: group.prunable.map((entry) => entry.id),
     })),
-    demos: topN(candidates.demos, (entry) => ({
+    demos: candidates.demos.slice(0, 5).map((entry) => ({
       id: entry.id,
       category: entry.category,
       observation: entry.observation,
       ...(entry.demoId !== undefined && { demoId: entry.demoId }),
     })),
-    sessions: topN(candidates.sessions, (session) => ({
+    sessions: candidates.sessions.slice(0, 5).map((session) => ({
       sessionId: session.sessionId,
       cwd: session.cwd,
       lastAccessedAt: session.lastAccessedAt,

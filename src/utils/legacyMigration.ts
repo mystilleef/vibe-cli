@@ -1,14 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { getDataRoot } from "./db-core.js";
 
 export const LEGACY_LEARNING_LOG = "vibe-log.json";
 export const LEGACY_CONSTITUTION = "constitution.json";
 export const LEGACY_HISTORY = "history.json";
-
-function getDataRoot(): string {
-  return path.join(process.env["HOME"] ?? os.homedir(), ".vibe-cli");
-}
 
 export function getLegacyAutosessionDir(): string {
   return path.join(getDataRoot(), "sessions");

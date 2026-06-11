@@ -25,8 +25,7 @@ export function formatRelativeTime(
     { label: "m", ms: 60 * 1000 },
     { label: "s", ms: 1000 },
   ] as const;
-  const unit = units.find((candidate) => abs >= candidate.ms) ?? units.at(-1);
-  if (unit === undefined) return "just now";
+  const unit = units.find((candidate) => abs >= candidate.ms) ?? units[3];
   const amount = Math.floor(abs / unit.ms);
   const suffix = diff >= 0 ? "ago" : "from now";
   return `${amount}${unit.label} ${suffix}`;

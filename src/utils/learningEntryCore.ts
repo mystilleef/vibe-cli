@@ -46,14 +46,15 @@ export interface LearningEntryStorageRow {
 export function learningRowToEntry(
   row: LearningEntryStorageRow,
 ): LearningEntry {
-  return {
+  const entry: LearningEntry = {
     type: row.type,
     category: row.category,
     observation: row.observation,
-    ...(row.solution !== null && { solution: row.solution }),
     timestamp: row.timestamp,
-    ...(row.demo_id !== null && { demoId: row.demo_id }),
   };
+  if (row.solution !== null) entry.solution = row.solution;
+  if (row.demo_id !== null) entry.demoId = row.demo_id;
+  return entry;
 }
 
 export function getLearningOverlapScore(left: string, right: string): number {

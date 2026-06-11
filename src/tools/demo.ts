@@ -91,7 +91,7 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** Options for the interactive demo walkthrough. */
-export interface DemoOptions {
+interface DemoOptions {
   /** Optional provider/model override forwarded to the vibe gate LLM call. */
   modelOverride?: { provider?: string; model?: string };
 }

@@ -86,7 +86,7 @@ function registerListCommand(
   parent: Command,
   name: string,
   description: string,
-  extraOptions: Array<{ flags: string; description: string }> = [],
+  extraOptions: readonly { flags: string; description: string }[] = [],
   action: (
     opts: Record<string, string | undefined>,
     command: Command,
@@ -353,12 +353,8 @@ list.action(() => {
 
 // Register list subcommands from configuration.
 for (const cmd of LIST_COMMANDS) {
-  registerListCommand(
-    list,
-    cmd.name,
-    cmd.description,
-    [...cmd.options],
-    (opts) => cmd.action(opts),
+  registerListCommand(list, cmd.name, cmd.description, cmd.options, (opts) =>
+    cmd.action(opts),
   );
 }
 

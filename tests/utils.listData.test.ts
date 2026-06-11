@@ -30,13 +30,13 @@ import {
   buildListStats,
   summarizeLearningCategories,
 } from "../src/utils/listDataReaders";
+import { applyListLimit } from "../src/utils/listDataUtilsCollections";
 import {
-  applyListLimit,
   formatAlignedRows,
   formatRelativeTime,
-  parseCheckReason,
   truncateText,
-} from "../src/utils/listDataUtils";
+} from "../src/utils/listDataUtilsFormatting";
+import { parseCheckReason } from "../src/utils/listDataUtilsParsing";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;
