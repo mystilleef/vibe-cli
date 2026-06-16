@@ -2,40 +2,40 @@
 
 ## Commands
 
-- **Lint:** `bun check`
-- **Test:** `bun verify`
-- **Provider configuration required for model commands:**
-  - Copy `settings.example.json` to `~/.vibe-cli/settings.json`
-  - Export at least one secret matching a configured `envVar`, such as:
-    - `GEMINI_API_KEY`,
-    - `OPENAI_API_KEY`,
-    - `OPENROUTER_API_KEY`,
-    - `ANTHROPIC_API_KEY`,
-    - `DEEPSEEK_API_KEY`,
-    - `OPENCODE_API_KEY`,
-    - `MIMO_API_KEY`,
-    - `DASHSCOPE_API_KEY`
+- `bun check` — type-check; auto-fix trivial lint
+- `bun coverage` — full test suite
+- `bun verify` — comprehensive verification
+
+Run scripts exactly as named. **Never** expand internals or pipe `bun`
+commands—redirect output to a file first, then inspect:
+
+```sh
+# Forbidden — causes freezes
+bun test 2>&1 | head -n 10
+bun test | tail -n 10
+
+# Approved
+bun test > tmp.txt && cat tmp.txt | head -n 10
+bun verify
+```
 
 ## Workflow
 
-- CI: `bun run verify`
+**CI:** `bun verify`
 
 ## Rules
 
-- After edits:
-  - Run `bun check` to address lint issues
-  - Run `bun verify` for full suite comprehensive tests.
+- Write asynchronous, non-blocking code.
+- After edits: run `bun check`.
+- After task completion: run `bun verify`.
 
-### Testing rules
+### Testing
 
-- Before writing tests, read relevant `bun` testing guides, on demand,
-  in `./docs/bun/testing`. The agent file in that folder indexes what
-  each guide documents.
+- Read guides in `./docs/bun/testing` before writing tests. The agent
+  file indexes each guide.
 
 ## Gotchas
 
-- Provider metadata requires `~/.vibe-cli/settings.json`; legacy `.env`
-  provider settings get ignored.
-- CLI commands emit JSON to `stdout` on success, and error JSON
-  `{"error":"..."}` to `stderr` with exit code 1 on failure.
-- `Autosessions` expire after four hours of inactivity.
+- No empty lines inside functions.
+- One empty line before and after functions and classes.
+- Never commit or track `proposals/`.
