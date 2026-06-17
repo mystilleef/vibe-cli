@@ -1,4 +1,16 @@
+import { compareListText, groupBy } from "./listDataUtilsCollections.js";
+
 /** Core types, constants, and pure functions shared across storage and prune modules. */
+
+/** Full column list for `learning_entries` SELECT statements. */
+export const LEARNING_ENTRIES_COLUMNS =
+  "id, type, category, observation, solution, timestamp, demo_id";
+
+/** Full `SELECT ... FROM learning_entries` fragment shared by readers. */
+export const LEARNING_ENTRIES_SELECT = `SELECT ${LEARNING_ENTRIES_COLUMNS} FROM learning_entries`;
+
+/** Deterministic default ordering for learning entry reads (category, then age, then id). */
+export const LEARNING_ENTRIES_ORDER = "ORDER BY category, timestamp, id";
 
 /** Discriminator for the kind of learning entry. */
 export type LearningType = "mistake" | "preference" | "success";
@@ -77,4 +89,36 @@ export function isLearningOverlapDuplicate(
   overlapThreshold = DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
 ): boolean {
   return getLearningOverlapScore(left, right) >= overlapThreshold;
+}
+
+/** A single category's aggregate view over learning entries. */
+export interface LearningCategorySummary {
+  category: string;
+  count: number;
+  recentExample: LearningEntry;
+}
+
+/** Build category summaries from already-grouped learning entries. */
+export function summarizeLearningCategoryGroups(
+  groups: Iterable<[string, readonly LearningEntry[]]>,
+): LearningCategorySummary[] {
+  return [...groups]
+    .flatMap(([category, entries]) => {
+      const recentExample = entries.at(-1);
+      return recentExample === undefined
+        ? []
+        : [{ category, count: entries.length, recentExample }];
+    })
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        compareListText(left.category, right.category),
+    );
+}
+
+/** Build category summaries from a learning list without additional IO. */
+export function summarizeLearningCategories(
+  learnings: readonly LearningEntry[],
+): LearningCategorySummary[] {
+  return summarizeLearningCategoryGroups(groupBy(learnings, (e) => e.category));
 }

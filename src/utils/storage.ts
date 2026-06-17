@@ -1,10 +1,16 @@
 import { withDatabase } from "./database.js";
-import type {
-  LearningEntry,
-  LearningEntryStorageRow,
-  LearningType,
+import {
+  LEARNING_ENTRIES_COLUMNS,
+  LEARNING_ENTRIES_ORDER,
+  LEARNING_ENTRIES_SELECT,
+  type LearningCategorySummary,
+  type LearningEntry,
+  type LearningEntryStorageRow,
+  type LearningType,
+  learningRowToEntry,
+  summarizeLearningCategoryGroups,
 } from "./learningEntryCore.js";
-import { learningRowToEntry } from "./learningEntryCore.js";
+import { groupBy } from "./listDataUtilsCollections.js";
 
 export {
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
@@ -55,35 +61,6 @@ export function addLearningEntry(
   };
 }
 
-/** Group learning entries by category (readonly reduction). */
-function groupLearningEntries(
-  entries: readonly LearningEntry[],
-): Record<string, LearningEntry[]> {
-  const grouped: Record<string, LearningEntry[]> = {};
-  for (const entry of entries) {
-    const list = grouped[entry.category];
-    if (list) {
-      list.push(entry);
-    } else {
-      grouped[entry.category] = [entry];
-    }
-  }
-  return grouped;
-}
-
-/** Return all entries grouped by category (no limit). */
-function getLearningEntriesUnlimited(): Record<string, LearningEntry[]> {
-  const entries = withDatabase((db) =>
-    db
-      .query<LearningEntryStorageRow, []>(
-        "SELECT id, type, category, observation, solution, timestamp, demo_id FROM learning_entries ORDER BY category, timestamp, id",
-      )
-      .all()
-      .map(learningRowToEntry),
-  );
-  return groupLearningEntries(entries);
-}
-
 /**
  * Return every learning entry grouped by category.
  *
@@ -97,26 +74,31 @@ function getLearningEntriesUnlimited(): Record<string, LearningEntry[]> {
 export function getLearningEntries(
   maxPerCategory?: number,
 ): Record<string, LearningEntry[]> {
-  if (maxPerCategory === undefined) return getLearningEntriesUnlimited();
-
-  const entries = withDatabase((db) =>
-    db
-      .query<LearningEntryStorageRow, [number]>(
-        `SELECT id, type, category, observation, solution, timestamp, demo_id
-         FROM (
-           SELECT *,
-             ROW_NUMBER() OVER (
-               PARTITION BY category ORDER BY timestamp DESC, id DESC
-             ) AS rn
-           FROM learning_entries
-         )
-         WHERE rn <= ?
-         ORDER BY category, timestamp, id`,
-      )
-      .all(maxPerCategory)
-      .map(learningRowToEntry),
-  );
-  return groupLearningEntries(entries);
+  const entries = withDatabase((db) => {
+    const rows =
+      maxPerCategory === undefined
+        ? db
+            .query<LearningEntryStorageRow, []>(
+              `${LEARNING_ENTRIES_SELECT} ${LEARNING_ENTRIES_ORDER}`,
+            )
+            .all()
+        : db
+            .query<LearningEntryStorageRow, [number]>(
+              `SELECT ${LEARNING_ENTRIES_COLUMNS}
+               FROM (
+                 SELECT *,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY category ORDER BY timestamp DESC, id DESC
+                   ) AS rn
+                 FROM learning_entries
+               )
+               WHERE rn <= ?
+               ${LEARNING_ENTRIES_ORDER}`,
+            )
+            .all(maxPerCategory);
+    return rows.map(learningRowToEntry);
+  });
+  return Object.fromEntries(groupBy(entries, (entry) => entry.category));
 }
 
 /**
@@ -125,20 +107,8 @@ export function getLearningEntries(
  * Each item exposes the category name, its total count, and the most recent
  * example entry.  Empty categories (no examples after removal) are omitted.
  */
-export function getLearningCategorySummary(): Array<{
-  category: string;
-  count: number;
-  recentExample: LearningEntry;
-}> {
-  const grouped = getLearningEntries();
-  return Object.entries(grouped)
-    .flatMap(([category, examples]) => {
-      const recentExample = examples.at(-1);
-      return recentExample === undefined
-        ? []
-        : [{ category, count: examples.length, recentExample }];
-    })
-    .sort((a, b) => b.count - a.count);
+export function getLearningCategorySummary(): LearningCategorySummary[] {
+  return summarizeLearningCategoryGroups(Object.entries(getLearningEntries()));
 }
 
 /**

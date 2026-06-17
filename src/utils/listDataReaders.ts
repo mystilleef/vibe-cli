@@ -1,10 +1,13 @@
 import { resolveAutosession } from "./autosession.js";
 import { withDatabase } from "./database.js";
 import {
+  LEARNING_ENTRIES_ORDER,
+  LEARNING_ENTRIES_SELECT,
   type LearningEntry,
   type LearningEntryStorageRow,
   type LearningType,
   learningRowToEntry,
+  summarizeLearningCategories,
 } from "./learningEntryCore.js";
 import type {
   ListAllData,
@@ -17,11 +20,7 @@ import type {
   ListSession,
   ListStats,
 } from "./listDataTypes.js";
-import {
-  applyListLimit,
-  compareListText,
-  groupBy,
-} from "./listDataUtilsCollections.js";
+import { applyListLimit, compareListText } from "./listDataUtilsCollections.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
 interface RuleRow {
@@ -32,9 +31,7 @@ function readLearningRows(): LearningEntryStorageRow[] {
   return withDatabase((db) =>
     db
       .query<LearningEntryStorageRow, []>(
-        `SELECT id, type, category, observation, solution, timestamp, demo_id
-         FROM learning_entries
-         ORDER BY category ASC, timestamp ASC, id ASC`,
+        `${LEARNING_ENTRIES_SELECT} ${LEARNING_ENTRIES_ORDER}`,
       )
       .all(),
   );
@@ -59,24 +56,6 @@ export function readListLearnings(
 /** Read category counts and recent examples in deterministic order. */
 export function readListCategories(): ListCategorySummary[] {
   return summarizeLearningCategories(readListLearnings());
-}
-
-/** Build category summaries from a learning list without additional IO. */
-export function summarizeLearningCategories(
-  learnings: readonly LearningEntry[],
-): ListCategorySummary[] {
-  return [...groupBy(learnings, (e) => e.category).entries()]
-    .flatMap(([category, entries]) => {
-      const recentExample = entries.at(-1);
-      return recentExample === undefined
-        ? []
-        : [{ category, count: entries.length, recentExample }];
-    })
-    .sort(
-      (left, right) =>
-        right.count - left.count ||
-        compareListText(left.category, right.category),
-    );
 }
 
 /** Read rules for the active autosession constitution. */

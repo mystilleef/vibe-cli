@@ -1,4 +1,8 @@
-import type { LearningEntry, LearningType } from "./storage.js";
+import type {
+  LearningCategorySummary,
+  LearningEntry,
+  LearningType,
+} from "./learningEntryCore.js";
 
 /** Stable list subcommand registry shared by CLI help, schema, and tests. */
 export const LIST_COMMAND_NAMES = [
@@ -56,11 +60,7 @@ export interface ListCheck {
   displayCwd: string | null;
 }
 
-export interface ListCategorySummary {
-  category: string;
-  count: number;
-  recentExample: LearningEntry;
-}
+export interface ListCategorySummary extends LearningCategorySummary {}
 
 export interface ListStats {
   learnings: {

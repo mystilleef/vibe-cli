@@ -5,6 +5,7 @@ import {
   DAY_MS,
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
+  LEARNING_ENTRIES_SELECT,
   type LearningEntryStorageRow,
   learningRowToEntry,
 } from "./learningEntryCore.js";
@@ -147,8 +148,7 @@ function rowToSessionPruneCandidate(
   };
 }
 
-const LEARNING_PRUNE_SELECT =
-  "SELECT id, type, category, observation, solution, timestamp, demo_id FROM learning_entries";
+const LEARNING_PRUNE_SELECT = LEARNING_ENTRIES_SELECT;
 
 const LEARNING_PRUNE_ORDER = "ORDER BY timestamp, category, id";
 

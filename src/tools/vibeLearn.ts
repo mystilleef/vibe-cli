@@ -1,10 +1,12 @@
+import type {
+  LearningEntry,
+  LearningType,
+} from "../utils/learningEntryCore.js";
 import {
   addLearningEntry,
   getLearningCategorySummary,
   getLearningEntries,
   isLearningOverlapDuplicate,
-  type LearningEntry,
-  type LearningType,
 } from "../utils/storage.js";
 
 /** Input for recording an agent learning pattern. */

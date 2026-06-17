@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withDatabase } from "../src/utils/database";
+import { summarizeLearningCategories } from "../src/utils/learningEntryCore";
 import {
   formatListCategories,
   formatListChecks,
@@ -26,10 +27,7 @@ import {
   toProvidersJson,
 } from "../src/utils/listData";
 import { formatListAll } from "../src/utils/listDataFormatters";
-import {
-  buildListStats,
-  summarizeLearningCategories,
-} from "../src/utils/listDataReaders";
+import { buildListStats } from "../src/utils/listDataReaders";
 import { applyListLimit } from "../src/utils/listDataUtilsCollections";
 import {
   formatAlignedRows,

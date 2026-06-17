@@ -1,3 +1,4 @@
+import type { LearningEntry } from "./learningEntryCore.js";
 import type {
   ListAllData,
   ListCategorySummary,
@@ -18,7 +19,6 @@ import {
   truncateText,
 } from "./listDataUtilsFormatting.js";
 import { parseCheckReason } from "./listDataUtilsParsing.js";
-import type { LearningEntry } from "./storage.js";
 
 /** Pretty overview used by the root `vibe list` group. */
 export function formatListCommandOverview(
