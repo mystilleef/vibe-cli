@@ -82,27 +82,25 @@ async function callGemini(
   systemPrompt: string,
   userContent: string,
   temperature?: number,
+  baseUrl?: string,
 ): Promise<string> {
   await ensureGemini(apiKey);
   if (!genAI) throw new Error("Gemini client unavailable.");
-
   const request = {
     contents: [{ role: "user", parts: [{ text: userContent }] }],
     generationConfig: {
       ...(temperature !== undefined && { temperature }),
     },
   };
-
-  const client = genAI;
-  const generate = (modelName: string) =>
-    client
-      .getGenerativeModel({
-        model: modelName,
-        systemInstruction: systemPrompt,
-      })
-      .generateContent(request);
-
-  return (await generate(model)).response.text();
+  const modelOptions = baseUrl !== undefined ? { baseUrl } : undefined;
+  return (
+    await genAI
+      .getGenerativeModel(
+        { model, systemInstruction: systemPrompt },
+        modelOptions,
+      )
+      .generateContent(request)
+  ).response.text();
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -114,6 +112,15 @@ function requireApiKey(credentials: ResolvedProviderCredentials): string {
     throw new Error("Resolved provider API key is unavailable.");
   }
   return credentials.apiKey;
+}
+
+function resolveProviderTemperature(
+  providerTemperature: number | null | undefined,
+  defaultTemperature: number,
+): number | undefined {
+  return providerTemperature === null
+    ? undefined
+    : (providerTemperature ?? defaultTemperature);
 }
 
 async function callOpenAICompat({
@@ -158,10 +165,10 @@ export async function callProvider(
   userContent: string,
   temperature = 0.1,
 ): Promise<string> {
-  const resolvedTemp =
-    provider.temperature === null
-      ? undefined
-      : (provider.temperature ?? temperature);
+  const resolvedTemp = resolveProviderTemperature(
+    provider.temperature,
+    temperature,
+  );
 
   const spec = provider.spec;
   if (spec === "openai") {
@@ -199,6 +206,7 @@ export async function callProvider(
       systemPrompt,
       userContent,
       resolvedTemp,
+      provider.baseUrl,
     );
   }
 

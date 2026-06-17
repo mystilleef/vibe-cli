@@ -60,19 +60,23 @@ let geminiCalls: Array<{
   prompt: string;
   systemInstruction?: string;
   generationConfig?: { temperature?: number };
+  options?: unknown;
 }> = [];
 let geminiResponses: string[] = [];
 let geminiErrorMessages: Array<string | undefined> = [];
 let geminiApiKeys: string[] = [];
 
 const mockGenAI = {
-  getGenerativeModel: ({
-    model,
-    systemInstruction,
-  }: {
-    model: string;
-    systemInstruction?: string;
-  }) => ({
+  getGenerativeModel: (
+    {
+      model,
+      systemInstruction,
+    }: {
+      model: string;
+      systemInstruction?: string;
+    },
+    options?: unknown,
+  ) => ({
     generateContent: async (input: {
       contents: unknown;
       generationConfig?: { temperature?: number };
@@ -84,6 +88,7 @@ const mockGenAI = {
         ...(input.generationConfig !== undefined && {
           generationConfig: input.generationConfig,
         }),
+        ...(options !== undefined && { options }),
       });
       const customError = geminiErrorMessages[geminiCalls.length - 1];
       if (customError !== undefined) throw new Error(customError);
@@ -619,6 +624,51 @@ describe("LLM call surfaces", () => {
     expect(result.model).toBe("gemini-pro");
     expect(result.error).toBe(message);
     expect(geminiCalls.map((call) => call.model)).toEqual(["gemini-pro"]);
+  });
+
+  test("Gemini forwards provider baseUrl to model request options", async () => {
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["gemini baseUrl response"];
+
+    const result = await callProvider(
+      {
+        name: "gemini",
+        spec: "gemini",
+        envVar: "GEMINI_API_KEY",
+        baseUrl: "https://gemini.proxy.example/v1/",
+      },
+      { apiKey: "gemini-key" },
+      "gemini-model",
+      "system prompt",
+      "user prompt",
+    );
+
+    expect(result).toBe("gemini baseUrl response");
+    expect(geminiCalls[0]?.model).toBe("gemini-model");
+    expect(geminiCalls[0]?.options).toEqual({
+      baseUrl: "https://gemini.proxy.example/v1/",
+    });
+  });
+
+  test("Gemini omits model request options when provider baseUrl is absent", async () => {
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = ["gemini no baseUrl response"];
+
+    const result = await callProvider(
+      {
+        name: "gemini",
+        spec: "gemini",
+        envVar: "GEMINI_API_KEY",
+      },
+      { apiKey: "gemini-key" },
+      "gemini-model",
+      "system prompt",
+      "user prompt",
+    );
+
+    expect(result).toBe("gemini no baseUrl response");
+    expect(geminiCalls[0]?.model).toBe("gemini-model");
+    expect(geminiCalls[0]?.options).toBeUndefined();
   });
 
   test("custom OpenAI model override passes unchanged", async () => {
