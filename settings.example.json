@@ -45,18 +45,39 @@
       "defaultModel": "kimi-k2.6"
     },
     {
-      "name": "opencode",
+      "name": "opencode-go-anthropic",
+      "spec": "anthropic",
+      "envVar": "OPENCODE_API_KEY",
+      "baseUrl": "https://opencode.ai/zen/go",
+      "defaultModel": "qwen3.7-max"
+    },
+    {
+      "name": "opencode-go-openai",
       "spec": "openai",
       "envVar": "OPENCODE_API_KEY",
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "defaultModel": "kimi-k2.6"
     },
     {
-      "name": "opencode-anthropic",
+      "name": "opencode-zen-anthropic",
       "spec": "anthropic",
       "envVar": "OPENCODE_API_KEY",
-      "baseUrl": "https://opencode.ai/zen/go",
+      "baseUrl": "https://opencode.ai/zen",
       "defaultModel": "qwen3.7-max"
+    },
+    {
+      "name": "opencode-zen-openai",
+      "spec": "openai",
+      "envVar": "OPENCODE_API_KEY",
+      "baseUrl": "https://opencode.ai/zen/v1",
+      "defaultModel": "kimi-k2.6"
+    },
+    {
+      "name": "opencode-zen-google",
+      "spec": "gemini",
+      "envVar": "OPENCODE_API_KEY",
+      "baseUrl": "https://opencode.ai/zen",
+      "defaultModel": "gemini-3.5-flash"
     },
     {
       "name": "qwen-dashscope",

@@ -152,8 +152,11 @@ describe("loadProviderSettings", () => {
       "openrouter",
       "deepseek",
       "mimo",
-      "opencode",
-      "opencode-anthropic",
+      "opencode-go-anthropic",
+      "opencode-go-openai",
+      "opencode-zen-anthropic",
+      "opencode-zen-openai",
+      "opencode-zen-google",
       "qwen-dashscope",
     ]);
     expect(
