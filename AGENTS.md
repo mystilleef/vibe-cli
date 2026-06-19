@@ -2,7 +2,7 @@
 
 ## Rules
 
-- Write asynchronous, non-blocking code.
+- Write testable, asynchronous, non-blocking code.
 - After edits: run `bun check`.
 - After task completion: run `bun verify`.
 
