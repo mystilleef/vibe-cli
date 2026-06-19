@@ -152,6 +152,7 @@ describe("loadProviderSettings", () => {
       "openrouter",
       "deepseek",
       "mimo",
+      "huggingface",
       "opencode-go-anthropic",
       "opencode-go-openai",
       "opencode-zen-anthropic",

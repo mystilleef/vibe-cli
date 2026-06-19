@@ -45,6 +45,13 @@
       "defaultModel": "kimi-k2.6"
     },
     {
+      "name": "huggingface",
+      "spec": "openai",
+      "envVar": "HF_TOKEN",
+      "baseUrl": "https://api-inference.huggingface.co/v1",
+      "defaultModel": "meta-llama/Llama-3.3-70B-Instruct"
+    },
+    {
       "name": "opencode-go-anthropic",
       "spec": "anthropic",
       "envVar": "OPENCODE_API_KEY",
