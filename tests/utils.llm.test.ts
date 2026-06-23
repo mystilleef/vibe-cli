@@ -626,9 +626,19 @@ describe("LLM call surfaces", () => {
     expect(geminiCalls.map((call) => call.model)).toEqual(["gemini-pro"]);
   });
 
-  test("Gemini forwards provider baseUrl to model request options", async () => {
+  test("Gemini with custom baseUrl uses fetch to /models/{model}:generateContent", async () => {
     process.env["GEMINI_API_KEY"] = "gemini-key";
-    geminiResponses = ["gemini baseUrl response"];
+    mockFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            candidates: [
+              { content: { parts: [{ text: "gemini baseUrl response" }] } },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
 
     const result = await callProvider(
       {
@@ -644,10 +654,12 @@ describe("LLM call surfaces", () => {
     );
 
     expect(result).toBe("gemini baseUrl response");
-    expect(geminiCalls[0]?.model).toBe("gemini-model");
-    expect(geminiCalls[0]?.options).toEqual({
-      baseUrl: "https://gemini.proxy.example/v1/",
-    });
+    expect(geminiCalls).toHaveLength(0);
+    const call = requireValue(fetchCalls[0], "fetch call 0");
+    expect(call.url).toBe(
+      "https://gemini.proxy.example/v1/models/gemini-model:generateContent",
+    );
+    expect(call.init.headers).toMatchObject({ "x-goog-api-key": "gemini-key" });
   });
 
   test("Gemini omits model request options when provider baseUrl is absent", async () => {

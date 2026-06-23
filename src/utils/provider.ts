@@ -76,6 +76,43 @@ async function ensureGemini(apiKey: string) {
   }
 }
 
+async function callGeminiCustomEndpoint(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userContent: string,
+  temperature: number | undefined,
+  baseUrl: string,
+): Promise<string> {
+  const url = `${normalizeBaseUrl(baseUrl)}/models/${model}:generateContent`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: userContent }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    generationConfig: {
+      ...(temperature !== undefined && { temperature }),
+    },
+  };
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(body),
+  });
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}: ${raw.trim()}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Gemini returned non-JSON response: ${raw.trim()}`);
+  }
+  const text =
+    (parsed as { candidates?: { content?: { parts?: { text?: string }[] } }[] })
+      ?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  return text;
+}
+
 async function callGemini(
   apiKey: string,
   model: string,
@@ -84,6 +121,18 @@ async function callGemini(
   temperature?: number,
   baseUrl?: string,
 ): Promise<string> {
+  // Custom endpoints (e.g. opencode.ai) use /v1/models/{model}:generateContent,
+  // not the /v1beta/ path hardcoded in @google/generative-ai.
+  if (baseUrl !== undefined) {
+    return callGeminiCustomEndpoint(
+      apiKey,
+      model,
+      systemPrompt,
+      userContent,
+      temperature,
+      baseUrl,
+    );
+  }
   await ensureGemini(apiKey);
   if (!genAI) throw new Error("Gemini client unavailable.");
   const request = {
@@ -92,13 +141,9 @@ async function callGemini(
       ...(temperature !== undefined && { temperature }),
     },
   };
-  const modelOptions = baseUrl !== undefined ? { baseUrl } : undefined;
   return (
     await genAI
-      .getGenerativeModel(
-        { model, systemInstruction: systemPrompt },
-        modelOptions,
-      )
+      .getGenerativeModel({ model, systemInstruction: systemPrompt })
       .generateContent(request)
   ).response.text();
 }
