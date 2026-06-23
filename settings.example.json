@@ -70,7 +70,7 @@
       "spec": "anthropic",
       "envVar": "OPENCODE_API_KEY",
       "baseUrl": "https://opencode.ai/zen",
-      "defaultModel": "qwen3.7-max"
+      "defaultModel": "claude-sonnet-4-6"
     },
     {
       "name": "opencode-zen-openai",
@@ -83,7 +83,7 @@
       "name": "opencode-zen-google",
       "spec": "gemini",
       "envVar": "OPENCODE_API_KEY",
-      "baseUrl": "https://opencode.ai/zen",
+      "baseUrl": "https://opencode.ai/zen/v1",
       "defaultModel": "gemini-3.5-flash"
     },
     {
