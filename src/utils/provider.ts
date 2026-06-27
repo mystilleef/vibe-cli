@@ -4,16 +4,20 @@
  * Handles loading settings, resolving credentials, and dispatching to
  * provider-specific implementations (OpenAI, Anthropic, Gemini).
  */
-import type { GoogleGenerativeAI } from "@google/generative-ai";
+import type { GoogleGenAI } from "@google/genai";
 import { callAnthropic } from "./anthropic.js";
 import {
+  isThinkingActive,
   loadProviderSettings,
+  mapThinkingLevel,
+  normalizeBaseUrl,
   type ProviderSettingsEntry,
   resolveProviderEntry,
+  type ThinkingLevel,
 } from "./settings.js";
 
 /** Lazily-initialized Gemini client scoped to the latest call-time API key. */
-let genAI: GoogleGenerativeAI | null = null;
+let genAI: GoogleGenAI | null = null;
 let genAIKey: string | null = null;
 
 export interface ResolvedProviderCredentials {
@@ -70,27 +74,40 @@ export function resolveProviderAndModel(modelOverride?: {
 
 async function ensureGemini(apiKey: string) {
   if (!genAI || genAIKey !== apiKey) {
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    genAI = new GoogleGenerativeAI(apiKey);
+    const { GoogleGenAI } = await import("@google/genai");
+    genAI = new GoogleGenAI({ apiKey });
     genAIKey = apiKey;
   }
 }
 
-async function callGeminiCustomEndpoint(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature: number | undefined,
-  baseUrl: string,
-): Promise<string> {
+interface GeminiEndpointOptions {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userContent: string;
+  temperature: number | undefined;
+  baseUrl: string;
+  thinking?: ThinkingLevel | undefined;
+}
+
+async function callGeminiCustomEndpoint({
+  apiKey,
+  model,
+  systemPrompt,
+  userContent,
+  temperature,
+  baseUrl,
+  thinking,
+}: GeminiEndpointOptions): Promise<string> {
   const url = `${normalizeBaseUrl(baseUrl)}/models/${model}:generateContent`;
+  const genConfig: Record<string, unknown> = {
+    ...(temperature !== undefined && { temperature }),
+    ...buildGeminiThinkingConfig(thinking),
+  };
   const body = {
     contents: [{ role: "user", parts: [{ text: userContent }] }],
     systemInstruction: { parts: [{ text: systemPrompt }] },
-    generationConfig: {
-      ...(temperature !== undefined && { temperature }),
-    },
+    ...(Object.keys(genConfig).length > 0 && { generationConfig: genConfig }),
   };
   const response = await fetch(url, {
     method: "POST",
@@ -120,43 +137,34 @@ async function callGemini(
   userContent: string,
   temperature?: number,
   baseUrl?: string,
+  thinking?: ThinkingLevel,
 ): Promise<string> {
   // Custom endpoints (e.g. opencode.ai) use /v1/models/{model}:generateContent,
-  // not the /v1beta/ path hardcoded in @google/generative-ai.
+  // not the /v1beta/ path hardcoded in @google/genai.
   if (baseUrl !== undefined) {
-    return callGeminiCustomEndpoint(
+    return callGeminiCustomEndpoint({
       apiKey,
       model,
       systemPrompt,
       userContent,
       temperature,
       baseUrl,
-    );
+      thinking,
+    });
   }
   await ensureGemini(apiKey);
   if (!genAI) throw new Error("Gemini client unavailable.");
-  const request = {
-    contents: [{ role: "user", parts: [{ text: userContent }] }],
-    generationConfig: {
-      ...(temperature !== undefined && { temperature }),
-    },
+  const config: Record<string, unknown> = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    ...(temperature !== undefined && { temperature }),
+    ...buildGeminiThinkingConfig(thinking),
   };
-  return (
-    await genAI
-      .getGenerativeModel({ model, systemInstruction: systemPrompt })
-      .generateContent(request)
-  ).response.text();
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function requireApiKey(credentials: ResolvedProviderCredentials): string {
-  if (!credentials.apiKey) {
-    throw new Error("Resolved provider API key is unavailable.");
-  }
-  return credentials.apiKey;
+  const response = await genAI.models.generateContent({
+    model,
+    contents: [{ role: "user", parts: [{ text: userContent }] }],
+    config,
+  });
+  return response.text ?? "";
 }
 
 function resolveProviderTemperature(
@@ -168,6 +176,39 @@ function resolveProviderTemperature(
     : (providerTemperature ?? defaultTemperature);
 }
 
+function requireApiKey(credentials: ResolvedProviderCredentials): string {
+  if (!credentials.apiKey) {
+    throw new Error("Resolved provider API key is unavailable.");
+  }
+  return credentials.apiKey;
+}
+
+/** Build Gemini thinking config when thinking is active. */
+function buildGeminiThinkingConfig(
+  thinking: ThinkingLevel | undefined,
+):
+  | { thinkingConfig: { thinkingLevel: "low" | "medium" | "high" } }
+  | undefined {
+  if (!isThinkingActive(thinking)) return undefined;
+  return { thinkingConfig: { thinkingLevel: mapThinkingLevel(thinking) } };
+}
+
+/** Detect o-series models (`^o\\d`) that reject `temperature` and `max_tokens`. */
+function isOModel(model: string): boolean {
+  return /^o\d/.test(model);
+}
+
+interface OpenAICompatOptions {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userContent: string;
+  temperature?: number;
+  thinking?: ThinkingLevel;
+  maxTokens?: number;
+}
+
 async function callOpenAICompat({
   baseURL,
   apiKey,
@@ -175,23 +216,24 @@ async function callOpenAICompat({
   systemPrompt,
   userContent,
   temperature,
-}: {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  systemPrompt: string;
-  userContent: string;
-  temperature?: number;
-}): Promise<string> {
+  thinking,
+  maxTokens,
+}: OpenAICompatOptions): Promise<string> {
   const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey, baseURL: normalizeBaseUrl(baseURL) });
+  const oModel = isOModel(model);
+  const tokenParam = oModel ? "max_completion_tokens" : "max_tokens";
   const response = await client.chat.completions.create({
     model,
     messages: [
       { role: "system" as const, content: systemPrompt },
       { role: "user" as const, content: userContent },
     ],
-    ...(temperature !== undefined && { temperature }),
+    ...(!oModel && temperature !== undefined && { temperature }),
+    ...(maxTokens !== undefined && { [tokenParam]: maxTokens }),
+    ...(isThinkingActive(thinking) && {
+      reasoning_effort: mapThinkingLevel(thinking),
+    }),
   });
   return response.choices[0]?.message.content || "";
 }
@@ -209,6 +251,7 @@ export async function callProvider(
   systemPrompt: string,
   userContent: string,
   temperature = 0.1,
+  maxTokens?: number,
 ): Promise<string> {
   const resolvedTemp = resolveProviderTemperature(
     provider.temperature,
@@ -216,6 +259,7 @@ export async function callProvider(
   );
 
   const spec = provider.spec;
+
   if (spec === "openai") {
     return callOpenAICompat({
       baseURL: provider.baseUrl ?? "",
@@ -224,6 +268,8 @@ export async function callProvider(
       systemPrompt,
       userContent,
       ...(resolvedTemp !== undefined && { temperature: resolvedTemp }),
+      ...(provider.thinking !== undefined && { thinking: provider.thinking }),
+      ...(maxTokens !== undefined && { maxTokens }),
     });
   }
 
@@ -241,6 +287,7 @@ export async function callProvider(
       ...(credentials.authToken !== undefined && {
         authToken: credentials.authToken,
       }),
+      ...(provider.thinking !== undefined && { thinking: provider.thinking }),
     });
   }
 
@@ -252,6 +299,7 @@ export async function callProvider(
       userContent,
       resolvedTemp,
       provider.baseUrl,
+      provider.thinking,
     );
   }
 
