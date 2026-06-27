@@ -1,3 +1,26 @@
+import {
+  type ActiveThinkingLevel,
+  isThinkingActive,
+  normalizeBaseUrl,
+  type ThinkingLevel,
+} from "./settings.js";
+
+const ANTHROPIC_THINKING_BUDGETS: Record<
+  ActiveThinkingLevel,
+  2048 | 4096 | 8192 | 16384
+> = {
+  low: 2048,
+  medium: 4096,
+  high: 8192,
+  xhigh: 16384,
+};
+
+export function mapAnthropicThinkingBudget(
+  level: ActiveThinkingLevel,
+): 2048 | 4096 | 8192 | 16384 {
+  return ANTHROPIC_THINKING_BUDGETS[level];
+}
+
 /** Resolved Anthropic API connection parameters sourced from environment variables. */
 export interface AnthropicConfig {
   /** Base URL with trailing slashes stripped; defaults to `https://api.anthropic.com`. */
@@ -15,6 +38,8 @@ export interface AnthropicHeaderInput {
   apiKey?: string;
   authToken?: string;
   version: string;
+  /** Optional beta feature flags; emitted as comma-joined `anthropic-beta`. */
+  betas?: string[];
 }
 
 /** Options for calling the Anthropic Messages API. */
@@ -28,6 +53,8 @@ export interface AnthropicCallOptions {
   apiKey?: string;
   authToken?: string;
   version?: string;
+  /** Unified reasoning depth; active levels add `thinking` block, beta header, and enforce token/temperature rules. */
+  thinking?: ThinkingLevel;
 }
 
 /**
@@ -43,9 +70,8 @@ export interface AnthropicCallOptions {
 export function resolveAnthropicConfig(
   overrides: Partial<AnthropicConfig> = {},
 ): AnthropicConfig {
-  const baseUrl = (overrides.baseUrl ?? "https://api.anthropic.com").replace(
-    /\/+$/,
-    "",
+  const baseUrl = normalizeBaseUrl(
+    overrides.baseUrl ?? "https://api.anthropic.com",
   );
   const apiKey = overrides.apiKey ?? process.env["ANTHROPIC_API_KEY"];
   const authToken = overrides.authToken ?? process.env["ANTHROPIC_AUTH_TOKEN"];
@@ -76,6 +102,7 @@ export function buildAnthropicHeaders({
   apiKey,
   authToken,
   version,
+  betas,
 }: AnthropicHeaderInput): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -86,10 +113,11 @@ export function buildAnthropicHeaders({
   } else if (authToken) {
     headers["authorization"] = `Bearer ${authToken}`;
   }
+  if (betas !== undefined && betas.length > 0) {
+    headers["anthropic-beta"] = betas.join(",");
+  }
   return headers;
 }
-
-// ── Anthropic response helpers ────────────────────────────────────────────
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -183,6 +211,7 @@ export async function callAnthropic({
   apiKey,
   authToken,
   version,
+  thinking,
 }: AnthropicCallOptions): Promise<string> {
   const config = resolveAnthropicConfig({
     ...(baseUrl !== undefined && { baseUrl }),
@@ -190,12 +219,33 @@ export async function callAnthropic({
     ...(authToken !== undefined && { authToken }),
     ...(version !== undefined && { version }),
   });
-  const headers = buildAnthropicHeaders(config);
+
+  const thinkingActive = isThinkingActive(thinking);
+  const budgetTokens = thinkingActive
+    ? mapAnthropicThinkingBudget(thinking)
+    : undefined;
+
+  const betas = thinkingActive ? ["thinking-1.0"] : undefined;
+  const headers = buildAnthropicHeaders({
+    ...config,
+    ...(betas !== undefined && { betas }),
+  });
+
+  const effectiveTemperature = thinkingActive ? 1.0 : temperature;
+  const effectiveMaxTokens = budgetTokens
+    ? Math.max(maxTokens, budgetTokens + 1024)
+    : maxTokens;
+
   const body: Record<string, unknown> = {
     model,
-    max_tokens: maxTokens,
+    max_tokens: effectiveMaxTokens,
     messages: [{ role: "user", content: compiledPrompt }],
-    ...(temperature !== undefined && { temperature }),
+    ...(effectiveTemperature !== undefined && {
+      temperature: effectiveTemperature,
+    }),
+    ...(budgetTokens !== undefined && {
+      thinking: { type: "enabled", budget_tokens: budgetTokens },
+    }),
   };
   if (systemPrompt) body["system"] = systemPrompt;
 

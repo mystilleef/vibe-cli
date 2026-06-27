@@ -4,6 +4,7 @@ import {
   callAnthropic,
   resolveAnthropicConfig,
 } from "../src/utils/anthropic";
+import type { ThinkingLevel } from "../src/utils/settings";
 
 const ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
@@ -148,46 +149,522 @@ describe("callAnthropic", () => {
       authorization: "Bearer injected-token",
     });
   });
-});
 
-describe("buildAnthropicHeaders", () => {
-  test("sets x-api-key when apiKey present", () => {
-    const h = buildAnthropicHeaders({
-      apiKey: "my-key",
-      version: "2023-06-01",
-    });
-    expect(h["x-api-key"]).toBe("my-key");
-    expect(h["anthropic-version"]).toBe("2023-06-01");
-    expect(h["content-type"]).toBe("application/json");
-    expect(h["authorization"]).toBeUndefined();
-  });
+  test("includes system prompt in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
 
-  test("sets Bearer authorization when authToken present and apiKey absent", () => {
-    const h = buildAnthropicHeaders({
-      authToken: "tok",
-      version: "2023-06-01",
-    });
-    expect(h["authorization"]).toBe("Bearer tok");
-    expect(h["x-api-key"]).toBeUndefined();
-  });
-
-  test("emits only content-type and anthropic-version when neither key present", () => {
-    const h = buildAnthropicHeaders({ version: "2023-06-01" });
-    expect(Object.keys(h)).toEqual(
-      expect.arrayContaining(["content-type", "anthropic-version"]),
-    );
-    expect(h["x-api-key"]).toBeUndefined();
-    expect(h["authorization"]).toBeUndefined();
-  });
-
-  test("prefers x-api-key over Bearer when both apiKey and authToken present", () => {
-    const h = buildAnthropicHeaders({
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      systemPrompt: "system instructions",
       apiKey: "key",
-      authToken: "tok",
-      version: "2023-06-01",
     });
-    expect(h["x-api-key"]).toBe("key");
-    expect(h["authorization"]).toBeUndefined();
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.system).toBe("system instructions");
+  });
+
+  test("omits system key from body when systemPrompt absent", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.system).toBeUndefined();
+  });
+
+  test("omits temperature from body when temperature undefined", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBeUndefined();
+  });
+
+  test("includes temperature in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0.5,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(0.5);
+  });
+
+  test("includes temperature zero in body when provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(0);
+  });
+
+  test("uses custom maxTokens in request body", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      maxTokens: 512,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.max_tokens).toBe(512);
+  });
+
+  test("uses default maxTokens 1024 when not provided", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.max_tokens).toBe(1024);
+  });
+
+  test("both injected apiKey and authToken prefers apiKey in headers", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "injected-key",
+      authToken: "injected-token",
+    });
+
+    expect(fetchCalls[0]?.init.headers).toMatchObject({
+      "x-api-key": "injected-key",
+    });
+    expect(fetchCalls[0]?.init.headers).not.toMatchObject({
+      authorization: expect.any(String),
+    });
+  });
+
+  test("extracts text when first content block is non-text type and second is text", async () => {
+    mockFetch(
+      Response.json({
+        content: [
+          { type: "image", source: "base64" },
+          { type: "text", text: "second block" },
+        ],
+      }),
+    );
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("second block");
+  });
+
+  test("extracts text from bare content block without type field", async () => {
+    mockFetch(Response.json({ content: [{ text: "bare text block" }] }));
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("bare text block");
+  });
+
+  // ── Thinking: inactive (undefined / off) ─────────────────────────────
+
+  test("thinking undefined omits thinking body and beta header", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.thinking).toBeUndefined();
+    expect(fetchCalls[0]?.init.headers).not.toHaveProperty("anthropic-beta");
+  });
+
+  test("thinking undefined preserves caller temperature", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0.3,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(0.3);
+  });
+
+  test("thinking undefined preserves caller max_tokens", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      maxTokens: 512,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.max_tokens).toBe(512);
+  });
+
+  test("thinking undefined omits temperature from body when absent", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBeUndefined();
+  });
+
+  test("thinking off behaves identically to undefined", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      temperature: 0.5,
+      maxTokens: 512,
+      thinking: "off",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.thinking).toBeUndefined();
+    expect(body.temperature).toBe(0.5);
+    expect(body.max_tokens).toBe(512);
+    expect(fetchCalls[0]?.init.headers).not.toHaveProperty("anthropic-beta");
+  });
+
+  // ── Thinking: active levels ───────────────────────────────────────────
+
+  test.each([
+    ["low" as ThinkingLevel, 2048],
+    ["medium" as ThinkingLevel, 4096],
+    ["high" as ThinkingLevel, 8192],
+    ["xhigh" as ThinkingLevel, 16384],
+  ])("active level %p sends thinking block with budget %d", async (level, expectedBudget) => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: level,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: expectedBudget,
+    });
+  });
+
+  test.each([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ] as ThinkingLevel[])("active level %p adds thinking-1.0 beta header", async (level) => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: level,
+      apiKey: "key",
+    });
+
+    expect(fetchCalls[0]?.init.headers).toMatchObject({
+      "anthropic-beta": "thinking-1.0",
+    });
+  });
+
+  test.each([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ] as ThinkingLevel[])("active level %p forces temperature to 1.0 regardless of caller value", async (level) => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: level,
+      temperature: 0.2,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(1.0);
+  });
+
+  test("active thinking forces temperature to 1.0 even when caller omits temperature", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "medium",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    expect(body.temperature).toBe(1.0);
+  });
+
+  // ── Thinking: max_tokens floor ────────────────────────────────────────
+
+  test("active thinking enforces max_tokens floor at budget + 1024 when default maxTokens is low", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "medium",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    // budget 4096 + 1024 = 5120; default maxTokens is 1024, so floor wins
+    expect(body.max_tokens).toBe(5120);
+  });
+
+  test("active thinking enforces max_tokens floor when explicit maxTokens < budget + 1024", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "xhigh",
+      maxTokens: 4096,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    // budget 16384 + 1024 = 17408; explicit 4096 is lower, floor wins
+    expect(body.max_tokens).toBe(17408);
+  });
+
+  test("active thinking preserves explicit maxTokens when it exceeds floor", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "low",
+      maxTokens: 10000,
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    // budget 2048 + 1024 = 3072; explicit 10000 is higher, preserved
+    expect(body.max_tokens).toBe(10000);
+  });
+
+  test("low thinking with default maxTokens enforces floor at 3072", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "low",
+      apiKey: "key",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    // budget 2048 + 1024 = 3072; default 1024 is lower
+    expect(body.max_tokens).toBe(3072);
+  });
+
+  // ── Thinking: non-text response blocks filtered ───────────────────────
+
+  test("extracts text when thinking blocks precede text blocks", async () => {
+    mockFetch(
+      Response.json({
+        content: [
+          { type: "thinking", thinking: "internal reasoning" },
+          { type: "text", text: "visible text" },
+        ],
+      }),
+    );
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "high",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("visible text");
+  });
+
+  test("returns empty string when all content blocks are thinking type", async () => {
+    mockFetch(
+      Response.json({
+        content: [
+          { type: "thinking", thinking: "first" },
+          { type: "thinking", thinking: "second" },
+        ],
+      }),
+    );
+
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      thinking: "high",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("");
+  });
+
+  test("ignores thinking-only response without active thinking setting", async () => {
+    mockFetch(
+      Response.json({
+        content: [
+          { type: "thinking", thinking: "reasoning" },
+          { type: "text", text: "final" },
+        ],
+      }),
+    );
+
+    // thinking inactive but response contains thinking blocks — still filters
+    const result = await callAnthropic({
+      model: "claude-test",
+      compiledPrompt: "prompt",
+      apiKey: "key",
+    });
+
+    expect(result).toBe("final");
+  });
+
+  // ── Thinking: error handling preserved ─────────────────────────────────
+
+  test("auth error message preserved when thinking is active", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "invalid key" } }), {
+        status: 401,
+        headers: { "anthropic-request-id": "req-auth-001" },
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: "high",
+        apiKey: "bad-key",
+      }),
+    ).rejects.toThrow(
+      "Anthropic auth failed (401) (request id: req-auth-001). Check ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.",
+    );
+  });
+
+  test("rate limit error message preserved when thinking is active", async () => {
+    mockFetch(
+      new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+        status: 429,
+        headers: { "retry-after": "30", "anthropic-request-id": "req-rate" },
+      }),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: "medium",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow(
+      "Anthropic rate limited (429) (request id: req-rate). Retry after 30s.",
+    );
+  });
+
+  test("generic provider error preserved when thinking is active", async () => {
+    mockFetch(
+      new Response(
+        JSON.stringify({ error: { message: "server overloaded" } }),
+        { status: 503, headers: { "x-request-id": "req-xyz" } },
+      ),
+    );
+
+    await expect(
+      callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: "xhigh",
+        apiKey: "key",
+      }),
+    ).rejects.toThrow(
+      "Anthropic error 503 (request id: req-xyz). server overloaded",
+    );
+  });
+
+  // ── Thinking: combined payload shape ──────────────────────────────────
+
+  test("active thinking request carries thinking block, beta header, forced temperature, and system prompt", async () => {
+    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+
+    await callAnthropic({
+      model: "claude-opus",
+      compiledPrompt: "solve this",
+      systemPrompt: "be precise",
+      thinking: "high",
+      temperature: 0.0,
+      maxTokens: 4096,
+      apiKey: "key",
+      version: "2024-02-15",
+    });
+
+    const body = JSON.parse(fetchCalls[0]?.init.body as string);
+    const headers = fetchCalls[0]?.init.headers as Record<string, string>;
+
+    expect(body.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 8192,
+    });
+    expect(body.temperature).toBe(1.0);
+    expect(body.max_tokens).toBe(9216);
+    expect(body.system).toBe("be precise");
+    expect(body.model).toBe("claude-opus");
+    expect(headers["anthropic-beta"]).toBe("thinking-1.0");
+    expect(headers["anthropic-version"]).toBe("2024-02-15");
   });
 });
 
@@ -366,150 +843,6 @@ describe("callAnthropic error handling", () => {
     ).rejects.toThrow("request id: xreq-789");
   });
 
-  test("includes system prompt in body when provided", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      systemPrompt: "system instructions",
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.system).toBe("system instructions");
-  });
-
-  test("omits system key from body when systemPrompt absent", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.system).toBeUndefined();
-  });
-
-  test("omits temperature from body when temperature undefined", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.temperature).toBeUndefined();
-  });
-
-  test("includes temperature in body when provided", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      temperature: 0.5,
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.temperature).toBe(0.5);
-  });
-
-  test("includes temperature zero in body when provided", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      temperature: 0,
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.temperature).toBe(0);
-  });
-
-  test("uses custom maxTokens in request body", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      maxTokens: 512,
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.max_tokens).toBe(512);
-  });
-
-  test("uses default maxTokens 1024 when not provided", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "key",
-    });
-
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.max_tokens).toBe(1024);
-  });
-
-  test("both injected apiKey and authToken prefers apiKey in headers", async () => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
-
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "injected-key",
-      authToken: "injected-token",
-    });
-
-    expect(fetchCalls[0]?.init.headers).toMatchObject({
-      "x-api-key": "injected-key",
-    });
-    expect(fetchCalls[0]?.init.headers).not.toMatchObject({
-      authorization: expect.any(String),
-    });
-  });
-
-  test("extracts text when first content block is non-text type and second is text", async () => {
-    mockFetch(
-      Response.json({
-        content: [
-          { type: "image", source: "base64" },
-          { type: "text", text: "second block" },
-        ],
-      }),
-    );
-
-    const result = await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "key",
-    });
-
-    expect(result).toBe("second block");
-  });
-
-  test("extracts text from bare content block without type field", async () => {
-    mockFetch(Response.json({ content: [{ text: "bare text block" }] }));
-
-    const result = await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      apiKey: "key",
-    });
-
-    expect(result).toBe("bare text block");
-  });
-
   test("prefers anthropic-request-id over x-request-id in error", async () => {
     mockFetch(
       new Response(JSON.stringify({ error: { message: "server error" } }), {
@@ -569,5 +902,81 @@ describe("callAnthropic error handling", () => {
         apiKey: "key",
       }),
     ).rejects.toThrow("Anthropic error 500");
+  });
+});
+
+describe("buildAnthropicHeaders", () => {
+  test("sets x-api-key when apiKey present", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "my-key",
+      version: "2023-06-01",
+    });
+    expect(h["x-api-key"]).toBe("my-key");
+    expect(h["anthropic-version"]).toBe("2023-06-01");
+    expect(h["content-type"]).toBe("application/json");
+    expect(h["authorization"]).toBeUndefined();
+  });
+
+  test("sets Bearer authorization when authToken present and apiKey absent", () => {
+    const h = buildAnthropicHeaders({
+      authToken: "tok",
+      version: "2023-06-01",
+    });
+    expect(h["authorization"]).toBe("Bearer tok");
+    expect(h["x-api-key"]).toBeUndefined();
+  });
+
+  test("emits only content-type and anthropic-version when neither key present", () => {
+    const h = buildAnthropicHeaders({ version: "2023-06-01" });
+    expect(Object.keys(h)).toEqual(
+      expect.arrayContaining(["content-type", "anthropic-version"]),
+    );
+    expect(h["x-api-key"]).toBeUndefined();
+    expect(h["authorization"]).toBeUndefined();
+  });
+
+  test("prefers x-api-key over Bearer when both apiKey and authToken present", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      authToken: "tok",
+      version: "2023-06-01",
+    });
+    expect(h["x-api-key"]).toBe("key");
+    expect(h["authorization"]).toBeUndefined();
+  });
+
+  test("emits anthropic-beta header when betas provided", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      version: "2023-06-01",
+      betas: ["thinking-1.0", "feature-x"],
+    });
+    expect(h["anthropic-beta"]).toBe("thinking-1.0,feature-x");
+  });
+
+  test("emits anthropic-beta with single beta value", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      version: "2023-06-01",
+      betas: ["thinking-1.0"],
+    });
+    expect(h["anthropic-beta"]).toBe("thinking-1.0");
+  });
+
+  test("omits anthropic-beta when betas is undefined", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      version: "2023-06-01",
+    });
+    expect(h["anthropic-beta"]).toBeUndefined();
+  });
+
+  test("omits anthropic-beta when betas is empty array", () => {
+    const h = buildAnthropicHeaders({
+      apiKey: "key",
+      version: "2023-06-01",
+      betas: [],
+    });
+    expect(h["anthropic-beta"]).toBeUndefined();
   });
 });
