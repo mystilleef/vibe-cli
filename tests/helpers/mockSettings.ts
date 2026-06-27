@@ -1,3 +1,7 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { TempHomeContext } from "./tempHome";
+
 /** Default provider configurations shared across test files. */
 const DEFAULT_PROVIDERS = [
   {
@@ -5,6 +9,7 @@ const DEFAULT_PROVIDERS = [
     spec: "gemini",
     envVar: "GEMINI_API_KEY",
     defaultModel: "gemini-default",
+    thinking: "low",
   },
   {
     name: "openai",
@@ -47,4 +52,16 @@ export function mockSettings(overrides: Record<string, unknown> = {}) {
     providers: [...DEFAULT_PROVIDERS],
     ...overrides,
   };
+}
+
+/** Write settings JSON to a temp home data root. */
+export async function writeSettings(
+  tempHome: TempHomeContext,
+  value: unknown,
+): Promise<void> {
+  await mkdir(tempHome.dataRoot, { recursive: true });
+  await writeFile(
+    join(tempHome.dataRoot, "settings.json"),
+    typeof value === "string" ? value : JSON.stringify(value, null, 2),
+  );
 }

@@ -13,6 +13,29 @@ export const SUPPORTED_PROVIDER_SPECS = [
 
 export type ProviderSpec = (typeof SUPPORTED_PROVIDER_SPECS)[number];
 
+const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** Thinking levels that activate reasoning (excludes `"off"`). */
+export type ActiveThinkingLevel = Exclude<ThinkingLevel, "off">;
+
+// ── Unified thinking helpers ─────────────────────────────────────────────
+
+/** True when a reasoning level is active (defined and not `"off"`). */
+export function isThinkingActive(
+  level: ThinkingLevel | undefined,
+): level is ActiveThinkingLevel {
+  return level !== undefined && level !== "off";
+}
+
+/** Map unified thinking level to a tiered provider value. */
+export function mapThinkingLevel(
+  level: ActiveThinkingLevel,
+): "low" | "medium" | "high" {
+  return level === "xhigh" ? "high" : level;
+}
+
 export interface ProviderSettings {
   provider: string;
   model?: string;
@@ -31,6 +54,8 @@ export interface ProviderSettingsEntry {
   authTokenEnvVar?: string;
   /** Pin or suppress temperature for this provider. `null` omits it entirely. */
   temperature?: number | null;
+  /** Unified reasoning depth. Absent and `"off"` preserve current behavior. */
+  thinking?: ThinkingLevel;
 }
 
 type RawObject = Record<string, unknown>;
@@ -149,6 +174,8 @@ function validateProviderEntry(
     );
   }
 
+  const thinking = validateThinking(provider["thinking"], name);
+
   return {
     name,
     spec,
@@ -158,6 +185,7 @@ function validateProviderEntry(
     ...(apiVersion !== undefined && { apiVersion }),
     ...(authTokenEnvVar !== undefined && { authTokenEnvVar }),
     ...(temperature !== undefined && { temperature }),
+    ...(thinking !== undefined && { thinking }),
   };
 }
 
@@ -218,6 +246,34 @@ function optionalBoolean(value: unknown, label: string): boolean | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "boolean") return value;
   throw new Error(`${label} must be a boolean in settings.json`);
+}
+
+function validateThinking(
+  value: unknown,
+  providerName: string,
+): ThinkingLevel | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `${providerName}.thinking must be a non-empty string in settings.json`,
+    );
+  }
+
+  if (!THINKING_LEVELS.includes(value as ThinkingLevel)) {
+    throw new Error(
+      `${providerName}.thinking must be one of: ${THINKING_LEVELS.join(", ")}`,
+    );
+  }
+
+  return value as ThinkingLevel;
+}
+
+/** Strip trailing slashes from a URL. */
+export function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
 }
 
 function optionalNullableNumber(

@@ -7,17 +7,16 @@ import {
   SETTINGS_FILE_MISSING_ERROR,
   SUPPORTED_PROVIDER_SPECS,
 } from "../src/utils/settings.js";
-import { mockSettings } from "./helpers/mockSettings.js";
+import {
+  mockSettings,
+  writeSettings as writeSettingsShared,
+} from "./helpers/mockSettings.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 let tempHome: TempHomeContext;
 
 async function writeSettings(value: unknown): Promise<void> {
-  await mkdir(tempHome.dataRoot, { recursive: true });
-  await writeFile(
-    join(tempHome.dataRoot, "settings.json"),
-    typeof value === "string" ? value : JSON.stringify(value, null, 2),
-  );
+  await writeSettingsShared(tempHome, value);
 }
 
 /** Settings fixture using test-specific provider names for validation tests. */
@@ -485,7 +484,7 @@ describe("loadProviderSettings", () => {
     );
   });
 
-  test("omits defaultModel when not specified", async () => {
+  test("omits optional fields when not specified", async () => {
     await writeSettings(
       validSettings({
         providers: [
@@ -501,6 +500,7 @@ describe("loadProviderSettings", () => {
     expect(settings.providers[0]?.apiVersion).toBeUndefined();
     expect(settings.providers[0]?.authTokenEnvVar).toBeUndefined();
     expect(settings.providers[0]?.temperature).toBeUndefined();
+    expect(settings.providers[0]?.thinking).toBeUndefined();
   });
 
   test("loads provider temperature when set to a finite number", async () => {
@@ -728,6 +728,282 @@ describe("loadProviderSettings", () => {
 
     expect(() => loadProviderSettings()).toThrow(
       "maxAttempts must be a positive integer in settings.json",
+    );
+  });
+
+  // --- thinking validation ---
+
+  test("loads provider thinking off", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "off",
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.thinking).toBe("off");
+  });
+
+  test("loads provider thinking low", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "low",
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.thinking).toBe("low");
+  });
+
+  test("loads provider thinking medium", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "medium",
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.thinking).toBe("medium");
+  });
+
+  test("loads provider thinking high", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "high",
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.thinking).toBe("high");
+  });
+
+  test("loads provider thinking xhigh", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "xhigh",
+          },
+        ],
+      }),
+    );
+
+    expect(loadProviderSettings().providers[0]?.thinking).toBe("xhigh");
+  });
+
+  test("loads thinking for each supported provider spec", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "medium",
+          },
+          {
+            name: "openai-compat",
+            spec: "openai",
+            envVar: "OPENAI_KEY",
+            baseUrl: "https://example.com/v1",
+            thinking: "high",
+          },
+          {
+            name: "anthropic",
+            spec: "anthropic",
+            envVar: "ANTHROPIC_KEY",
+            thinking: "low",
+          },
+        ],
+      }),
+    );
+
+    const settings = loadProviderSettings();
+    expect(settings.providers[0]?.thinking).toBe("medium");
+    expect(settings.providers[1]?.thinking).toBe("high");
+    expect(settings.providers[2]?.thinking).toBe("low");
+  });
+
+  test("preserves existing settings when thinking is absent", async () => {
+    const fixture = validSettings({
+      providers: [
+        {
+          name: "gemini",
+          spec: "gemini",
+          envVar: "GEMINI_API_KEY",
+          temperature: 0.7,
+        },
+      ],
+    });
+    // Ensure thinking key is not in the raw object.
+    const providersArr = fixture.providers as Array<Record<string, unknown>>;
+    if (providersArr[0]) delete providersArr[0]["thinking"];
+    await writeSettings(fixture);
+
+    const entry = loadProviderSettings().providers[0];
+    if (!entry) throw new Error("expected entry");
+    expect(entry.temperature).toBe(0.7);
+    expect(entry.thinking).toBeUndefined();
+    expect("thinking" in entry).toBe(false);
+  });
+
+  test("fails when provider thinking is blank", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: " ",
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
+    );
+  });
+
+  test("fails when provider thinking is an unknown value", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: "ultra",
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be one of: off, low, medium, high, xhigh",
+    );
+  });
+
+  test("fails when provider thinking is a number", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: 42,
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
+    );
+  });
+
+  test("fails when provider thinking is a boolean", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: true,
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
+    );
+  });
+
+  test("fails when provider thinking is null", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: null,
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
+    );
+  });
+
+  test("fails when provider thinking is an object", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: { level: "high" },
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
+    );
+  });
+
+  test("fails when provider thinking is an array", async () => {
+    await writeSettings(
+      validSettings({
+        providers: [
+          {
+            name: "gemini",
+            spec: "gemini",
+            envVar: "GEMINI_API_KEY",
+            thinking: ["high"],
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadProviderSettings()).toThrow(
+      "gemini.thinking must be a non-empty string in settings.json",
     );
   });
 

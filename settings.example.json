@@ -6,7 +6,8 @@
       "name": "gemini",
       "spec": "gemini",
       "envVar": "GEMINI_API_KEY",
-      "defaultModel": "gemini-3.5-flash"
+      "defaultModel": "gemini-3.5-flash",
+      "thinking": "medium"
     },
     {
       "name": "openai",
@@ -22,7 +23,8 @@
       "defaultModel": "claude-haiku-4-5-20251001",
       "baseUrl": "https://api.anthropic.com",
       "apiVersion": "2023-06-01",
-      "authTokenEnvVar": "ANTHROPIC_AUTH_TOKEN"
+      "authTokenEnvVar": "ANTHROPIC_AUTH_TOKEN",
+      "thinking": "high"
     },
     {
       "name": "openrouter",
@@ -35,7 +37,8 @@
       "spec": "openai",
       "envVar": "DEEPSEEK_API_KEY",
       "baseUrl": "https://api.deepseek.com/v1",
-      "defaultModel": "deepseek-v4-pro"
+      "defaultModel": "deepseek-v4-pro",
+      "thinking": "high"
     },
     {
       "name": "mimo",
