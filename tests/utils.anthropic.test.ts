@@ -377,62 +377,61 @@ describe("callAnthropic", () => {
     ["medium" as ThinkingLevel, 4096],
     ["high" as ThinkingLevel, 8192],
     ["xhigh" as ThinkingLevel, 16384],
-  ])("active level %p sends thinking block with budget %d", async (level, expectedBudget) => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+  ])(
+    "active level %p sends thinking block with budget %d",
+    async (level, expectedBudget) => {
+      mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
 
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      thinking: level,
-      apiKey: "key",
-    });
+      await callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: level,
+        apiKey: "key",
+      });
 
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.thinking).toEqual({
-      type: "enabled",
-      budget_tokens: expectedBudget,
-    });
-  });
+      const body = JSON.parse(fetchCalls[0]?.init.body as string);
+      expect(body.thinking).toEqual({
+        type: "enabled",
+        budget_tokens: expectedBudget,
+      });
+    },
+  );
 
-  test.each([
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ] as ThinkingLevel[])("active level %p adds thinking-1.0 beta header", async (level) => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+  test.each(["low", "medium", "high", "xhigh"] as ThinkingLevel[])(
+    "active level %p adds thinking-1.0 beta header",
+    async (level) => {
+      mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
 
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      thinking: level,
-      apiKey: "key",
-    });
+      await callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: level,
+        apiKey: "key",
+      });
 
-    expect(fetchCalls[0]?.init.headers).toMatchObject({
-      "anthropic-beta": "thinking-1.0",
-    });
-  });
+      expect(fetchCalls[0]?.init.headers).toMatchObject({
+        "anthropic-beta": "thinking-1.0",
+      });
+    },
+  );
 
-  test.each([
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ] as ThinkingLevel[])("active level %p forces temperature to 1.0 regardless of caller value", async (level) => {
-    mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
+  test.each(["low", "medium", "high", "xhigh"] as ThinkingLevel[])(
+    "active level %p forces temperature to 1.0 regardless of caller value",
+    async (level) => {
+      mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));
 
-    await callAnthropic({
-      model: "claude-test",
-      compiledPrompt: "prompt",
-      thinking: level,
-      temperature: 0.2,
-      apiKey: "key",
-    });
+      await callAnthropic({
+        model: "claude-test",
+        compiledPrompt: "prompt",
+        thinking: level,
+        temperature: 0.2,
+        apiKey: "key",
+      });
 
-    const body = JSON.parse(fetchCalls[0]?.init.body as string);
-    expect(body.temperature).toBe(1.0);
-  });
+      const body = JSON.parse(fetchCalls[0]?.init.body as string);
+      expect(body.temperature).toBe(1.0);
+    },
+  );
 
   test("active thinking forces temperature to 1.0 even when caller omits temperature", async () => {
     mockFetch(Response.json({ content: [{ type: "text", text: "ok" }] }));

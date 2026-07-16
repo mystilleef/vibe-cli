@@ -608,17 +608,20 @@ describe("LLM call surfaces", () => {
     "context length exceeded",
     "context window exceeded",
     "model temporarily unavailable",
-  ])("Gemini error %p keeps the requested model without fallback", async (message) => {
-    process.env["GEMINI_API_KEY"] = "gemini-key";
-    geminiErrorMessages = [message];
+  ])(
+    "Gemini error %p keeps the requested model without fallback",
+    async (message) => {
+      process.env["GEMINI_API_KEY"] = "gemini-key";
+      geminiErrorMessages = [message];
 
-    const result = await verifyConnection({ model: "gemini-pro" });
+      const result = await verifyConnection({ model: "gemini-pro" });
 
-    expect(result.ok).toBe(false);
-    expect(result.model).toBe("gemini-pro");
-    expect(result.error).toBe(message);
-    expect(geminiSdkCalls.map((call) => call.model)).toEqual(["gemini-pro"]);
-  });
+      expect(result.ok).toBe(false);
+      expect(result.model).toBe("gemini-pro");
+      expect(result.error).toBe(message);
+      expect(geminiSdkCalls.map((call) => call.model)).toEqual(["gemini-pro"]);
+    },
+  );
 
   test("Gemini with custom baseUrl uses fetch to /models/{model}:generateContent", async () => {
     process.env["GEMINI_API_KEY"] = "gemini-key";
@@ -1382,14 +1385,12 @@ describe("isThinkingActive", () => {
     expect(isThinkingActive("off")).toBe(false);
   });
 
-  test.each([
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ] as ThinkingLevel[])("returns true for active level %p", (level) => {
-    expect(isThinkingActive(level)).toBe(true);
-  });
+  test.each(["low", "medium", "high", "xhigh"] as ThinkingLevel[])(
+    "returns true for active level %p",
+    (level) => {
+      expect(isThinkingActive(level)).toBe(true);
+    },
+  );
 });
 
 describe("mapThinkingLevel", () => {
@@ -2182,27 +2183,30 @@ describe("Gemini default SDK call shape", () => {
     ["medium" as const, "medium" as const],
     ["high" as const, "high" as const],
     ["xhigh" as const, "high" as const],
-  ])("active level %p sets thinkingLevel %p in SDK config", async (level, expected) => {
-    process.env["GEMINI_API_KEY"] = "gemini-key";
-    geminiResponses = ["ok"];
+  ])(
+    "active level %p sets thinkingLevel %p in SDK config",
+    async (level, expected) => {
+      process.env["GEMINI_API_KEY"] = "gemini-key";
+      geminiResponses = ["ok"];
 
-    await callProvider(
-      {
-        name: "gemini",
-        spec: "gemini",
-        envVar: "GEMINI_API_KEY",
-        thinking: level,
-      },
-      { apiKey: "gemini-key" },
-      "gemini-model",
-      "system prompt",
-      "user prompt",
-    );
+      await callProvider(
+        {
+          name: "gemini",
+          spec: "gemini",
+          envVar: "GEMINI_API_KEY",
+          thinking: level,
+        },
+        { apiKey: "gemini-key" },
+        "gemini-model",
+        "system prompt",
+        "user prompt",
+      );
 
-    expect(geminiSdkCalls[0]?.config?.thinkingConfig).toEqual({
-      thinkingLevel: expected,
-    });
-  });
+      expect(geminiSdkCalls[0]?.config?.thinkingConfig).toEqual({
+        thinkingLevel: expected,
+      });
+    },
+  );
 
   test("inactive thinking omits thinkingConfig from config", async () => {
     process.env["GEMINI_API_KEY"] = "gemini-key";
@@ -2471,29 +2475,32 @@ describe("Gemini custom endpoint thinking", () => {
     ["medium" as const, "medium" as const],
     ["high" as const, "high" as const],
     ["xhigh" as const, "high" as const],
-  ])("active level %p sets thinkingLevel %p in custom endpoint body", async (level, expected) => {
-    process.env["GEMINI_API_KEY"] = "gemini-key";
+  ])(
+    "active level %p sets thinkingLevel %p in custom endpoint body",
+    async (level, expected) => {
+      process.env["GEMINI_API_KEY"] = "gemini-key";
 
-    await callProvider(
-      {
-        name: "gemini",
-        spec: "gemini",
-        envVar: "GEMINI_API_KEY",
-        baseUrl: "https://proxy.example/v1/",
-        thinking: level,
-      },
-      { apiKey: "gemini-key" },
-      "gemini-model",
-      "system",
-      "user",
-    );
+      await callProvider(
+        {
+          name: "gemini",
+          spec: "gemini",
+          envVar: "GEMINI_API_KEY",
+          baseUrl: "https://proxy.example/v1/",
+          thinking: level,
+        },
+        { apiKey: "gemini-key" },
+        "gemini-model",
+        "system",
+        "user",
+      );
 
-    expect(geminiSdkCalls).toHaveLength(0);
-    const body = lastFetchBody();
-    expect(body["generationConfig"]).toMatchObject({
-      thinkingConfig: { thinkingLevel: expected },
-    });
-  });
+      expect(geminiSdkCalls).toHaveLength(0);
+      const body = lastFetchBody();
+      expect(body["generationConfig"]).toMatchObject({
+        thinkingConfig: { thinkingLevel: expected },
+      });
+    },
+  );
 
   test("thinking off omits thinkingConfig from custom endpoint body", async () => {
     process.env["GEMINI_API_KEY"] = "gemini-key";
