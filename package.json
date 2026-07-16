@@ -17,15 +17,15 @@
     "verify": "bun migrate && bun check && bun run build && bun coverage"
   },
   "dependencies": {
-    "@google/genai": "^2.10.0",
+    "@google/genai": "^2.12.0",
     "commander": "^15.0.0",
-    "openai": "^6.44.0"
+    "openai": "^6.47.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
-    "@types/node": "^25.9.3",
+    "@biomejs/biome": "^2.5.4",
+    "@types/node": "^26.1.1",
     "bun-types": "^1.3.14",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "bun": ">=1.0.0"
