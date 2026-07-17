@@ -1,10 +1,36 @@
 {
-  "name": "vibe-cli",
+  "name": "@mystilleef/vibe-cli",
   "version": "0.1.0",
   "description": "Metacognitive AI agent oversight — pure CLI with JSON I/O",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "cli",
+    "metacognition",
+    "oversight",
+    "json"
+  ],
+  "homepage": "https://github.com/mystilleef/vibe-cli#readme",
+  "bugs": {
+    "url": "https://github.com/mystilleef/vibe-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mystilleef/vibe-cli.git"
+  },
+  "author": "Lateef Alabi-Oki <mystilleef@gmail.com>",
   "type": "module",
   "bin": {
-    "vibe": "dist/vibe"
+    "vibe": "dist/vibe.js"
+  },
+  "files": [
+    "dist",
+    "settings.example.json",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -12,9 +38,11 @@
     "migrate": "biome migrate --write",
     "coverage": "bun test --parallel --parallel-delay=0",
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --minify src/cli.ts --outfile dist/vibe",
+    "build": "bun build src/cli.ts --outfile dist/vibe.js --target=bun --minify",
     "check": "bun lint && bun typecheck",
-    "verify": "bun migrate && bun check && bun run build && bun coverage"
+    "verify": "bun migrate && bun check && bun run build && bun coverage",
+    "prepublishOnly": "bun install --frozen-lockfile && bun run verify",
+    "release": "sh -c 'npm version \"$1\" -m \"chore(release): %s\" && git push --follow-tags' --"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

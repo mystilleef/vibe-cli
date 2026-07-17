@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import packageJson from "../package.json" with { type: "json" };
 /**
  * Register the `vibe` command surface and preserve JSON-only process output.
  *
@@ -214,7 +215,7 @@ const program = new Command();
 program
   .name("vibe")
   .description("Metacognitive AI agent oversight CLI")
-  .version("1.0.0")
+  .version(packageJson.version)
   .exitOverride((error) => {
     if (error.exitCode === 0) process.exit(0);
     throw error;
