@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildSchema } from "../src/utils/schema.js";
+import { SETTINGS_FILE_MISSING_ERROR } from "../src/utils/settings.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 let tempHome: TempHomeContext;
@@ -85,9 +86,7 @@ describe("buildSchema", () => {
     const schema = buildSchema();
 
     expect(schema.config.provider).toBe("unresolved");
-    expect(schema.config.model).toBe(
-      "No settings found. Copy settings.example.json to ~/.vibe-cli/settings.json",
-    );
+    expect(schema.config.model).toBe(SETTINGS_FILE_MISSING_ERROR);
   });
 
   test("reports error message when settings malformed", async () => {

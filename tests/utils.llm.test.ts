@@ -11,7 +11,11 @@ import {
   verifyConnection,
 } from "../src/utils/llm";
 import type { ProviderSpec, ThinkingLevel } from "../src/utils/settings";
-import { isThinkingActive, mapThinkingLevel } from "../src/utils/settings";
+import {
+  isThinkingActive,
+  mapThinkingLevel,
+  SETTINGS_FILE_MISSING_ERROR,
+} from "../src/utils/settings";
 import {
   mockSettings,
   writeSettings as writeSettingsShared,
@@ -331,9 +335,7 @@ describe("settings-backed provider and model resolution", () => {
     const result = await verifyConnection();
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe(
-      "No settings found. Copy settings.example.json to ~/.vibe-cli/settings.json",
-    );
+    expect(result.error).toBe(SETTINGS_FILE_MISSING_ERROR);
   });
 
   test("missing token names selected provider env var", async () => {
@@ -1013,9 +1015,7 @@ describe("verifyConnection edge cases", () => {
     const result = await verifyConnection();
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe(
-      "No settings found. Copy settings.example.json to ~/.vibe-cli/settings.json",
-    );
+    expect(result.error).toBe(SETTINGS_FILE_MISSING_ERROR);
   });
 
   test("success truncates long responses to 200 characters", async () => {
