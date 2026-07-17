@@ -6,8 +6,7 @@ data, and verifies provider connectivity through JSON-first commands.
 
 ## Requirements
 
-- Bun.
-- Node.js 22 in CI.
+- Bun >=1.0.0. The CLI uses `bun:sqlite` and cannot run under Node.js.
 - Provider API key matching the selected `settings.json` entry.
 
 ## Install
@@ -23,10 +22,17 @@ bun run build
 bun run src/cli.ts --help
 ```
 
-- Built binary:
+- Built bundle:
 
 ```sh
-./dist/vibe --help
+./dist/vibe.js --help
+```
+
+- Global install:
+
+```sh
+bun install -g @mystilleef/vibe-cli
+vibe --help
 ```
 
 ## Configuration
@@ -167,6 +173,9 @@ vibe demo
 
 ## Development
 
+CI runs on Node.js 22 alongside Bun; this is a CI-only detail and not a
+runtime requirement for the CLI.
+
 ```sh
 bun check
 bun coverage
@@ -194,6 +203,9 @@ make verify
   orchestration.
 - `src/utils/`: settings, provider dispatch, storage, schema, list
   readers, `formatters`.
-- `skills/`: bundled agent skills for `vibe-check`, `vibe-learn`,
-  `vibe-constitution`.
+- `skills/`: agent skills for `vibe-check`, `vibe-learn`,
+  `vibe-constitution`. Published to npm under the package's `skills/`
+  path; copy the skill directories into your harness's skill path (e.g.
+  `~/.claude/skills/`) to use them. A `vibe skills install` command is
+  planned to automate this.
 - `tests/`: Bun test suite.
