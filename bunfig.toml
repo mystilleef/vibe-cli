@@ -1,7 +1,6 @@
 [test]
 root = "tests"
 preload = ["./tests/helpers/mockBackupError.ts"]
-invalidOption = true
 coverage = true
 coverageSkipTestFiles = true
 coverageReporter = ["text", "lcov"]
