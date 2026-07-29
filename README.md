@@ -148,6 +148,49 @@ vibe prune --duplicates --yes
 - Destructive prune writes a backup path in the result.
 - Filters: `--age`, `--category`, `--overlap`.
 
+### Install bundled skills
+
+Opt-in only. No install, upgrade, build, or unrelated command copies
+skills.
+
+```sh
+vibe skills list
+vibe skills list --target ~/.claude/skills
+vibe skills install --dry-run
+vibe skills install --target ~/.agents/skills
+vibe skills install --force
+```
+
+- Default target: `~/.agents/skills`.
+- `--target` accepts absolute, relative, or `~`-prefixed paths.
+- `skills list` is read-only; it never creates the target.
+- Success, blocked, and failed responses emit one JSON line on stdout
+  only.
+- Operational and option errors emit one stderr JSON error
+  (`{"error":"..."}`), empty stdout, and exit `1`.
+
+`skills list` payload:
+
+- `target`: absolute path
+- `skills[]`: `{ name, status }` in lexical name order
+- `status`: `missing` | `up-to-date` | `modified`
+- Exit `0` on success
+
+`skills install` payload:
+
+- `target`, `dryRun`, `force`, `ok`
+- `skills[]`: `{ name, status, action, error? }` in lexical name order
+- `action`: `would-install` | `would-replace` | `installed` |
+  `replaced` | `unchanged` | `blocked` | `failed`
+- `error`: present only when `action` is `failed`, holds the copy
+  failure message
+- Exit `0` when `ok` is true
+- Exit `2` when `ok` is false: any modified target lacks `--force`
+  (blocked, no writes), or a copy failed partway (failed)
+- `--dry-run` plans without staging or target writes
+- `--force` replaces every existing bundled target, including hash
+  matches
+
 ### Other commands
 
 ```sh
@@ -204,8 +247,7 @@ make verify
 - `src/utils/`: settings, provider dispatch, storage, schema, list
   readers, `formatters`.
 - `skills/`: agent skills for `vibe-check`, `vibe-learn`,
-  `vibe-constitution`. Published to npm under the package's `skills/`
-  path; copy the skill directories into your harness's skill path (e.g.
-  `~/.claude/skills/`) to use them. A `vibe skills install` command is
-  planned to automate this.
+  `vibe-constitution`. Published under the package `skills/` path.
+  Install with `vibe skills install` (opt-in; default
+  `~/.agents/skills`).
 - `tests/`: Bun test suite.

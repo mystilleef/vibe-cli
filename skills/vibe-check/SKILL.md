@@ -17,7 +17,9 @@ argument-hint: "<goal and proposed plan>"
 - Plans with meaningful side effects or uncertain assumptions.
 - High-impact architecture, remediation, migration, or release plans.
 
-Skip trivial, reversible, single-step plans.
+Skip trivial, reversible, single-step plans — e.g. a single-file edit
+under test coverage, a local rename, a change reversible by `git revert`
+or redeploy.
 
 ## Goal
 
@@ -47,8 +49,10 @@ Skip trivial, reversible, single-step plans.
    - `--plan`: ordered, concrete, execution-ready steps.
    - `--uncertainty`: one entry per material risk, assumption, or open
      concern.
-   - `--context`: constraints and grounding the mentor needs; pass text
-     verbatim—the mentor has no file access, tools, or external context.
+   - `--context`: limitations, boundaries, scope, constraints and
+     grounding the mentor needs (include explicit KISS/YAGNI scope
+     boundaries to reject over-engineering); pass text verbatim—the
+     mentor has no file access, tools, or external context.
    - `--progress`: include when resuming after partial work.
 4. **ACT**—Run `vibe check`.
 5. **VERIFY**—Handle returned state:
@@ -67,10 +71,12 @@ Skip trivial, reversible, single-step plans.
 
 - Check before execution, not after.
 - Keep validation payloads concise but sufficiently grounded.
+- State your limitations, scope, and boundaries to the mentor.
 - Fully form each revised plan before resubmitting—no incremental or
   speculative calls.
 - Continue revision loops only while the mentor returns actionable next
   steps.
+- Wait for `vibe` to return regardless of how long it takes.
 
 ## Constraints
 
@@ -87,8 +93,9 @@ Skip trivial, reversible, single-step plans.
   can't read or resolve them.
 - `vibe check` has blocking semantics—wait for it to return before any
   further action; never treat it as a polling mechanism.
-- Calls routinely take several minutes; never pass a Bash `timeout` or
-  any equivalent deadline—wait unconditionally.
+- Never prematurely timeout `vibe`.
+- Calls routinely take _several_ minutes; never pass a Bash `timeout` or
+  any _equivalent_ deadline—wait unconditionally.
 - One call per decision point, hard limit—never invoke again for the
   same goal/plan pair, whether pending or already returned.
 - Never retry a slow or pending call—wait; each call consumes quota,
