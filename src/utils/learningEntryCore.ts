@@ -69,6 +69,18 @@ export function learningRowToEntry(
   return entry;
 }
 
+/** Deterministic comparator for learning entry storage rows: timestamp, category, id. */
+export function compareLearningEntryOrder(
+  left: LearningEntryStorageRow,
+  right: LearningEntryStorageRow,
+): number {
+  return (
+    left.timestamp - right.timestamp ||
+    left.category.localeCompare(right.category) ||
+    left.id - right.id
+  );
+}
+
 export function getLearningOverlapScore(left: string, right: string): number {
   const leftWords = left.toLowerCase().split(/\W+/).filter(Boolean);
   const rightWords = right.toLowerCase().split(/\W+/).filter(Boolean);

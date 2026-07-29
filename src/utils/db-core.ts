@@ -14,5 +14,5 @@ export function getDataRoot(): string {
 /** Creates the data root directory if it does not already exist. */
 export function ensureDataDir(): void {
   const dataDir = getDataRoot();
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
 }

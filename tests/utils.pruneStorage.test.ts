@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { initializeSchema } from "../src/utils/database";
@@ -726,6 +726,24 @@ describe("createPruneDatabaseBackup", () => {
     const backupPath = createPruneDatabaseBackup({ directory: customDir });
 
     expect(backupPath).toContain("custom-backups");
+  });
+
+  test("throws when database is in-memory", async () => {
+    const dbModule = await import("../src/utils/database.js");
+    const spy = spyOn(dbModule, "openVibeDatabase");
+    spy.mockReturnValue({
+      db: {} as Database,
+      path: ":memory:",
+      close: () => {},
+    });
+
+    try {
+      expect(() => createPruneDatabaseBackup()).toThrow(
+        "cannot back up an in-memory database",
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

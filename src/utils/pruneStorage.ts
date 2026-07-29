@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { openVibeDatabase, withDatabase } from "./database.js";
+import { extractErrorMessage } from "./errors.js";
 import {
+  compareLearningEntryOrder,
   DAY_MS,
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
@@ -183,17 +185,6 @@ function readLearningPruneRows(category?: string): LearningEntryStorageRow[] {
   });
 }
 
-function compareLearningPruneRows(
-  left: LearningEntryStorageRow,
-  right: LearningEntryStorageRow,
-): number {
-  return (
-    left.timestamp - right.timestamp ||
-    left.category.localeCompare(right.category) ||
-    left.id - right.id
-  );
-}
-
 function compareDuplicateLearningGroups(
   left: DuplicateLearningPruneGroup,
   right: DuplicateLearningPruneGroup,
@@ -270,14 +261,14 @@ function buildLearningOverlapGraph(
 
   for (let leftIndex = 0; leftIndex < rows.length; leftIndex += 1) {
     const left = rows[leftIndex];
-    if (left === undefined) continue;
+    if (!left) continue;
     for (
       let rightIndex = leftIndex + 1;
       rightIndex < rows.length;
       rightIndex += 1
     ) {
       const right = rows[rightIndex];
-      if (right === undefined) continue;
+      if (!right) continue;
       const score = getLearningOverlapScore(
         left.observation,
         right.observation,
@@ -339,7 +330,7 @@ function buildDuplicateLearningGroupsFromGraph(
         (left, right) => right.timestamp - left.timestamp || right.id - left.id,
       );
     const kept = componentRows[0];
-    if (kept === undefined) continue;
+    if (!kept) continue;
 
     const componentIdSet = new Set(componentIds);
     groups.push({
@@ -347,7 +338,7 @@ function buildDuplicateLearningGroupsFromGraph(
       kept: rowToPruneCandidate(kept),
       prunable: componentRows
         .slice(1)
-        .sort(compareLearningPruneRows)
+        .sort(compareLearningEntryOrder)
         .map(rowToPruneCandidate),
       overlapScores: scores.filter(
         (score) =>
@@ -387,7 +378,7 @@ export function collectDuplicateLearningPruneGroups({
 
   for (const currentCategory of categories) {
     const categoryRows = (rowsByCategory.get(currentCategory) ?? []).sort(
-      compareLearningPruneRows,
+      compareLearningEntryOrder,
     );
     const { edges, scores } = buildLearningOverlapGraph(
       categoryRows,
@@ -611,7 +602,7 @@ export function executeDestructivePrune({
       failedTargets: [
         {
           target: "backup",
-          message: error instanceof Error ? error.message : String(error),
+          message: extractErrorMessage(error),
         },
       ],
     };
@@ -624,7 +615,7 @@ export function executeDestructivePrune({
     } catch (error) {
       failedTargets.push({
         target,
-        message: error instanceof Error ? error.message : String(error),
+        message: extractErrorMessage(error),
       });
     }
   }
