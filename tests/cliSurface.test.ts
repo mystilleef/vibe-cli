@@ -1,9 +1,20 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
 import { getMigrationIds, initializeSchema } from "../src/utils/database";
 import type { LearningType } from "../src/utils/storage";
@@ -20,11 +31,23 @@ const mockAnthropicFetch = join(
   "mockAnthropicFetch.ts",
 );
 const failOnFetch = join(originalCwd, "tests", "helpers", "failOnFetch.ts");
+const failOnFetchRecorder = join(
+  originalCwd,
+  "tests",
+  "helpers",
+  "failOnFetchRecorder.ts",
+);
 const capturePruneInput = join(
   originalCwd,
   "tests",
   "helpers",
   "capturePruneInput.ts",
+);
+const skillsPackageRoot = join(
+  originalCwd,
+  "tests",
+  "helpers",
+  "skillsPackageRoot.ts",
 );
 const EXPECTED_MIGRATION_IDS = getMigrationIds();
 const EMPTY_CLI_HOME = join(tmpdir(), "vibe-cli-empty-home");
@@ -151,6 +174,9 @@ async function seedSchemaMigrationsOnly(
 async function seedInitialMigrationOnly(home: TempHomeContext): Promise<void> {
   await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
   const db = new Database(join(home.dataRoot, "vibe.db"));
+  // Fully materialize migration 001 so the state is internally consistent:
+  // schema_migrations records the migration as applied and every table/index
+  // it creates actually exists. Migrations 002 and 003 remain truly pending.
   db.run(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -169,20 +195,42 @@ async function seedInitialMigrationOnly(home: TempHomeContext): Promise<void> {
       timestamp INTEGER NOT NULL,
       demo_id TEXT
     );
+    CREATE INDEX idx_learning_entries_category_timestamp
+      ON learning_entries(category, timestamp);
+    CREATE INDEX idx_learning_entries_demo_id
+      ON learning_entries(demo_id)
+      WHERE demo_id IS NOT NULL;
+    CREATE TABLE constitution_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      rule TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(session_id, position)
+    );
+    CREATE INDEX idx_constitution_rules_session_position
+      ON constitution_rules(session_id, position);
+    CREATE TABLE interactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      goal TEXT NOT NULL,
+      output TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
+    );
+    CREATE INDEX idx_interactions_session_timestamp
+      ON interactions(session_id, timestamp);
   `);
   db.close();
 }
 
-function runCli(
-  args: string[],
-  options: {
-    cwd?: string;
-    home?: string;
-    env?: Record<string, string | undefined>;
-    preload?: string;
-  } = {},
-): CliResult {
-  mkdirSync(EMPTY_CLI_HOME, { recursive: true });
+interface CliRunOptions {
+  cwd?: string;
+  home?: string;
+  env?: Record<string, string | undefined>;
+  preload?: string;
+}
+
+function buildCliEnv(options: CliRunOptions): Record<string, string> {
   const env: Record<string, string> = {
     ...process.env,
     HOME: options.home ?? EMPTY_CLI_HOME,
@@ -194,29 +242,156 @@ function runCli(
       env[key] = value;
     }
   }
-
-  const result = Bun.spawnSync({
-    cmd: [
-      "bun",
-      "run",
-      ...(options.preload === undefined ? [] : ["--preload", options.preload]),
-      cli,
-      ...args,
-    ],
-    cwd: options.cwd ?? originalCwd,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  return {
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
-    exitCode: result.exitCode,
-  };
+  return env;
 }
 
-function expectHelpWithoutSession(command: string[]): void {
-  const result = runCli([...command, "--help"]);
+function cliSpawnCmd(args: string[], options: CliRunOptions): string[] {
+  return [
+    "bun",
+    "run",
+    ...(options.preload === undefined ? [] : ["--preload", options.preload]),
+    cli,
+    ...args,
+  ];
+}
+
+/**
+ * Temporarily apply env var overrides (delete on `undefined`), run `fn`, then
+ * restore exactly the touched keys to their prior values.
+ */
+async function withMutatedEnv<T>(
+  overrides: Record<string, string | undefined>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const saved = new Map<string, string | undefined>();
+  for (const key of Object.keys(overrides)) saved.set(key, process.env[key]);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+/**
+ * Run the CLI. `preload`-less calls run in-process via `runCliInProcess`
+ * (no OS process spawn, immune to harness concurrency). Calls that need a
+ * `--preload` module mock (fetch interception, fault injection) still spawn
+ * a real subprocess — that mock must land before `cli.ts`'s module graph
+ * loads, which only a fresh process/module registry can give.
+ */
+async function runCli(
+  args: string[],
+  options: CliRunOptions = {},
+): Promise<CliResult> {
+  mkdirSync(EMPTY_CLI_HOME, { recursive: true });
+  if (options.preload !== undefined) {
+    const result = Bun.spawnSync({
+      cmd: cliSpawnCmd(args, options),
+      cwd: options.cwd ?? originalCwd,
+      env: buildCliEnv(options),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    return {
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    };
+  }
+  const savedCwd = process.cwd();
+  process.chdir(options.cwd ?? originalCwd);
+  try {
+    return await withMutatedEnv(
+      { HOME: options.home ?? EMPTY_CLI_HOME, ...options.env },
+      () => runCliInProcess(args),
+    );
+  } finally {
+    process.chdir(savedCwd);
+  }
+}
+
+async function runCliBatch(
+  commandsList: string[][],
+  options: CliRunOptions = {},
+): Promise<{ args: string[]; result: CliResult }[]> {
+  mkdirSync(EMPTY_CLI_HOME, { recursive: true });
+  const env = buildCliEnv(options);
+  return Promise.all(
+    commandsList.map(async (args) => {
+      const proc = Bun.spawn({
+        cmd: cliSpawnCmd(args, options),
+        cwd: options.cwd ?? originalCwd,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { args, result: { stdout, stderr, exitCode } };
+    }),
+  );
+}
+
+interface IsolatedCliRun {
+  args: string[];
+  home: TempHomeContext;
+  cwd: string;
+  result: CliResult;
+}
+
+/**
+ * Spawns CLI children with isolated HOME, cwd, and environment.
+ * Each child gets its own temp HOME and temp cwd.
+ */
+async function runCliBatchIsolated(
+  commandsList: string[][],
+  baseOptions: Omit<CliRunOptions, "home" | "cwd"> = {},
+): Promise<IsolatedCliRun[]> {
+  const entries = await Promise.all(
+    commandsList.map(async (args) => {
+      const home = await useTempHome();
+      const cwd = await createCwd();
+      return { args, home, cwd };
+    }),
+  );
+  return Promise.all(
+    entries.map(async ({ args, home, cwd }) => {
+      const proc = Bun.spawn({
+        cmd: cliSpawnCmd(args, {
+          ...baseOptions,
+          home: home.home,
+          cwd,
+        }),
+        cwd,
+        env: buildCliEnv({ ...baseOptions, home: home.home, cwd }),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { args, home, cwd, result: { stdout, stderr, exitCode } };
+    }),
+  );
+}
+
+async function expectHelpWithoutSession(command: string[]): Promise<void> {
+  const result = await runCli([...command, "--help"]);
   expect(result.exitCode).toBe(0);
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain("--session");
@@ -224,6 +399,45 @@ function expectHelpWithoutSession(command: string[]): void {
 
 function expectLegacyDotenvWarningOnce(stderr: string): void {
   expect(stderr.trim().split("\n")).toEqual([LEGACY_DOTENV_WARNING]);
+}
+
+async function dirExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function scanSkillsCliResidue(): Promise<string[]> {
+  const entries = await readdir(originalCwd);
+  return entries.filter((e) => e.startsWith(".skills-cli-")).sort();
+}
+
+async function readDirTree(dir: string): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  async function walk(d: string, base: string) {
+    const entries = await readdir(d, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const fullPath = join(d, entry.name);
+      const relPath = join(base, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        result[relPath] = await readFile(fullPath, "utf8");
+      }
+    }
+  }
+  await walk(dir, "");
+  return result;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 type SeedLearningEntry = {
@@ -319,7 +533,7 @@ async function runVibeCheck(
 }> {
   const home = await useTempHome();
   await writeSettings(home, listSettings({ provider: "anthropic" }));
-  const result = runCli(
+  const result = await runCli(
     [
       "check",
       "--goal",
@@ -365,18 +579,18 @@ describe("CLI autosession surface", () => {
     }
   });
 
-  test("affected help output omits public --session options", () => {
-    expectHelpWithoutSession(["check"]);
-    expectHelpWithoutSession(["learn"]);
-    expectHelpWithoutSession(["constitution", "set"]);
-    expectHelpWithoutSession(["constitution", "get"]);
-    expectHelpWithoutSession(["constitution", "reset"]);
+  test("affected help output omits public --session options", async () => {
+    await expectHelpWithoutSession(["check"]);
+    await expectHelpWithoutSession(["learn"]);
+    await expectHelpWithoutSession(["constitution", "set"]);
+    await expectHelpWithoutSession(["constitution", "get"]);
+    await expectHelpWithoutSession(["constitution", "reset"]);
 
-    expectHelpWithoutSession(["demo"]);
+    await expectHelpWithoutSession(["demo"]);
   });
 
-  test("provider help describes settings entry names without hardcoded providers", () => {
-    const result = runCli(["check", "--help"]);
+  test("provider help describes settings entry names without hardcoded providers", async () => {
+    const result = await runCli(["check", "--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("settings provider entry name");
@@ -385,7 +599,7 @@ describe("CLI autosession surface", () => {
     );
   });
 
-  test("removed --session options fail through Commander", () => {
+  test("removed --session options fail through Commander", async () => {
     for (const command of [
       ["check", "--session", "x", "--goal", "g", "--plan", "p"],
       ["learn", "--session", "x", "--observation", "m", "--category", "c"],
@@ -394,16 +608,16 @@ describe("CLI autosession surface", () => {
       ["constitution", "reset", "--session", "x"],
       ["demo", "--session", "x"],
     ]) {
-      const result = runCli(command);
+      const result = await runCli(command);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("unknown option '--session'");
     }
   });
 
-  test("list command group exposes shared JSON output without affecting existing emitters", () => {
-    const pretty = runCli(["list"]);
-    const json = runCli(["list", "--json"]);
-    const help = runCli(["list", "--help"]);
+  test("list command group exposes shared JSON output without affecting existing emitters", async () => {
+    const pretty = await runCli(["list"]);
+    const json = await runCli(["list", "--json"]);
+    const help = await runCli(["list", "--help"]);
 
     expect(pretty.exitCode).toBe(0);
     expect(pretty.stderr).toBe("");
@@ -429,14 +643,16 @@ describe("CLI autosession surface", () => {
 
   test("list learnings and categories handle empty local data", async () => {
     const home = await useTempHome();
-    const prettyLearnings = runCli(["list", "learnings"], { home: home.home });
-    const jsonLearnings = runCli(["list", "learnings", "--json"], {
+    const prettyLearnings = await runCli(["list", "learnings"], {
       home: home.home,
     });
-    const prettyCategories = runCli(["list", "categories"], {
+    const jsonLearnings = await runCli(["list", "learnings", "--json"], {
       home: home.home,
     });
-    const jsonCategories = runCli(["list", "categories", "--json"], {
+    const prettyCategories = await runCli(["list", "categories"], {
+      home: home.home,
+    });
+    const jsonCategories = await runCli(["list", "categories", "--json"], {
       home: home.home,
     });
 
@@ -492,15 +708,15 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const typed = runCli(
+    const typed = await runCli(
       ["list", "learnings", "--type", "mistake", "--limit", "2", "--json"],
       { home: home.home },
     );
-    const filtered = runCli(
+    const filtered = await runCli(
       ["list", "learnings", "--category", "beta", "--limit", "1", "--json"],
       { home: home.home },
     );
-    const pretty = runCli(["list", "learnings", "--type", "success"], {
+    const pretty = await runCli(["list", "learnings", "--type", "success"], {
       home: home.home,
     });
 
@@ -576,10 +792,10 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const json = runCli(["list", "categories", "--json"], {
+    const json = await runCli(["list", "categories", "--json"], {
       home: home.home,
     });
-    const pretty = runCli(["list", "categories"], { home: home.home });
+    const pretty = await runCli(["list", "categories"], { home: home.home });
     const categories = JSON.parse(json.stdout) as Array<{
       category: string;
       count: number;
@@ -607,7 +823,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const cwd = await createCwd();
 
-    const empty = runCli(["list", "constitution", "--json"], {
+    const empty = await runCli(["list", "constitution", "--json"], {
       cwd,
       home: home.home,
     });
@@ -615,15 +831,15 @@ describe("CLI autosession surface", () => {
       session: string;
       rules: string[];
     };
-    const set = runCli(
+    const set = await runCli(
       ["constitution", "set", "--rule", "Prefer tests", "Prefer local state"],
       { cwd, home: home.home },
     );
-    const json = runCli(["list", "constitution", "--json"], {
+    const json = await runCli(["list", "constitution", "--json"], {
       cwd,
       home: home.home,
     });
-    const pretty = runCli(["list", "constitution"], {
+    const pretty = await runCli(["list", "constitution"], {
       cwd,
       home: home.home,
     });
@@ -647,6 +863,38 @@ describe("CLI autosession surface", () => {
     expect(pretty.stdout).toContain(`Session: ${emptyPayload.session}`);
     expect(pretty.stdout).toContain("1. Prefer tests");
     expect(pretty.stdout).toContain("2. Prefer local state");
+  });
+
+  test("constitution get/set/reset emit fatal JSON without stdout on database open failure", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, "vibe.db"), "not sqlite");
+
+    for (const args of [
+      ["constitution", "get"],
+      ["constitution", "set", "--rule", "r"],
+      ["constitution", "reset"],
+    ]) {
+      const result = await runCli(args, { home: home.home });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toEqual({ error: expect.any(String) });
+    }
+  });
+
+  test("constitution get/set/reset read via readListConstitution instead of duplicate autosession resolution", async () => {
+    const source = await readFile(join(originalCwd, "src/cli.ts"), "utf8");
+    const constitutionBlock = source.slice(
+      source.indexOf('.command("constitution")'),
+      source.indexOf('.command("session")'),
+    );
+
+    expect(constitutionBlock).not.toContain("getConstitution(");
+    expect(constitutionBlock).not.toContain("getCurrentConstitutionSessionId(");
+    expect(constitutionBlock.match(/readListConstitution\(\)/g)).toHaveLength(
+      3,
+    );
   });
 
   test("list sessions preserves JSON cwd_key and pretty cwd fallback", async () => {
@@ -673,8 +921,10 @@ describe("CLI autosession surface", () => {
     );
     db.close();
 
-    const json = runCli(["list", "sessions", "--json"], { home: home.home });
-    const pretty = runCli(["list", "sessions"], { home: home.home });
+    const json = await runCli(["list", "sessions", "--json"], {
+      home: home.home,
+    });
+    const pretty = await runCli(["list", "sessions"], { home: home.home });
     const payload = JSON.parse(json.stdout) as Array<{
       id: string;
       cwd_key: string;
@@ -715,10 +965,10 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings());
 
-    const json = runCli(["list", "providers", "--json"], {
+    const json = await runCli(["list", "providers", "--json"], {
       home: home.home,
     });
-    const pretty = runCli(["list", "providers"], {
+    const pretty = await runCli(["list", "providers"], {
       home: home.home,
     });
     const payload = JSON.parse(json.stdout) as Record<string, string>;
@@ -743,7 +993,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings({ provider: "missing" }));
 
-    const result = runCli(["list", "providers", "--json"], {
+    const result = await runCli(["list", "providers", "--json"], {
       home: home.home,
     });
 
@@ -764,7 +1014,7 @@ describe("CLI autosession surface", () => {
       ["constitution", "get"],
       ["list", "learnings", "--json"],
     ]) {
-      const result = runCli(args, { home: home.home });
+      const result = await runCli(args, { home: home.home });
 
       expect(result.exitCode).toBe(0);
       expect(() => JSON.parse(result.stdout)).not.toThrow();
@@ -778,10 +1028,10 @@ describe("CLI autosession surface", () => {
     await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
     await writeSettings(home, listSettings());
 
-    const providers = runCli(["list", "providers", "--json"], {
+    const providers = await runCli(["list", "providers", "--json"], {
       home: home.home,
     });
-    const all = runCli(["list", "all", "--json"], { home: home.home });
+    const all = await runCli(["list", "all", "--json"], { home: home.home });
 
     expect(providers.exitCode).toBe(0);
     expect(JSON.parse(providers.stdout)).toMatchObject({
@@ -830,7 +1080,7 @@ describe("CLI autosession surface", () => {
       ],
     );
 
-    const json = runCli(
+    const json = await runCli(
       [
         "list",
         "checks",
@@ -842,7 +1092,7 @@ describe("CLI autosession surface", () => {
       ],
       { home: home.home },
     );
-    const pretty = runCli(["list", "checks"], { home: home.home });
+    const pretty = await runCli(["list", "checks"], { home: home.home });
     const payload = JSON.parse(json.stdout) as Array<{
       id: number;
       session_id: string;
@@ -925,27 +1175,27 @@ describe("CLI autosession surface", () => {
       ["list", "all", "--json"],
     ];
 
-    for (const args of commands) {
-      const result = runCli(args, {
-        cwd,
-        home: home.home,
-        preload: failOnFetch,
-        env,
-      });
+    const results = await runCliBatch(commands, {
+      cwd,
+      home: home.home,
+      preload: failOnFetch,
+      env,
+    });
 
+    for (const { args, result } of results) {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).not.toBe("");
       if (args.includes("--json"))
         expect(() => JSON.parse(result.stdout)).not.toThrow();
     }
-  });
+  }, 10000);
 
   test("list stats and all compose local readers", async () => {
     const home = await useTempHome();
     const cwd = await createCwd();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    const set = runCli(
+    const set = await runCli(
       ["constitution", "set", "--rule", "Prefer local reads"],
       {
         cwd,
@@ -1010,16 +1260,19 @@ describe("CLI autosession surface", () => {
 
     await writeSettings(home, listSettings());
 
-    const statsJson = runCli(["list", "stats", "--json"], {
+    const statsJson = await runCli(["list", "stats", "--json"], {
       cwd,
       home: home.home,
     });
-    const statsPretty = runCli(["list", "stats"], { cwd, home: home.home });
-    const allJson = runCli(["list", "all", "--json"], {
+    const statsPretty = await runCli(["list", "stats"], {
       cwd,
       home: home.home,
     });
-    const allPretty = runCli(["list", "all"], {
+    const allJson = await runCli(["list", "all", "--json"], {
+      cwd,
+      home: home.home,
+    });
+    const allPretty = await runCli(["list", "all"], {
       cwd,
       home: home.home,
     });
@@ -1084,7 +1337,7 @@ describe("CLI autosession surface", () => {
 
   test("learn command JSON output remains unchanged after list additions", async () => {
     const home = await useTempHome();
-    const result = runCli(
+    const result = await runCli(
       [
         "learn",
         "--observation",
@@ -1149,7 +1402,7 @@ describe("CLI autosession surface", () => {
   test("migrate command reports fresh database migrations", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
     const report = parseMigrationReport(result);
 
     expect(report).toEqual({
@@ -1165,7 +1418,7 @@ describe("CLI autosession surface", () => {
     await mkdir(home.dataRoot, { recursive: true });
     await writeFile(join(home.dataRoot, "vibe.db"), "");
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
     const report = parseMigrationReport(result);
 
     expect(report).toEqual({
@@ -1180,7 +1433,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await seedSchemaMigrationsOnly(home);
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
     const report = parseMigrationReport(result);
 
     expect(report).toEqual({
@@ -1195,10 +1448,10 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
 
     const first = parseMigrationReport(
-      runCli(["migrate"], { home: home.home }),
+      await runCli(["migrate"], { home: home.home }),
     );
     const second = parseMigrationReport(
-      runCli(["migrate"], { home: home.home }),
+      await runCli(["migrate"], { home: home.home }),
     );
 
     expect(first.pending).toEqual(EXPECTED_MIGRATION_IDS);
@@ -1214,7 +1467,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await seedInitialMigrationOnly(home);
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
     const report = parseMigrationReport(result);
 
     expect(report).toEqual({
@@ -1228,7 +1481,7 @@ describe("CLI autosession surface", () => {
   test("migrate command rejects flags without stdout success payload", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["migrate", "--json"], { home: home.home });
+    const result = await runCli(["migrate", "--json"], { home: home.home });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -1239,7 +1492,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await writeFile(home.dataRoot, "not a directory");
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -1251,7 +1504,7 @@ describe("CLI autosession surface", () => {
     await mkdir(home.dataRoot, { recursive: true });
     await writeFile(join(home.dataRoot, "vibe.db"), "not sqlite");
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -1262,7 +1515,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
 
-    const result = runCli(["migrate"], { home: home.home });
+    const result = await runCli(["migrate"], { home: home.home });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -1274,7 +1527,7 @@ describe("CLI autosession surface", () => {
     const cwd = await createCwd();
     const cwdKey = getCwdKey(cwd);
 
-    const first = runCli(["session"], { cwd, home: home.home });
+    const first = await runCli(["session"], { cwd, home: home.home });
     const firstJson = JSON.parse(first.stdout) as { session: string };
     const db = new Database(join(home.dataRoot, "vibe.db"));
     const oldTimestamp = new Date(Date.now() - 1000).toISOString();
@@ -1282,7 +1535,7 @@ describe("CLI autosession surface", () => {
       "UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?",
     ).run(oldTimestamp, cwdKey);
 
-    const second = runCli(["session"], { cwd, home: home.home });
+    const second = await runCli(["session"], { cwd, home: home.home });
     const secondJson = JSON.parse(second.stdout) as { session: string };
     const touched = db
       .query<
@@ -1356,7 +1609,7 @@ describe("CLI autosession surface", () => {
     ).run(sessionId, cwdKey, createdAt, oldTimestamp);
     db.close();
 
-    const result = runCli(["session"], { cwd, home: home.home });
+    const result = await runCli(["session"], { cwd, home: home.home });
     const migrated = new Database(dbPath);
     const touched = migrated
       .query<
@@ -1381,8 +1634,8 @@ describe("CLI autosession surface", () => {
     );
   });
 
-  test("schema excludes list commands and preserves metadata", () => {
-    const result = runCli(["schema"]);
+  test("schema excludes list commands and preserves metadata", async () => {
+    const result = await runCli(["schema"]);
     const schema = JSON.parse(result.stdout) as {
       v?: unknown;
       data?: unknown;
@@ -1418,12 +1671,50 @@ describe("CLI autosession surface", () => {
       "verify",
       "prune",
       "migrate",
+      "skills list",
+      "skills install",
     ]) {
       expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
         "--session",
       );
     }
+    expect(schema.commands["skills list"]).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": expect.any(String),
+      },
+      out: expect.objectContaining({
+        target: expect.any(String),
+        skills: expect.any(String),
+      }),
+      exit: expect.objectContaining({
+        "0": expect.any(String),
+        "1": expect.any(String),
+      }),
+    });
+    expect(schema.commands["skills install"]).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: expect.objectContaining({
+        "--target": expect.any(String),
+        "--dry-run": expect.any(String),
+        "--force": expect.any(String),
+      }),
+      out: expect.objectContaining({
+        target: expect.any(String),
+        dryRun: expect.any(String),
+        force: expect.any(String),
+        ok: expect.any(String),
+        skills: expect.any(String),
+      }),
+      exit: expect.objectContaining({
+        "0": expect.any(String),
+        "2": expect.any(String),
+        "1": expect.any(String),
+      }),
+    });
     expect(schema.commands["migrate"]).toMatchObject({
       when: expect.any(String),
       req: {},
@@ -1509,7 +1800,7 @@ describe("CLI autosession surface", () => {
 
     await writeSettings(home, listSettings());
 
-    const result = runCli(["schema"], {
+    const result = await runCli(["schema"], {
       home: home.home,
       env: {
         DEFAULT_LLM_PROVIDER: undefined,
@@ -1541,7 +1832,7 @@ describe("CLI autosession surface", () => {
     await writeFile(join(home.dataRoot, ".env"), "DEEPSEEK_API_KEY=file-key\n");
     await writeSettings(home, listSettings());
 
-    const result = runCli(["verify"], {
+    const result = await runCli(["verify"], {
       home: home.home,
       env: { DEEPSEEK_API_KEY: undefined, DEFAULT_MODEL: undefined },
     });
@@ -1559,7 +1850,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings());
 
-    const result = runCli(["verify", "--provider", "bogus"], {
+    const result = await runCli(["verify", "--provider", "bogus"], {
       home: home.home,
       env: { DEFAULT_MODEL: undefined },
     });
@@ -1582,21 +1873,23 @@ describe("CLI autosession surface", () => {
     );
   });
 
-  test("check emits fatal JSON when gate provider resolution fails", async () => {
+  test("check emits blocking result JSON when gate provider resolution fails", async () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings());
 
-    const result = runCli(
+    const result = await runCli(
       ["check", "--goal", "g", "--plan", "p", "--provider", "bogus"],
       { home: home.home, env: { DEFAULT_MODEL: undefined } },
     );
-    const payload = JSON.parse(result.stderr) as { error: string };
+    const payload = JSON.parse(result.stdout) as {
+      proceed: boolean;
+      reason: string;
+    };
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(payload.error).toContain(
-      "Provider 'bogus' not found in settings.json",
-    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toBe("");
+    expect(payload.proceed).toBe(false);
+    expect(payload.reason).toBe("Feedback generation failed");
   });
 
   test("check emits approval JSON and exits 0 with mocked Anthropic", async () => {
@@ -1659,7 +1952,7 @@ describe("CLI autosession surface", () => {
       listSettings({ provider: "anthropic", maxAttempts: 1 }),
     );
 
-    const result = runCli(
+    const result = await runCli(
       [
         "check",
         "--goal",
@@ -1689,7 +1982,7 @@ describe("CLI autosession surface", () => {
       exhausted: true,
       attempts: 1,
     });
-  });
+  }, 15000);
 
   test("--max-attempts CLI overrides settings maxAttempts", async () => {
     const home = await useTempHome();
@@ -1698,7 +1991,7 @@ describe("CLI autosession surface", () => {
       listSettings({ provider: "anthropic", maxAttempts: 1 }),
     );
 
-    const result = runCli(
+    const result = await runCli(
       [
         "check",
         "--goal",
@@ -1726,13 +2019,13 @@ describe("CLI autosession surface", () => {
 
     expect(result.exitCode).toBe(0);
     expect(payload).toMatchObject({ proceed: true, attempts: 1 });
-  });
+  }, 15000);
 
   test("verify emits JSON success and exits 0 with mocked Anthropic", async () => {
     const home = await useTempHome();
     await writeSettings(home, listSettings({ provider: "anthropic" }));
 
-    const result = runCli(
+    const result = await runCli(
       ["verify", "--provider", "anthropic", "--model", "mock-verify"],
       {
         home: home.home,
@@ -1755,12 +2048,12 @@ describe("CLI autosession surface", () => {
       model: "mock-verify",
     });
     expect(payload.response).toContain("questions:mock-verify");
-  });
+  }, 15000);
 
   test("learn command emits validation failure JSON without process failure", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       ["learn", "--observation", "Repeated risky plan.", "--category", "risk"],
       { home: home.home },
     );
@@ -1787,12 +2080,15 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const cwd = await createCwd();
 
-    const set = runCli(
+    const set = await runCli(
       ["constitution", "set", "--rule", "Prefer tests", "Prefer rollbacks"],
       { cwd, home: home.home },
     );
-    const get = runCli(["constitution", "get"], { cwd, home: home.home });
-    const reset = runCli(["constitution", "reset"], { cwd, home: home.home });
+    const get = await runCli(["constitution", "get"], { cwd, home: home.home });
+    const reset = await runCli(["constitution", "reset"], {
+      cwd,
+      home: home.home,
+    });
 
     expect(set.exitCode).toBe(0);
     expect(JSON.parse(set.stdout)).toMatchObject({
@@ -1804,8 +2100,8 @@ describe("CLI autosession surface", () => {
     expect(JSON.parse(reset.stdout)).toMatchObject({ rules: [] });
   });
 
-  test("prune help output shows all options", () => {
-    const result = runCli(["prune", "--help"]);
+  test("prune help output shows all options", async () => {
+    const result = await runCli(["prune", "--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -1823,7 +2119,7 @@ describe("CLI autosession surface", () => {
   test("prune dry-run mode works without providers", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       [
         "prune",
         "--learnings",
@@ -1866,12 +2162,12 @@ describe("CLI autosession surface", () => {
       sessions: 0,
     });
     expect(payload.failedTargets).toEqual([]);
-  });
+  }, 15000);
 
   test("prune with no targets defaults to dry-run summary", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune"], { home: home.home });
+    const result = await runCli(["prune"], { home: home.home });
     const payload = JSON.parse(result.stdout) as {
       dryRun: boolean;
       targets: string[];
@@ -1888,7 +2184,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects invalid --age", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune", "--learnings", "--age", "-5"], {
+    const result = await runCli(["prune", "--learnings", "--age", "-5"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stderr) as { error: string };
@@ -1901,7 +2197,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects invalid --overlap", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune", "--duplicates", "--overlap", "1.5"], {
+    const result = await runCli(["prune", "--duplicates", "--overlap", "1.5"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stderr) as { error: string };
@@ -1916,7 +2212,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects --category with no explicit targets", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune", "--category", "scope", "--dry-run"], {
+    const result = await runCli(["prune", "--category", "scope", "--dry-run"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stderr) as { error: string };
@@ -1931,7 +2227,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects --category with --demos", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       ["prune", "--demos", "--category", "test-category", "--dry-run"],
       { home: home.home },
     );
@@ -1947,7 +2243,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects --category with --sessions", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       ["prune", "--sessions", "--category", "test-category", "--dry-run"],
       { home: home.home },
     );
@@ -1989,7 +2285,7 @@ describe("CLI autosession surface", () => {
     for (const { args, expectedTargets } of cases) {
       const home = await useTempHome();
 
-      const result = runCli([...args], { home: home.home });
+      const result = await runCli([...args], { home: home.home });
       const payload = JSON.parse(result.stdout) as {
         dryRun: boolean;
         targets: string[];
@@ -2003,15 +2299,15 @@ describe("CLI autosession surface", () => {
     }
   });
 
-  test("prune omits negated boolean option variants from its CLI contract", () => {
-    const help = runCli(["prune", "--help"]);
+  test("prune omits negated boolean option variants from its CLI contract", async () => {
+    const help = await runCli(["prune", "--help"]);
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).not.toContain("--no-dry-run");
     expect(help.stdout).not.toContain("--no-yes");
 
     for (const option of ["--no-dry-run", "--no-yes"]) {
-      const result = runCli(["prune", option]);
+      const result = await runCli(["prune", option]);
 
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
@@ -2021,7 +2317,6 @@ describe("CLI autosession surface", () => {
   });
 
   test("prune commands never perform provider network calls", async () => {
-    const home = await useTempHome();
     const env = {
       ANTHROPIC_API_KEY: "ak",
       DEFAULT_LLM_PROVIDER: "anthropic",
@@ -2042,19 +2337,68 @@ describe("CLI autosession surface", () => {
       ],
     ];
 
-    for (const args of commands) {
-      const result = runCli(args, {
-        home: home.home,
-        preload: failOnFetch,
-        env,
-      });
+    const results = await runCliBatchIsolated(commands, {
+      preload: failOnFetch,
+      env,
+    });
 
+    for (const { result, home, cwd } of results) {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).not.toBe("");
       expect(() => JSON.parse(result.stdout)).not.toThrow();
+      // Private HOME was used, not the shared EMPTY_CLI_HOME.
+      expect(home.home).not.toBe(EMPTY_CLI_HOME);
+      // Each child used a unique cwd.
+      expect(cwd).not.toBe(originalCwd);
     }
-  });
+  }, 10000);
+
+  test("concurrent prune children use isolated HOME and local storage", async () => {
+    await rm(EMPTY_CLI_HOME, { recursive: true, force: true });
+    await mkdir(EMPTY_CLI_HOME, { recursive: true });
+
+    const env = {
+      ANTHROPIC_API_KEY: "ak",
+      DEFAULT_LLM_PROVIDER: "anthropic",
+    };
+    const commands = [
+      ["prune", "--learnings", "--dry-run"],
+      ["prune", "--duplicates", "--dry-run"],
+      ["prune", "--sessions", "--dry-run"],
+    ];
+
+    const results = await runCliBatchIsolated(commands, {
+      preload: failOnFetchRecorder,
+      env,
+    });
+
+    const homes = new Set(results.map((r) => r.home.home));
+    const cwds = new Set(results.map((r) => r.cwd));
+
+    // Every child received a unique HOME.
+    expect(homes.size).toBe(results.length);
+    // Every child received a unique cwd.
+    expect(cwds.size).toBe(results.length);
+
+    for (const { result, home, cwd } of results) {
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const payload = JSON.parse(result.stdout) as {
+        dryRun: boolean;
+        targets: string[];
+      };
+      expect(payload.dryRun).toBe(true);
+
+      // No database file was created in the shared EMPTY_CLI_HOME.
+      expect(await dirExists(join(EMPTY_CLI_HOME, ".vibe-cli"))).toBe(false);
+      // Private HOME has its own data root.
+      expect(home.dataRoot).toContain(home.home);
+      // cwd is different from HOME and originalCwd.
+      expect(cwd).not.toBe(home.home);
+      expect(cwd).not.toBe(originalCwd);
+    }
+  }, 10000);
 
   test("prune destructive requires --yes and emits backup path", async () => {
     const home = await useTempHome();
@@ -2069,7 +2413,7 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const dryRun = runCli(
+    const dryRun = await runCli(
       ["prune", "--learnings", "--age", "90", "--dry-run"],
       { home: home.home },
     );
@@ -2081,7 +2425,7 @@ describe("CLI autosession surface", () => {
     expect(dryPayload.dryRun).toBe(true);
     expect(dryPayload.candidateCounts.learnings).toBeGreaterThanOrEqual(1);
 
-    const destructive = runCli(
+    const destructive = await runCli(
       ["prune", "--learnings", "--age", "90", "--yes"],
       { home: home.home },
     );
@@ -2114,7 +2458,7 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const result = runCli(["prune", "--learnings", "--age", "90", "-y"], {
+    const result = await runCli(["prune", "--learnings", "--age", "90", "-y"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stdout) as {
@@ -2143,7 +2487,7 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const result = runCli(
+    const result = await runCli(
       ["prune", "--learnings", "--age", "90", "--dry-run", "--yes"],
       { home: home.home },
     );
@@ -2153,7 +2497,7 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toBe("");
     expect(payload.error).toContain("--dry-run cannot be combined with --yes");
 
-    const dryRun = runCli(
+    const dryRun = await runCli(
       ["prune", "--learnings", "--age", "90", "--dry-run"],
       { home: home.home },
     );
@@ -2167,7 +2511,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = runCli(["prune"], {
+    const result = await runCli(["prune"], {
       home: home.home,
       preload: capturePruneInput,
       env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2198,7 +2542,7 @@ describe("CLI autosession surface", () => {
     expect(captured).not.toHaveProperty("sessions");
     expect(captured).not.toHaveProperty("dryRun");
     expect(captured).not.toHaveProperty("yes");
-  });
+  }, 15000);
 
   test("prune boolean flags include true in runPrune input when provided", async () => {
     const cases = [
@@ -2211,7 +2555,7 @@ describe("CLI autosession surface", () => {
       const home = await useTempHome();
       const capturePath = join(home.home, `prune-input-${index}.json`);
 
-      const result = runCli([...args], {
+      const result = await runCli([...args], {
         home: home.home,
         preload: capturePruneInput,
         env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2225,13 +2569,13 @@ describe("CLI autosession surface", () => {
       ) as Record<string, unknown>;
       expect(captured[expected]).toBe(true);
     }
-  });
+  }, 15000);
 
   test("prune --learnings includes only learnings:true in runPrune input", async () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = runCli(["prune", "--learnings"], {
+    const result = await runCli(["prune", "--learnings"], {
       home: home.home,
       preload: capturePruneInput,
       env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2254,13 +2598,13 @@ describe("CLI autosession surface", () => {
     expect(captured).not.toHaveProperty("duplicates");
     expect(captured).not.toHaveProperty("demos");
     expect(captured).not.toHaveProperty("sessions");
-  });
+  }, 15000);
 
   test("prune --duplicates --demos includes only those two flags in runPrune input", async () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = runCli(["prune", "--duplicates", "--demos"], {
+    const result = await runCli(["prune", "--duplicates", "--demos"], {
       home: home.home,
       preload: capturePruneInput,
       env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2286,12 +2630,12 @@ describe("CLI autosession surface", () => {
     expect(captured["demos"]).toBe(true);
     expect(captured).not.toHaveProperty("learnings");
     expect(captured).not.toHaveProperty("sessions");
-  });
+  }, 15000);
 
   test("prune rejects non-numeric --age via CLI fatal", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune", "--learnings", "--age", "abc"], {
+    const result = await runCli(["prune", "--learnings", "--age", "abc"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stderr) as { error: string };
@@ -2304,7 +2648,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects non-numeric --overlap via CLI fatal", async () => {
     const home = await useTempHome();
 
-    const result = runCli(["prune", "--duplicates", "--overlap", "abc"], {
+    const result = await runCli(["prune", "--duplicates", "--overlap", "abc"], {
       home: home.home,
     });
     const payload = JSON.parse(result.stderr) as { error: string };
@@ -2319,7 +2663,7 @@ describe("CLI autosession surface", () => {
   test("learn --type preference succeeds without --solution", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       [
         "learn",
         "--observation",
@@ -2349,7 +2693,7 @@ describe("CLI autosession surface", () => {
   test("learn --type success without --solution emits validation failure", async () => {
     const home = await useTempHome();
 
-    const result = runCli(
+    const result = await runCli(
       [
         "learn",
         "--observation",
@@ -2384,17 +2728,20 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const cwd = await createCwd();
 
-    const initial = runCli(
+    const initial = await runCli(
       ["constitution", "set", "--rule", "Rule A", "Rule B"],
       { cwd, home: home.home },
     );
     const initialPayload = JSON.parse(initial.stdout) as { rules: string[] };
     expect(initialPayload.rules).toEqual(["Rule A", "Rule B"]);
 
-    const replaced = runCli(["constitution", "reset", "--rule", "Rule C"], {
-      cwd,
-      home: home.home,
-    });
+    const replaced = await runCli(
+      ["constitution", "reset", "--rule", "Rule C"],
+      {
+        cwd,
+        home: home.home,
+      },
+    );
     const replacedPayload = JSON.parse(replaced.stdout) as {
       session: string;
       rules: string[];
@@ -2404,14 +2751,14 @@ describe("CLI autosession surface", () => {
     expect(replaced.stderr).toBe("");
     expect(replacedPayload.rules).toEqual(["Rule C"]);
 
-    const get = runCli(["constitution", "get"], { cwd, home: home.home });
+    const get = await runCli(["constitution", "get"], { cwd, home: home.home });
     const getPayload = JSON.parse(get.stdout) as { rules: string[] };
     expect(getPayload.rules).toEqual(["Rule C"]);
   });
 
-  test("help and fatal error stderr stay on baseline when legacy env is absent", () => {
-    const help = runCli(["check", "--help"]);
-    const error = runCli(["unknown-command"]);
+  test("help and fatal error stderr stay on baseline when legacy env is absent", async () => {
+    const help = await runCli(["check", "--help"]);
+    const error = await runCli(["unknown-command"]);
 
     expect(help.exitCode).toBe(0);
     expect(help.stderr).toBe("");
@@ -2421,6 +2768,723 @@ describe("CLI autosession surface", () => {
     expect(JSON.parse(error.stderr)).toEqual({
       error: "error: unknown command 'unknown-command'",
     });
+  });
+
+  test("skills help documents list and install options", async () => {
+    const group = await runCli(["skills", "--help"]);
+    const listHelp = await runCli(["skills", "list", "--help"]);
+    const installHelp = await runCli(["skills", "install", "--help"]);
+
+    expect(group.exitCode).toBe(0);
+    expect(group.stderr).toBe("");
+    expect(group.stdout).toContain("list");
+    expect(group.stdout).toContain("install");
+
+    expect(listHelp.exitCode).toBe(0);
+    expect(listHelp.stderr).toBe("");
+    expect(listHelp.stdout).toContain("--target");
+
+    expect(installHelp.exitCode).toBe(0);
+    expect(installHelp.stderr).toBe("");
+    expect(installHelp.stdout).toContain("--target");
+    expect(installHelp.stdout).toContain("--dry-run");
+    expect(installHelp.stdout).toContain("--force");
+  });
+
+  test("skills list emits one JSON line for default and custom targets", async () => {
+    const home = await useTempHome();
+    const target = join(home.home, ".agents", "skills");
+    const spacedTarget = join(home.home, "skill dir", "nested");
+    const absoluteTarget = join(home.home, "absolute-skills");
+
+    const defaultList = await runCli(["skills", "list"], { home: home.home });
+    expect(defaultList.exitCode).toBe(0);
+    expect(defaultList.stderr).toBe("");
+    expect(defaultList.stdout.trim().split("\n")).toHaveLength(1);
+    // JSON-only success: no presentation text around the payload.
+    expect(defaultList.stdout).toBe(`${defaultList.stdout.trim()}\n`);
+    const defaultPayload = JSON.parse(defaultList.stdout) as {
+      target: string;
+      skills: Array<{ name: string; status: string }>;
+    };
+    expect(defaultPayload.target).toBe(target);
+    expect(isAbsolute(defaultPayload.target)).toBe(true);
+    expect(defaultPayload.skills.map((s) => s.name)).toEqual([
+      "vibe-check",
+      "vibe-constitution",
+      "vibe-learn",
+    ]);
+    expect(defaultPayload.skills.every((s) => s.status === "missing")).toBe(
+      true,
+    );
+    expect(Object.keys(defaultPayload)).toEqual(["target", "skills"]);
+    expect(
+      defaultPayload.skills.every(
+        (s) => Object.keys(s).sort().join(",") === "name,status",
+      ),
+    ).toBe(true);
+    expect(await dirExists(target)).toBe(false);
+
+    const relativeList = await runCli(
+      ["skills", "list", "--target", "rel-skills"],
+      {
+        home: home.home,
+        cwd: home.home,
+      },
+    );
+    expect(relativeList.exitCode).toBe(0);
+    expect(relativeList.stderr).toBe("");
+    expect(relativeList.stdout.trim().split("\n")).toHaveLength(1);
+    const relativePayload = JSON.parse(relativeList.stdout) as {
+      target: string;
+    };
+    expect(relativePayload.target).toBe(join(home.home, "rel-skills"));
+    expect(isAbsolute(relativePayload.target)).toBe(true);
+    expect(await dirExists(join(home.home, "rel-skills"))).toBe(false);
+
+    const spacedList = await runCli(
+      ["skills", "list", "--target", spacedTarget],
+      {
+        home: home.home,
+      },
+    );
+    expect(spacedList.exitCode).toBe(0);
+    expect(spacedList.stderr).toBe("");
+    expect(spacedList.stdout.trim().split("\n")).toHaveLength(1);
+    const spacedPayload = JSON.parse(spacedList.stdout) as { target: string };
+    expect(spacedPayload.target).toBe(spacedTarget);
+    expect(await dirExists(spacedTarget)).toBe(false);
+
+    const tildeList = await runCli(
+      ["skills", "list", "--target", "~/tilde-skills"],
+      {
+        home: home.home,
+      },
+    );
+    expect(tildeList.exitCode).toBe(0);
+    expect(tildeList.stderr).toBe("");
+    const tildePayload = JSON.parse(tildeList.stdout) as { target: string };
+    expect(tildePayload.target).toBe(join(home.home, "tilde-skills"));
+    expect(await dirExists(join(home.home, "tilde-skills"))).toBe(false);
+
+    const absoluteList = await runCli(
+      ["skills", "list", "--target", absoluteTarget],
+      { home: home.home },
+    );
+    expect(absoluteList.exitCode).toBe(0);
+    expect(absoluteList.stderr).toBe("");
+    const absolutePayload = JSON.parse(absoluteList.stdout) as {
+      target: string;
+    };
+    expect(absolutePayload.target).toBe(absoluteTarget);
+    expect(await dirExists(absoluteTarget)).toBe(false);
+  });
+
+  test("skills list reports mixed statuses in lexical order without mutation", async () => {
+    const home = await useTempHome();
+    const target = join(home.home, "mixed-skills");
+    const bundledSkills = join(originalCwd, "skills");
+
+    // Seed target trees directly so list coverage stays independent of install.
+    await mkdir(target, { recursive: true });
+    await cp(join(bundledSkills, "vibe-check"), join(target, "vibe-check"), {
+      recursive: true,
+    });
+    await cp(
+      join(bundledSkills, "vibe-constitution"),
+      join(target, "vibe-constitution"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "locally modified skill content\n",
+    );
+    // vibe-learn intentionally absent → missing.
+
+    const before = await readFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "utf8",
+    );
+
+    const listed = await runCli(["skills", "list", "--target", target], {
+      home: home.home,
+    });
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stderr).toBe("");
+    expect(listed.stdout.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(listed.stdout) as {
+      target: string;
+      skills: Array<{ name: string; status: string }>;
+    };
+    expect(payload.target).toBe(target);
+    expect(payload.skills.map((s) => s.name)).toEqual([
+      "vibe-check",
+      "vibe-constitution",
+      "vibe-learn",
+    ]);
+    expect(payload.skills.map((s) => s.status)).toEqual([
+      "modified",
+      "up-to-date",
+      "missing",
+    ]);
+    expect(await readFile(join(target, "vibe-check", "SKILL.md"), "utf8")).toBe(
+      before,
+    );
+    expect(await dirExists(join(target, "vibe-learn"))).toBe(false);
+  });
+
+  test("skills list rejects unsupported options with stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const result = await runCli(["skills", "list", "--bogus"], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "error: unknown option '--bogus'",
+    });
+  });
+
+  test("skills list surfaces target validation failures as stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const target = join(home.home, "unsafe-target");
+    await mkdir(target, { recursive: true });
+    await symlink("/tmp", join(target, "vibe-check"));
+
+    const result = await runCli(["skills", "list", "--target", target], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("symlink");
+    // list remains read-only even on fatal validation.
+    expect(await dirExists(join(target, "vibe-constitution"))).toBe(false);
+  });
+
+  test("skills list surfaces source validation failures as stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const packageRoot = await mkdtemp(join(tmpdir(), "vibe-skills-src-"));
+    cwdRoots.push(packageRoot);
+    // Missing skills/ directory is a fatal source error.
+    await writeFile(join(packageRoot, "package.json"), "{}\n");
+
+    const result = await runCli(["skills", "list"], {
+      home: home.home,
+      preload: skillsPackageRoot,
+      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("Skills directory does not exist");
+    expect(await dirExists(join(home.home, ".agents", "skills"))).toBe(false);
+  }, 15000);
+
+  test("skills list emits empty inventory JSON without creating targets", async () => {
+    const home = await useTempHome();
+    const packageRoot = await mkdtemp(join(tmpdir(), "vibe-skills-empty-"));
+    cwdRoots.push(packageRoot);
+    await writeFile(join(packageRoot, "package.json"), "{}\n");
+    await mkdir(join(packageRoot, "skills"), { recursive: true });
+    const target = join(home.home, "empty-list-target");
+
+    const result = await runCli(["skills", "list", "--target", target], {
+      home: home.home,
+      preload: skillsPackageRoot,
+      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      target,
+      skills: [],
+    });
+    expect(await dirExists(target)).toBe(false);
+  }, 15000);
+
+  test("skills list keeps missing target roots deterministic and read-only", async () => {
+    const home = await useTempHome();
+    const missing = join(home.home, "no", "such", "skills");
+
+    const result = await runCli(["skills", "list", "--target", missing], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const payload = JSON.parse(result.stdout) as {
+      target: string;
+      skills: Array<{ status: string }>;
+    };
+    expect(payload.target).toBe(missing);
+    expect(payload.skills.length).toBeGreaterThan(0);
+    expect(payload.skills.every((s) => s.status === "missing")).toBe(true);
+    expect(await dirExists(missing)).toBe(false);
+    expect(await dirExists(join(home.home, "no"))).toBe(false);
+  });
+
+  test("skills install dry-run plans without writing target content", async () => {
+    const home = await useTempHome();
+    // Keep target on the package filesystem so same-device staging remains valid.
+    const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-target-"));
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+
+    const result = await runCli(
+      ["skills", "install", "--dry-run", "--target", target],
+      { home: home.home },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stdout) as {
+      target: string;
+      dryRun: boolean;
+      force: boolean;
+      ok: boolean;
+      skills: Array<{ name: string; status: string; action: string }>;
+    };
+    expect(payload).toMatchObject({
+      target,
+      dryRun: true,
+      force: false,
+      ok: true,
+    });
+    expect(payload.skills.map((s) => s.action)).toEqual([
+      "would-install",
+      "would-install",
+      "would-install",
+    ]);
+    expect(await dirExists(target)).toBe(false);
+  });
+
+  test("skills install copies missing skills and blocks modified targets", async () => {
+    const home = await useTempHome();
+    // Keep target on the package filesystem so same-device staging remains valid.
+    const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-target-"));
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+
+    const installed = await runCli(["skills", "install", "--target", target], {
+      home: home.home,
+    });
+    expect(installed.exitCode).toBe(0);
+    expect(installed.stderr).toBe("");
+    const installedPayload = JSON.parse(installed.stdout) as {
+      ok: boolean;
+      skills: Array<{ name: string; action: string }>;
+    };
+    expect(installedPayload.ok).toBe(true);
+    expect(installedPayload.skills.map((s) => s.action)).toEqual([
+      "installed",
+      "installed",
+      "installed",
+    ]);
+    expect(await fileExists(join(target, "vibe-check", "SKILL.md"))).toBe(true);
+
+    const listAfter = await runCli(["skills", "list", "--target", target], {
+      home: home.home,
+    });
+    const listPayload = JSON.parse(listAfter.stdout) as {
+      skills: Array<{ status: string }>;
+    };
+    expect(listPayload.skills.every((s) => s.status === "up-to-date")).toBe(
+      true,
+    );
+
+    await writeFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "locally modified skill content\n",
+    );
+
+    const blocked = await runCli(["skills", "install", "--target", target], {
+      home: home.home,
+    });
+    expect(blocked.exitCode).toBe(2);
+    expect(blocked.stderr).toBe("");
+    const blockedPayload = JSON.parse(blocked.stdout) as {
+      ok: boolean;
+      skills: Array<{ name: string; status: string; action: string }>;
+    };
+    expect(blockedPayload.ok).toBe(false);
+    expect(
+      blockedPayload.skills.find((s) => s.name === "vibe-check"),
+    ).toMatchObject({
+      status: "modified",
+      action: "blocked",
+    });
+    expect(await readFile(join(target, "vibe-check", "SKILL.md"), "utf8")).toBe(
+      "locally modified skill content\n",
+    );
+
+    const forced = await runCli(
+      ["skills", "install", "--force", "--target", target],
+      { home: home.home },
+    );
+    expect(forced.exitCode).toBe(0);
+    expect(forced.stderr).toBe("");
+    const forcedPayload = JSON.parse(forced.stdout) as {
+      ok: boolean;
+      force: boolean;
+      skills: Array<{ action: string }>;
+    };
+    expect(forcedPayload.ok).toBe(true);
+    expect(forcedPayload.force).toBe(true);
+    expect(forcedPayload.skills.every((s) => s.action === "replaced")).toBe(
+      true,
+    );
+    expect(
+      await readFile(join(target, "vibe-check", "SKILL.md"), "utf8"),
+    ).not.toBe("locally modified skill content\n");
+  });
+
+  test("skills install rejects unsupported options with stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const result = await runCli(["skills", "install", "--bogus"], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "error: unknown option '--bogus'",
+    });
+  });
+
+  test("skills install surfaces operational failures as stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const missingParent = join(home.home, "missing-parent", "skills");
+
+    const result = await runCli(
+      ["skills", "install", "--target", missingParent],
+      {
+        home: home.home,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("Target parent");
+  });
+
+  test("skills install empty inventory emits ok payload after target preflight", async () => {
+    const home = await useTempHome();
+    const packageRoot = await mkdtemp(
+      join(tmpdir(), "vibe-skills-empty-install-"),
+    );
+    cwdRoots.push(packageRoot);
+    await writeFile(join(packageRoot, "package.json"), "{}\n");
+    await mkdir(join(packageRoot, "skills"), { recursive: true });
+    const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-empty-"));
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+
+    const result = await runCli(["skills", "install", "--target", target], {
+      home: home.home,
+      preload: skillsPackageRoot,
+      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      target,
+      dryRun: false,
+      force: false,
+      ok: true,
+      skills: [],
+    });
+    // Empty install must not create the target root.
+    expect(await dirExists(target)).toBe(false);
+  }, 15000);
+
+  test("skills install empty inventory still rejects missing target parent", async () => {
+    const home = await useTempHome();
+    const packageRoot = await mkdtemp(
+      join(tmpdir(), "vibe-skills-empty-parent-"),
+    );
+    cwdRoots.push(packageRoot);
+    await writeFile(join(packageRoot, "package.json"), "{}\n");
+    await mkdir(join(packageRoot, "skills"), { recursive: true });
+    const missingParent = join(home.home, "no-parent", "skills");
+
+    const result = await runCli(
+      ["skills", "install", "--dry-run", "--target", missingParent],
+      {
+        home: home.home,
+        preload: skillsPackageRoot,
+        env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("Target parent");
+    expect(await dirExists(missingParent)).toBe(false);
+  }, 15000);
+
+  test("skills install dry-run plus force plans would-replace without writes", async () => {
+    const home = await useTempHome();
+    const targetRoot = await mkdtemp(
+      join(originalCwd, ".skills-cli-force-dry-"),
+    );
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+    const bundledSkills = join(originalCwd, "skills");
+
+    await mkdir(target, { recursive: true });
+    await cp(join(bundledSkills, "vibe-check"), join(target, "vibe-check"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "locally modified skill content\n",
+    );
+    const before = await readFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "utf8",
+    );
+
+    const result = await runCli(
+      ["skills", "install", "--dry-run", "--force", "--target", target],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stdout) as {
+      dryRun: boolean;
+      force: boolean;
+      ok: boolean;
+      skills: Array<{ name: string; action: string }>;
+    };
+    expect(payload).toMatchObject({ dryRun: true, force: true, ok: true });
+    expect(payload.skills.find((s) => s.name === "vibe-check")?.action).toBe(
+      "would-replace",
+    );
+    expect(
+      payload.skills
+        .filter((s) => s.name !== "vibe-check")
+        .every((s) => s.action === "would-install"),
+    ).toBe(true);
+    expect(await readFile(join(target, "vibe-check", "SKILL.md"), "utf8")).toBe(
+      before,
+    );
+    expect(await dirExists(join(target, "vibe-learn"))).toBe(false);
+  });
+
+  test("skills install dry-run blocks modified targets with exit 2 and no writes", async () => {
+    const home = await useTempHome();
+    const targetRoot = await mkdtemp(
+      join(originalCwd, ".skills-cli-block-dry-"),
+    );
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+    const bundledSkills = join(originalCwd, "skills");
+
+    await mkdir(target, { recursive: true });
+    await cp(join(bundledSkills, "vibe-check"), join(target, "vibe-check"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "locally modified skill content\n",
+    );
+    const before = await readFile(
+      join(target, "vibe-check", "SKILL.md"),
+      "utf8",
+    );
+
+    const result = await runCli(
+      ["skills", "install", "--dry-run", "--target", target],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      dryRun: boolean;
+      skills: Array<{ name: string; action: string }>;
+    };
+    expect(payload.ok).toBe(false);
+    expect(payload.dryRun).toBe(true);
+    expect(payload.skills.find((s) => s.name === "vibe-check")).toMatchObject({
+      action: "blocked",
+    });
+    expect(await readFile(join(target, "vibe-check", "SKILL.md"), "utf8")).toBe(
+      before,
+    );
+    expect(await dirExists(join(target, "vibe-learn"))).toBe(false);
+  });
+
+  test("skills install retains documented payload for spaced target paths", async () => {
+    const home = await useTempHome();
+    const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-space-"));
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skill dir", "nested skills");
+    await mkdir(join(targetRoot, "skill dir"), { recursive: true });
+
+    const result = await runCli(
+      ["skills", "install", "--dry-run", "--target", target],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stdout) as {
+      target: string;
+      ok: boolean;
+      skills: Array<{ name: string; action: string }>;
+    };
+    expect(payload.target).toBe(target);
+    expect(payload.ok).toBe(true);
+    expect(payload.skills.map((s) => s.name)).toEqual([
+      "vibe-check",
+      "vibe-constitution",
+      "vibe-learn",
+    ]);
+    expect(payload.skills.every((s) => s.action === "would-install")).toBe(
+      true,
+    );
+    expect(await dirExists(target)).toBe(false);
+  });
+
+  test("skills list rejects symlinked target root with stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const realTarget = await createCwd();
+    const linkBase = await createCwd();
+    await symlink(realTarget, join(linkBase, "link-root"), "dir");
+
+    const result = await runCli(
+      ["skills", "list", "--target", join(linkBase, "link-root")],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("symlink");
+    expect(await dirExists(join(linkBase, "link-root"))).toBe(true);
+  });
+
+  test("skills list rejects non-directory target root with stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const base = await createCwd();
+    const fileTarget = join(base, "not-a-dir");
+    await writeFile(fileTarget, "file content");
+
+    const result = await runCli(["skills", "list", "--target", fileTarget], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("not a directory");
+  });
+
+  test("skills install rejects symlinked target root with stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const realTarget = await createCwd();
+    const linkBase = await createCwd();
+    await symlink(realTarget, join(linkBase, "link-root"), "dir");
+
+    const result = await runCli(
+      ["skills", "install", "--target", join(linkBase, "link-root")],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("symlink");
+    // No traversal: real target remains untouched.
+    const { readdir } = await import("node:fs/promises");
+    const realEntries = await readdir(realTarget);
+    expect(realEntries).toEqual([]);
+  });
+
+  test("skills install surfaces source validation failure as stderr-only fatal JSON", async () => {
+    const home = await useTempHome();
+    const packageRoot = await mkdtemp(
+      join(tmpdir(), "vibe-skills-src-install-"),
+    );
+    cwdRoots.push(packageRoot);
+    await writeFile(join(packageRoot, "package.json"), "{}\n");
+    const targetRoot = await mkdtemp(
+      join(originalCwd, ".skills-cli-src-install-"),
+    );
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+
+    const result = await runCli(["skills", "install", "--target", target], {
+      home: home.home,
+      preload: skillsPackageRoot,
+      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    const payload = JSON.parse(result.stderr) as { error: string };
+    expect(payload.error).toContain("Skills directory does not exist");
+    expect(await dirExists(target)).toBe(false);
+  }, 15000);
+
+  test("unrelated commands do not invoke skills operations", async () => {
+    const home = await useTempHome();
+    const help = await runCli(["--help"]);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("skills");
+
+    const migrateHelp = await runCli(["migrate", "--help"]);
+    expect(migrateHelp.exitCode).toBe(0);
+    expect(migrateHelp.stdout).not.toContain("bundled skills");
+
+    const checkHelp = await runCli(["check", "--help"]);
+    expect(checkHelp.exitCode).toBe(0);
+    expect(checkHelp.stdout).not.toContain("--dry-run");
+
+    // session must not create the default skills target as a side effect.
+    const session = await runCli(["session"], { home: home.home });
+    expect(session.exitCode).toBe(0);
+    expect(session.stderr).toBe("");
+    expect(JSON.parse(session.stdout)).toEqual({
+      session: expect.any(String),
+    });
+    expect(await dirExists(join(home.home, ".agents", "skills"))).toBe(false);
+
+    // schema documents skills contracts without running inventory.
+    const schema = await runCli(["schema"], { home: home.home });
+    expect(schema.exitCode).toBe(0);
+    expect(schema.stderr).toBe("");
+    const schemaPayload = JSON.parse(schema.stdout) as {
+      commands: Record<string, unknown>;
+    };
+    expect(schemaPayload.commands["skills list"]).toBeDefined();
+    expect(await dirExists(join(home.home, ".agents", "skills"))).toBe(false);
   });
 
   test("check with --model only resolves model override without provider", async () => {
@@ -2442,7 +3506,7 @@ describe("CLI autosession surface", () => {
     const cwd = await createCwd();
     await writeSettings(home, listSettings({ provider: "anthropic" }));
 
-    const result = runCli(
+    const result = await runCli(
       ["demo", "--provider", "anthropic", "--model", "mock-claude"],
       {
         cwd,
@@ -2462,5 +3526,710 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toContain("Demo complete");
     expect(result.stdout).toContain("constitution");
     expect(result.stdout).toContain("vibe check");
+  }, 15000);
+
+  test("skills list retains successful read-only JSON for confirmed-missing roots", async () => {
+    const home = await useTempHome();
+    const missing = join(home.home, "no", "such", "skills");
+
+    const result = await runCli(["skills", "list", "--target", missing], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const payload = JSON.parse(result.stdout) as {
+      target: string;
+      skills: Array<{ name: string; status: string }>;
+    };
+    expect(payload.target).toBe(missing);
+    expect(payload.skills.length).toBeGreaterThan(0);
+    expect(payload.skills.every((s) => s.status === "missing")).toBe(true);
+    // Absent paths remain uncreated.
+    expect(await dirExists(missing)).toBe(false);
+    expect(await dirExists(join(home.home, "no"))).toBe(false);
+  });
+
+  test("skills list preserves byte-identical target contents after successful validation", async () => {
+    const home = await useTempHome();
+    const target = join(home.home, "list-success-validation");
+    await mkdir(target, { recursive: true });
+    await cp(
+      join(originalCwd, "skills", "vibe-check"),
+      join(target, "vibe-check"),
+      { recursive: true },
+    );
+    await cp(
+      join(originalCwd, "skills", "vibe-constitution"),
+      join(target, "vibe-constitution"),
+      { recursive: true },
+    );
+
+    const before = await readDirTree(target);
+
+    const result = await runCli(["skills", "list", "--target", target], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const after = await readDirTree(target);
+    expect(after).toEqual(before);
+  });
+
+  describe("concurrent local list bootstrap process safety", () => {
+    async function seedSharedHome(home: TempHomeContext): Promise<void> {
+      const base = Date.parse("2026-01-01T00:00:00.000Z");
+      await seedLearningEntries(home, [
+        {
+          type: "mistake",
+          category: "alpha",
+          observation: "Alpha older.",
+          solution: "Fix older.",
+          timestamp: base,
+        },
+        {
+          type: "success",
+          category: "alpha",
+          observation: "Alpha newer.",
+          solution: "Keep newer.",
+          timestamp: base + 1000,
+        },
+      ]);
+      await seedSessionsAndInteractions(
+        home,
+        [{ id: "s1", cwdKey: "k1", cwd: "/tmp/a" }],
+        [
+          {
+            sessionId: "s1",
+            goal: "Review",
+            output: JSON.stringify({ reason: "R." }),
+            timestamp: base,
+          },
+        ],
+      );
+      await writeSettings(home, listSettings());
+    }
+
+    const ALL_LIST_FORMS: string[][] = [
+      ["list"],
+      ["list", "--json"],
+      ["list", "learnings"],
+      ["list", "learnings", "--json"],
+      ["list", "constitution"],
+      ["list", "constitution", "--json"],
+      ["list", "sessions"],
+      ["list", "sessions", "--json"],
+      ["list", "providers"],
+      ["list", "providers", "--json"],
+      ["list", "checks"],
+      ["list", "checks", "--json"],
+      ["list", "categories"],
+      ["list", "categories", "--json"],
+      ["list", "stats"],
+      ["list", "stats", "--json"],
+      ["list", "all"],
+      ["list", "all", "--json"],
+    ];
+
+    test("concurrent list invocations sharing valid local state all succeed with nonempty output and parseable JSON", async () => {
+      const home = await useTempHome();
+      await seedSharedHome(home);
+
+      const results = await runCliBatch(ALL_LIST_FORMS, {
+        home: home.home,
+        preload: failOnFetch,
+        env: { DEFAULT_LLM_PROVIDER: undefined, DEFAULT_MODEL: undefined },
+      });
+
+      expect(results).toHaveLength(ALL_LIST_FORMS.length);
+      const failures: string[] = [];
+      for (const { args, result } of results) {
+        if (result.exitCode !== 0) {
+          failures.push(
+            `${args.join(" ")} → exit ${result.exitCode} stderr: ${result.stderr.slice(0, 200)}`,
+          );
+        }
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).not.toBe("");
+        if (args.includes("--json"))
+          expect(() => JSON.parse(result.stdout)).not.toThrow();
+      }
+      if (failures.length > 0) {
+        throw new Error(`Concurrent failures:\n${failures.join("\n")}`);
+      }
+    }, 15000);
+
+    test("concurrent list invocations with fresh shared home converge to valid state", async () => {
+      const home = await useTempHome();
+      // Pre-create settings so provider-dependent commands can resolve,
+      // but leave the database entirely absent for concurrent bootstrap.
+      await writeSettings(home, listSettings());
+
+      const results = await runCliBatch(ALL_LIST_FORMS, {
+        home: home.home,
+        preload: failOnFetch,
+        env: { DEFAULT_LLM_PROVIDER: undefined, DEFAULT_MODEL: undefined },
+      });
+
+      expect(results).toHaveLength(ALL_LIST_FORMS.length);
+      for (const { args, result } of results) {
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).not.toBe("");
+        if (args.includes("--json"))
+          expect(() => JSON.parse(result.stdout)).not.toThrow();
+      }
+
+      // A post-concurrency sequential call must also succeed: DB is valid.
+      const after = await runCli(["list", "all", "--json"], {
+        home: home.home,
+      });
+      expect(after.exitCode).toBe(0);
+      expect(after.stderr).toBe("");
+      expect(() => JSON.parse(after.stdout)).not.toThrow();
+    }, 15000);
+
+    test("concurrent list invocations with partially migrated home converge without corruption", async () => {
+      const home = await useTempHome();
+      await seedInitialMigrationOnly(home);
+      await writeSettings(home, listSettings());
+
+      const results = await runCliBatch(ALL_LIST_FORMS, {
+        home: home.home,
+        preload: failOnFetch,
+        env: { DEFAULT_LLM_PROVIDER: undefined, DEFAULT_MODEL: undefined },
+      });
+
+      expect(results).toHaveLength(ALL_LIST_FORMS.length);
+      for (const { args, result } of results) {
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).not.toBe("");
+        if (args.includes("--json"))
+          expect(() => JSON.parse(result.stdout)).not.toThrow();
+      }
+
+      // Verify migration converged: all expected migrations applied.
+      const migrate = await runCli(["migrate"], { home: home.home });
+      const report = parseMigrationReport(migrate);
+      expect(report.applied).toEqual(EXPECTED_MIGRATION_IDS);
+      expect(report.pending).toEqual([]);
+      expect(report.status).toBe("up-to-date");
+    }, 15000);
+
+    test("concurrent list invocations never perform provider or network access", async () => {
+      const home = await useTempHome();
+      await seedSharedHome(home);
+
+      const results = await runCliBatch(ALL_LIST_FORMS, {
+        home: home.home,
+        preload: failOnFetch,
+        env: {
+          DEFAULT_LLM_PROVIDER: undefined,
+          DEFAULT_MODEL: undefined,
+          ANTHROPIC_API_KEY: undefined,
+        },
+      });
+
+      for (const { result } of results) {
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).not.toBe("");
+        // failOnFetch throws on any network call; exitCode 0 and clean stderr
+        // prove the fetch preload was never invoked.
+      }
+    }, 15000);
+
+    test("migrate command under concurrent bootstrap produces deterministic report", async () => {
+      const home = await useTempHome();
+
+      const commands = [["migrate"], ["migrate"], ["migrate"], ["migrate"]];
+
+      const results = await runCliBatch(commands, {
+        home: home.home,
+        env: { DEFAULT_LLM_PROVIDER: undefined, DEFAULT_MODEL: undefined },
+      });
+
+      for (const { result } of results) {
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        const report = JSON.parse(result.stdout) as {
+          applied: string[];
+          pending: string[];
+          status: string;
+        };
+        expect(report.applied).toEqual(EXPECTED_MIGRATION_IDS);
+        expect(report.status).toMatch(/^(migrated|up-to-date)$/);
+      }
+    }, 15000);
+  });
+
+  test("skills operations leave no .skills-cli-* residue after tracked cleanup", async () => {
+    // Snapshot pre-existing .skills-cli-* entries (foreign paths).
+    const preExisting = await scanSkillsCliResidue();
+
+    // Create and run through a full skills install cycle.
+    const home = await useTempHome();
+    const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-hygiene-"));
+    cwdRoots.push(targetRoot);
+    const target = join(targetRoot, "skills");
+
+    const installed = await runCli(["skills", "install", "--target", target], {
+      home: home.home,
+    });
+    expect(installed.exitCode).toBe(0);
+    expect(installed.stderr).toBe("");
+    const payload = JSON.parse(installed.stdout) as { ok: boolean };
+    expect(payload.ok).toBe(true);
+
+    // Simulate afterEach: remove only the owned temp root.
+    await rm(targetRoot, { recursive: true, force: true });
+    const idx = cwdRoots.indexOf(targetRoot);
+    if (idx !== -1) cwdRoots.splice(idx, 1);
+
+    // Assert no new .skills-cli-* entries remain.
+    const after = await scanSkillsCliResidue();
+    const newEntries = after.filter((e) => !preExisting.includes(e));
+    expect(newEntries).toEqual([]);
+
+    // Pre-existing foreign paths survive untouched.
+    for (const entry of preExisting) {
+      expect(after).toContain(entry);
+    }
+  });
+
+  test("overlapping runCliInProcess calls preserve isolated console output", async () => {
+    // Two calls doing real async work (skills inventory reads against
+    // distinct targets) so their execution genuinely interleaves — a
+    // shared-global console redirect would misroute one call's output
+    // into the other's captured stdout.
+    const dirA = await createCwd();
+    const dirB = await createCwd();
+    const targetA = join(dirA, "skills-a");
+    const targetB = join(dirB, "skills-b");
+
+    const [resA, resB] = await Promise.all([
+      runCliInProcess(["skills", "list", "--target", targetA]),
+      runCliInProcess(["skills", "list", "--target", targetB]),
+    ]);
+
+    expect(resA.exitCode).toBe(0);
+    expect(resB.exitCode).toBe(0);
+
+    const payloadA = JSON.parse(resA.stdout) as { target: string };
+    const payloadB = JSON.parse(resB.stdout) as { target: string };
+    expect(payloadA.target).toBe(targetA);
+    expect(payloadB.target).toBe(targetB);
+
+    // No cross-talk: neither call's stdout names the other's target.
+    expect(resA.stdout).not.toContain(targetB);
+    expect(resB.stdout).not.toContain(targetA);
+  });
+
+  test("concurrent async invocations retain isolated stdout, stderr, and exit codes", async () => {
+    // Mix success and failure payloads to prove isolation across distinct outcomes.
+    const home = await useTempHome();
+    await writeSettings(home, listSettings());
+
+    const [success, failure] = await Promise.all([
+      runCliInProcess(["session"]),
+      runCliInProcess(["unknown-command"]),
+    ]);
+
+    // Success path: clean stdout, no stderr, exit 0.
+    expect(success.exitCode).toBe(0);
+    expect(success.stderr).toBe("");
+    expect(() => JSON.parse(success.stdout)).not.toThrow();
+    const successPayload = JSON.parse(success.stdout) as { session: string };
+    expect(successPayload.session).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Failure path: no stdout, stderr contains error, exit 1.
+    expect(failure.exitCode).toBe(1);
+    expect(failure.stdout).toBe("");
+    expect(failure.stderr).toContain("unknown command");
+  });
+
+  test("parser failures remain in their caller's stderr and exit result", async () => {
+    // Commander validation errors must not leak into other concurrent captures.
+    const [valid, invalid] = await Promise.all([
+      runCliInProcess(["check", "--help"]),
+      runCliInProcess(["check"]), // missing required options
+    ]);
+
+    // Help succeeds cleanly.
+    expect(valid.exitCode).toBe(0);
+    expect(valid.stderr).toBe("");
+    expect(valid.stdout).toContain("--goal");
+
+    // Validation failure stays isolated.
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stdout).toBe("");
+    expect(invalid.stderr).toContain("required option");
+  });
+
+  test("help and version termination retain successful caller-local output", async () => {
+    // --help and --version both exit via Commander's exitOverride with code 0.
+    // Both must produce stdout-only output without stderr leakage.
+    const [help, version] = await Promise.all([
+      runCliInProcess(["--help"]),
+      runCliInProcess(["--version"]),
+    ]);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toBe("");
+    expect(help.stdout).toContain("vibe");
+
+    expect(version.exitCode).toBe(0);
+    expect(version.stderr).toBe("");
+    expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  test("throw and termination cleanup leave no active capture state", async () => {
+    // After a failing invocation, a subsequent call must still capture correctly.
+    const failing = await runCliInProcess(["unknown-command"]);
+    expect(failing.exitCode).toBe(1);
+
+    // Subsequent call must capture cleanly — no residual state.
+    const succeeding = await runCliInProcess(["session"]);
+    expect(succeeding.exitCode).toBe(0);
+    expect(succeeding.stderr).toBe("");
+    expect(() => JSON.parse(succeeding.stdout)).not.toThrow();
+  });
+
+  test("three concurrent invocations with mixed outcomes preserve complete isolation", async () => {
+    // Three-way overlap: success, failure, and help — each must retain its own output.
+    const [session, error, help] = await Promise.all([
+      runCliInProcess(["session"]),
+      runCliInProcess(["unknown-command"]),
+      runCliInProcess(["check", "--help"]),
+    ]);
+
+    expect(session.exitCode).toBe(0);
+    expect(session.stderr).toBe("");
+    expect(JSON.parse(session.stdout)).toHaveProperty("session");
+
+    expect(error.exitCode).toBe(1);
+    expect(error.stdout).toBe("");
+    expect(error.stderr).toContain("unknown command");
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toBe("");
+    expect(help.stdout).toContain("--goal");
+
+    // No cross-contamination.
+    expect(session.stdout).not.toContain("unknown command");
+    expect(help.stdout).not.toContain("unknown command");
+    expect(error.stderr).not.toContain("session");
+  });
+
+  test("overlapping captures with distinct console.error markers retain isolated stderr", async () => {
+    // Two concurrent captures emit distinct markers via console.error.
+    // Each capture's stderr must contain only its own marker.
+    const markerA = "marker-alpha-unique-123";
+    const markerB = "marker-beta-unique-456";
+
+    const dirA = await createCwd();
+    const dirB = await createCwd();
+    const targetA = join(dirA, "skills-a");
+    const targetB = join(dirB, "skills-b");
+
+    const [resA, resB] = await Promise.all([
+      runCliInProcess(["skills", "list", "--target", targetA], markerA),
+      runCliInProcess(["skills", "list", "--target", targetB], markerB),
+    ]);
+
+    expect(resA.exitCode).toBe(0);
+    expect(resB.exitCode).toBe(0);
+
+    // Each capture's stderr contains only its own marker.
+    expect(resA.stderr).toContain(markerA);
+    expect(resA.stderr).not.toContain(markerB);
+    expect(resB.stderr).toContain(markerB);
+    expect(resB.stderr).not.toContain(markerA);
+
+    // Each capture's stdout contains only its own target.
+    expect(resA.stdout).toContain(targetA);
+    expect(resA.stdout).not.toContain(targetB);
+    expect(resB.stdout).toContain(targetB);
+    expect(resB.stdout).not.toContain(targetA);
+  });
+
+  test("separate captures after help termination contain no earlier marker or exit state", async () => {
+    // First capture: help command with a marker.
+    const marker = "help-marker-unique-789";
+    const helpResult = await runCliInProcess(["--help"], marker);
+
+    expect(helpResult.exitCode).toBe(0);
+    expect(helpResult.stderr).toContain(marker);
+    expect(helpResult.stdout).toContain("vibe");
+
+    // Second capture: clean session command without marker.
+    const sessionResult = await runCliInProcess(["session"]);
+
+    expect(sessionResult.exitCode).toBe(0);
+    expect(sessionResult.stderr).toBe("");
+    expect(sessionResult.stderr).not.toContain(marker);
+    expect(() => JSON.parse(sessionResult.stdout)).not.toThrow();
+  });
+
+  test("separate captures after parser-failure termination contain no earlier marker or exit state", async () => {
+    // First capture: parser failure with a marker.
+    const marker = "parser-fail-marker-unique-abc";
+    const failResult = await runCliInProcess(["check"], marker); // missing required options
+
+    expect(failResult.exitCode).toBe(1);
+    expect(failResult.stderr).toContain(marker);
+    expect(failResult.stderr).toContain("required option");
+
+    // Second capture: clean session command without marker.
+    const sessionResult = await runCliInProcess(["session"]);
+
+    expect(sessionResult.exitCode).toBe(0);
+    expect(sessionResult.stderr).toBe("");
+    expect(sessionResult.stderr).not.toContain(marker);
+    expect(() => JSON.parse(sessionResult.stdout)).not.toThrow();
+  });
+
+  test("coordinated overlapping calls with distinct markers and divergent exits preserve isolation", async () => {
+    // Three-way overlap with distinct markers and divergent exit outcomes.
+    const markerSuccess = "success-marker-unique-def";
+    const markerFailure = "failure-marker-unique-ghi";
+    const markerHelp = "help-marker-unique-jkl";
+
+    const [session, error, help] = await Promise.all([
+      runCliInProcess(["session"], markerSuccess),
+      runCliInProcess(["unknown-command"], markerFailure),
+      runCliInProcess(["check", "--help"], markerHelp),
+    ]);
+
+    // Success path: exit 0, contains its own marker.
+    expect(session.exitCode).toBe(0);
+    expect(session.stderr).toContain(markerSuccess);
+    expect(session.stderr).not.toContain(markerFailure);
+    expect(session.stderr).not.toContain(markerHelp);
+    expect(JSON.parse(session.stdout)).toHaveProperty("session");
+
+    // Failure path: exit 1, contains its own marker.
+    expect(error.exitCode).toBe(1);
+    expect(error.stderr).toContain(markerFailure);
+    expect(error.stderr).not.toContain(markerSuccess);
+    expect(error.stderr).not.toContain(markerHelp);
+    expect(error.stderr).toContain("unknown command");
+
+    // Help path: exit 0, contains its own marker.
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toContain(markerHelp);
+    expect(help.stderr).not.toContain(markerSuccess);
+    expect(help.stderr).not.toContain(markerFailure);
+    expect(help.stdout).toContain("--goal");
+  });
+
+  test("post-await markers and stdout remain caller-local during overlap", async () => {
+    // Three concurrent calls with coordination callbacks that yield before marker emission.
+    // Proves AsyncLocalStorage context survives across await points.
+    const markerSuccess = "post-await-success-marker-unique-111";
+    const markerFailure = "post-await-failure-marker-unique-222";
+    const markerHelp = "post-await-help-marker-unique-333";
+
+    const yieldOnce = async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+
+    const [session, error, help] = await Promise.all([
+      runCliInProcess(["session"], markerSuccess, yieldOnce),
+      runCliInProcess(["unknown-command"], markerFailure, yieldOnce),
+      runCliInProcess(["check", "--help"], markerHelp, yieldOnce),
+    ]);
+
+    // Success path: exit 0, marker emitted after await.
+    expect(session.exitCode).toBe(0);
+    expect(session.stderr).toContain(markerSuccess);
+    expect(session.stderr).not.toContain(markerFailure);
+    expect(session.stderr).not.toContain(markerHelp);
+    expect(JSON.parse(session.stdout)).toHaveProperty("session");
+
+    // Failure path: exit 1, marker emitted after await.
+    expect(error.exitCode).toBe(1);
+    expect(error.stderr).toContain(markerFailure);
+    expect(error.stderr).not.toContain(markerSuccess);
+    expect(error.stderr).not.toContain(markerHelp);
+    expect(error.stderr).toContain("unknown command");
+
+    // Help path: exit 0, marker emitted after await.
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toContain(markerHelp);
+    expect(help.stderr).not.toContain(markerSuccess);
+    expect(help.stderr).not.toContain(markerFailure);
+    expect(help.stdout).toContain("--goal");
+  });
+
+  test("post-await divergent exits retain expected exit codes and streams without cross-talk", async () => {
+    // Concurrent success, parser-failure, and help calls with deferred synchronization.
+    const yieldOnce = async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+
+    const [success, failure, help] = await Promise.all([
+      runCliInProcess(["session"], undefined, yieldOnce),
+      runCliInProcess(["check"], undefined, yieldOnce),
+      runCliInProcess(["check", "--help"], undefined, yieldOnce),
+    ]);
+
+    // Success path: clean stdout, no stderr.
+    expect(success.exitCode).toBe(0);
+    expect(success.stderr).toBe("");
+    expect(JSON.parse(success.stdout)).toHaveProperty("session");
+
+    // Parser failure: stderr contains error, exit 1.
+    expect(failure.exitCode).toBe(1);
+    expect(failure.stdout).toBe("");
+    expect(failure.stderr).toContain("required option");
+
+    // Help path: exit 0, stdout contains help text.
+    expect(help.exitCode).toBe(0);
+    expect(help.stderr).toBe("");
+    expect(help.stdout).toContain("--goal");
+
+    // No cross-talk between divergent exits.
+    expect(success.stderr).not.toContain("required option");
+    expect(failure.stderr).not.toContain("session");
+    expect(help.stderr).not.toContain("required option");
+  });
+
+  test("post-await later capture contains no prior marker, stale stderr, or exit code", async () => {
+    // First capture: with coordination callback and marker.
+    const marker = "post-await-prior-marker-unique-444";
+    const yieldOnce = async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+
+    const priorResult = await runCliInProcess(["session"], marker, yieldOnce);
+
+    expect(priorResult.exitCode).toBe(0);
+    expect(priorResult.stderr).toContain(marker);
+    expect(JSON.parse(priorResult.stdout)).toHaveProperty("session");
+
+    // Second capture: clean, no coordination callback, no marker.
+    const laterResult = await runCliInProcess(["session"]);
+
+    expect(laterResult.exitCode).toBe(0);
+    expect(laterResult.stderr).toBe("");
+    expect(laterResult.stderr).not.toContain(marker);
+    expect(() => JSON.parse(laterResult.stdout)).not.toThrow();
+  });
+
+  test("console.log outside any runCliInProcess context still reaches real stdout", () => {
+    // Behavioral, not reference-equality: eager install means console.log
+    // permanently equals the AsyncLocalStorage-aware wrapper, so an
+    // identity check would produce a false negative by design. A fresh
+    // subprocess with no active capture context proves the fallback path
+    // reaches real stdout — Bun's console writes below the JS-visible
+    // process.stdout.write property, so an in-process spy can't observe it.
+    const script = `await import(${JSON.stringify(cli)}); console.log("real-stdout-marker");`;
+    const result = Bun.spawnSync({
+      cmd: ["bun", "-e", script],
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("real-stdout-marker");
+  });
+});
+
+describe("CLI entry point edge cases", () => {
+  test("direct CLI entry with path containing space and percent character emits expected JSON", async () => {
+    // Create a temp project directory with special characters in its path
+    const specialRoot = await mkdtemp(join(tmpdir(), "vibe-cli special%dir-"));
+    const specialProject = join(specialRoot, "project");
+    const specialCli = join(specialProject, "src", "cli.ts");
+
+    try {
+      // Copy the entire project to a path with space and percent characters
+      await cp(originalCwd, specialProject, { recursive: true });
+
+      // Execute the CLI from the special path
+      const result = Bun.spawnSync({
+        cmd: ["bun", "run", specialCli, "session"],
+        cwd: specialProject,
+        env: { ...process.env, HOME: EMPTY_CLI_HOME },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const payload = JSON.parse(result.stdout.toString()) as {
+        session: string;
+      };
+      expect(payload.session).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      await rm(specialRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("importing CLI module does not trigger CLI parsing", async () => {
+    const importScript = join(tmpdir(), "vibe-cli-import-test.ts");
+
+    try {
+      // Create a script that imports the CLI module
+      await writeFile(
+        importScript,
+        `import { runCliInProcess } from "${cli}";
+console.log("import successful");
+`,
+      );
+
+      // Run the import script
+      const result = Bun.spawnSync({
+        cmd: ["bun", "run", importScript],
+        cwd: originalCwd,
+        env: { ...process.env, HOME: EMPTY_CLI_HOME },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      expect(result.stdout.toString().trim()).toBe("import successful");
+    } finally {
+      await rm(importScript, { force: true });
+    }
+  });
+
+  test("canonical file URL comparison handles space and percent encoding", async () => {
+    // Create a temp project directory with special characters in its path
+    const specialRoot = await mkdtemp(join(tmpdir(), "vibe-cli special%dir-"));
+    const specialProject = join(specialRoot, "project");
+    const specialCli = join(specialProject, "src", "cli.ts");
+
+    try {
+      // Copy the entire project to a path with space and percent characters
+      await cp(originalCwd, specialProject, { recursive: true });
+
+      // Execute the CLI from the special path - this tests that the direct entry
+      // guard correctly handles paths with space and percent characters
+      const result = Bun.spawnSync({
+        cmd: ["bun", "run", specialCli, "session"],
+        cwd: specialProject,
+        env: { ...process.env, HOME: EMPTY_CLI_HOME },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const payload = JSON.parse(result.stdout.toString()) as {
+        session: string;
+      };
+      expect(payload.session).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      await rm(specialRoot, { recursive: true, force: true });
+    }
   });
 });

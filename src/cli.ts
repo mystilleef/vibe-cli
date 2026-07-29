@@ -1,20 +1,29 @@
 #!/usr/bin/env bun
+import { AsyncLocalStorage } from "node:async_hooks";
+import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import packageJson from "../package.json" with { type: "json" };
+
+/** Invocation-local capture context for runCliInProcess. */
+interface CaptureContext {
+  readonly stdoutChunks: string[];
+  readonly stderrChunks: string[];
+  exitCode: number;
+}
+
+/** AsyncLocalStorage that scopes capture to a single runCliInProcess invocation. */
+const captureStore = new AsyncLocalStorage<CaptureContext>();
+
 /**
  * Register the `vibe` command surface and preserve JSON-only process output.
  *
  * All command handlers emit machine-readable JSON, with operational failures
  * routed through `fatal` so agents can parse errors without scraping text.
  */
-import {
-  getConstitution,
-  getCurrentConstitutionSessionId,
-  resetConstitution,
-  updateConstitution,
-} from "./tools/constitution.js";
+import { resetConstitution, updateConstitution } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
 import { runPrune } from "./tools/prune.js";
+import { installSkills } from "./tools/skillsInstaller.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
@@ -25,6 +34,7 @@ import {
 } from "./utils/cliHelpers.js";
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
 import { warnLegacyDotenv } from "./utils/dotenv.js";
+import { extractErrorMessage } from "./utils/errors.js";
 import {
   formatListAll,
   formatListCategories,
@@ -51,6 +61,7 @@ import {
 import { verifyConnection } from "./utils/llm.js";
 import { buildSchema } from "./utils/schema.js";
 import { loadProviderSettings } from "./utils/settings.js";
+import { computeSkillsInventory, resolveTargetRoot } from "./utils/skills.js";
 
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
@@ -63,6 +74,23 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
+/**
+ * Wrap an action with the standard CLI error-handling pattern.
+ * On error, emits a JSON diagnostic to stderr and calls `fatal`.
+ * Passes through all arguments so Commander can inject `opts`.
+ */
+function withCliError<A extends unknown[]>(
+  action: (...args: A) => void | Promise<void>,
+): (...args: A) => Promise<void> {
+  return async (...args: A) => {
+    try {
+      await action(...args);
+    } catch (e) {
+      fatal(extractErrorMessage(e));
+    }
+  };
+}
+
 function addModelOptions(cmd: Command) {
   return cmd
     .option("--provider <name>", "settings provider entry name")
@@ -70,7 +98,7 @@ function addModelOptions(cmd: Command) {
 }
 
 function emitListResult<T>(command: Command, data: T, pretty: string): void {
-  if ((command.optsWithGlobals() as { json?: boolean }).json) {
+  if (command.optsWithGlobals()["json"]) {
     emit(data);
     return;
   }
@@ -260,13 +288,24 @@ program
     "mistake",
   )
   .action(async (opts) => {
-    const result = await vibeLearnTool({
-      observation: opts.observation,
-      category: opts.category,
-      solution: opts.solution,
-      type: opts.type as "mistake" | "preference" | "success",
-    });
-    emit(result);
+    try {
+      const result = await vibeLearnTool({
+        observation: opts.observation,
+        category: opts.category,
+        solution: opts.solution,
+        type: opts.type as "mistake" | "preference" | "success",
+      });
+      emit(result);
+    } catch (e) {
+      const message = extractErrorMessage(e);
+      process.stderr.write(`${JSON.stringify({ error: message })}\n`);
+      emit({
+        added: false,
+        alreadyKnown: false,
+        categoryCount: 0,
+        topCategories: [],
+      });
+    }
   });
 
 const constitution = program
@@ -278,11 +317,10 @@ constitution
   .description("Add one or more rules to the current constitution")
   .requiredOption("--rule <text...>", "Rule(s) to add (repeatable)")
   .action((opts) => {
-    const session = getCurrentConstitutionSessionId();
     for (const rule of opts.rule as string[]) {
       updateConstitution(rule);
     }
-    emit({ session, rules: getConstitution() });
+    emit(readListConstitution());
   });
 
 constitution
@@ -292,17 +330,15 @@ constitution
   )
   .option("--rule <text...>", "Replacement rules (repeatable)")
   .action((opts) => {
-    const session = getCurrentConstitutionSessionId();
     resetConstitution(opts.rule ?? []);
-    emit({ session, rules: getConstitution() });
+    emit(readListConstitution());
   });
 
 constitution
   .command("get")
   .description("Get the active rules for the current constitution")
   .action(() => {
-    const session = getCurrentConstitutionSessionId();
-    emit({ session, rules: getConstitution() });
+    emit(readListConstitution());
   });
 
 program
@@ -374,15 +410,13 @@ program
   )
   .option("--dry-run", "Report candidates without deleting")
   .option("-y, --yes", "Confirm destructive deletion")
-  .action((opts) => {
-    try {
+  .action(
+    withCliError((opts) => {
       const { params } = buildPruneParams(opts);
       const result = runPrune(params);
       emit(result);
-    } catch (e) {
-      fatal(e instanceof Error ? e.message : String(e));
-    }
-  });
+    }),
+  );
 
 program
   .command("schema")
@@ -391,5 +425,210 @@ program
     emit(buildSchema());
   });
 
+const skills = program
+  .command("skills")
+  .description("Inspect or install bundled skills");
+
+skills
+  .command("list")
+  .description(
+    "Inspect bundled-skill drift against a harness skills directory without mutation",
+  )
+  .option("--target <path>", "path (default: ~/.agents/skills)")
+  .action(
+    withCliError((opts) => {
+      const target = resolveTargetRoot(opts.target);
+      const inventory = computeSkillsInventory(target, {});
+      emit({
+        target: inventory.targetRoot,
+        skills: inventory.skills.map((s) => ({
+          name: s.name,
+          status: s.status,
+        })),
+      });
+    }),
+  );
+
+skills
+  .command("install")
+  .description("Opt-in copy of bundled skills into a harness skills directory")
+  .option("--target <path>", "path (default: ~/.agents/skills)")
+  .option("--dry-run", "plan without writing target files")
+  .option(
+    "--force",
+    "replace every existing bundled target, including hash matches",
+  )
+  .action(
+    withCliError(async (opts) => {
+      const target = resolveTargetRoot(opts.target);
+      const result = await installSkills(target, {
+        dryRun: Boolean(opts.dryRun),
+        force: Boolean(opts.force),
+      });
+      emit(result);
+      if (!result.ok) process.exit(2);
+    }),
+  );
+
+interface CliResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+// Baseline handlers — captured once at module load, never replaced per-call.
+const baselineStdoutWrite = process.stdout.write.bind(process.stdout);
+const baselineStderrWrite = process.stderr.write.bind(process.stderr);
+const baselineConsoleError = console.error.bind(console);
+const baselineExit = process.exit.bind(process);
+
+/** Dispatch stdout to active capture context or baseline. */
+function dispatchStdout(chunk: string | Uint8Array): boolean {
+  const ctx = captureStore.getStore();
+  if (ctx) {
+    ctx.stdoutChunks.push(
+      typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+    );
+    return true;
+  }
+  return baselineStdoutWrite(chunk);
+}
+
+/** Dispatch stderr to active capture context or baseline. */
+function dispatchStderr(chunk: string | Uint8Array): boolean {
+  const ctx = captureStore.getStore();
+  if (ctx) {
+    ctx.stderrChunks.push(
+      typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+    );
+    return true;
+  }
+  return baselineStderrWrite(chunk);
+}
+
+/** Dispatch console.error to active capture context or baseline. */
+function dispatchConsoleError(...args: unknown[]): void {
+  const ctx = captureStore.getStore();
+  if (ctx) {
+    const msg = args
+      .map((a) => (typeof a === "string" ? a : String(a)))
+      .join(" ");
+    ctx.stderrChunks.push(`${msg}\n`);
+    return;
+  }
+  baselineConsoleError(...args);
+}
+
+/** Dispatch process.exit to active capture context or baseline. */
+function dispatchExit(code?: number): never {
+  const ctx = captureStore.getStore();
+  if (ctx) {
+    ctx.exitCode = typeof code === "number" ? code : 0;
+    return undefined as never;
+  }
+  return baselineExit(code);
+}
+
+/** Install dispatch layer once at module load. */
+let dispatchInstalled = false;
+function installDispatch(): void {
+  if (dispatchInstalled) return;
+  process.stdout.write = dispatchStdout as typeof process.stdout.write;
+  process.stderr.write = dispatchStderr as typeof process.stderr.write;
+  console.error = dispatchConsoleError;
+  process.exit = dispatchExit as typeof process.exit;
+  dispatchInstalled = true;
+}
+
+/**
+ * Test seam: emit a marker via console.error when VIBE_TEST_ERROR_MARKER is set.
+ * Only used in tests to verify console.error isolation across concurrent captures.
+ */
+function emitTestErrorMarker(): void {
+  const marker = process.env["VIBE_TEST_ERROR_MARKER"];
+  if (marker !== undefined) {
+    console.error(marker);
+  }
+}
+
+export { emitTestErrorMarker };
+
+/**
+ * Run the CLI in-process, capturing stdout and stderr.
+ * Used by tests to avoid spawning a subprocess.
+ *
+ * Uses AsyncLocalStorage to scope capture to each invocation,
+ * enabling safe concurrent calls without global handler crosstalk.
+ *
+ * @param args - CLI arguments
+ * @param testErrorMarker - Optional marker to emit via console.error (test seam)
+ * @param coordinationCallback - Optional async callback that yields before marker emission (test seam)
+ */
+export async function runCliInProcess(
+  args: string[],
+  testErrorMarker?: string,
+  coordinationCallback?: () => Promise<void>,
+): Promise<CliResult> {
+  installDispatch();
+
+  const ctx: CaptureContext = {
+    stdoutChunks: [],
+    stderrChunks: [],
+    exitCode: 0,
+  };
+
+  return captureStore.run(ctx, async () => {
+    // Re-run dotenv warning with intercepted stderr
+    warnLegacyDotenv((data: string) => {
+      ctx.stderrChunks.push(data);
+    });
+
+    // Yield if coordination callback provided (test seam for post-await isolation)
+    if (coordinationCallback !== undefined) {
+      await coordinationCallback();
+    }
+
+    // Emit test error marker if provided (test seam for deterministic async marker emission)
+    if (testErrorMarker !== undefined) {
+      console.error(testErrorMarker);
+    } else {
+      emitTestErrorMarker();
+    }
+
+    try {
+      await program.parseAsync(["node", "bun", ...args]);
+    } catch (e: unknown) {
+      // Commander throws on --help/--version or validation errors
+      const err = e as Error & { exitCode?: number };
+      if (
+        err instanceof Error &&
+        (err.exitCode === 0 || /^\(output/.test(err.message))
+      ) {
+        // Help/version output — stdout already captured
+        ctx.exitCode = 0;
+      } else if (err instanceof Error) {
+        ctx.stderrChunks.push(`${JSON.stringify({ error: err.message })}\n`);
+        ctx.exitCode = 1;
+      } else {
+        ctx.stderrChunks.push(`${JSON.stringify({ error: String(e) })}\n`);
+        ctx.exitCode = 1;
+      }
+    }
+
+    return {
+      stdout: ctx.stdoutChunks.join(""),
+      stderr: ctx.stderrChunks.join("").trim(),
+      exitCode: ctx.exitCode,
+    };
+  });
+}
+
 warnLegacyDotenv();
-program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));
+
+// Only run CLI when executed directly, not when imported.
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));
+}
