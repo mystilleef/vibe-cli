@@ -1,4 +1,5 @@
 import { getConstitution } from "../tools/constitution.js";
+import { extractErrorMessage } from "./errors.js";
 import { type GateDecision, parseGateDecision } from "./gateDecision.js";
 import { callProvider, resolveProviderAndModel } from "./provider.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
@@ -12,26 +13,24 @@ const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that m
 Scan (weight by blast radius — severity × irreversibility):
 - Constitution: any rule violated or unverified?
 - Misalignment: plan serves the user's actual request, not an adjacent one?
-- Irreversibility: destructive operation without rollback or safe-stop?
+- Irreversibility: destructive operation with real blast radius (data loss, prod impact, unrecoverable state) lacking rollback or safe-stop?
 - Assumption lock-in: unverified premise built upon as fact?
+- Overreach: plan adds scope, abstraction, safeguards, or process beyond what the goal needs?
 - Learning patterns: plan repeats a known mistake category?
 
-Report only the highest-weight finding. If none, confirm sound and name one latent risk.
+Report only the highest-weight finding. If none rises above triviality, say so plainly — do not manufacture a risk to report.
 
 Output: actionable, no user input required:
 - Hard risk (constitution, irreversibility): state the violation; specify what the revised plan must include to resolve it.
-- Soft risk (misalignment, assumption, pattern): state the unverified premise; specify what the revised plan must verify before proceeding.
-- Sound: one phrase confirming what works, one latent risk worth watching.
+- Soft risk (misalignment, assumption, pattern, overreach): state the unverified premise or excess scope; specify what the revised plan must verify or trim before proceeding.
+- Sound: one phrase confirming what works. Nothing further required.
 
 Feedback only — no narration, no preamble, no hedging.
 Minimum words. Maximum signal.`;
 
 /** Static fallback feedback returned when the LLM call fails. */
-export const FALLBACK_FEEDBACK = [
-  "1. Goal alignment: confirm the plan directly addresses the stated goal — no scope drift.",
-  "2. Irreversible steps: each must have a tested rollback or safe-stop defined in the plan.",
-  "3. Load-bearing assumptions: enumerate each and verify within the plan before proceeding.",
-].join("\n");
+export const FALLBACK_FEEDBACK =
+  "Mentor unavailable (provider error) — no plan-specific feedback generated. Gate defaults to block; review this plan manually before proceeding.";
 
 interface ReviewInput {
   goal: string;
@@ -47,6 +46,8 @@ interface ReviewInput {
 
 interface ReviewOutput {
   feedback: string;
+  failed?: true;
+  error?: string;
 }
 
 /**
@@ -56,29 +57,33 @@ interface ReviewOutput {
  * rules, prior session history, and learning-pattern history. Learning context is
  * controlled by the `useLearningHistory` setting (default: true).
  */
+/** Build optional line if value is truthy. */
+function optionalLine(label: string, value: string | undefined | null): string {
+  return value ? `${label}: ${value}` : "";
+}
+
 function buildContextSection(input: ReviewInput): string {
   const settings = loadProviderSettings();
   const useLearning = settings.useLearningHistory ?? true;
   const learningContext = useLearning ? getLearningContextText() : "";
   const rules = getConstitution();
-  return [
+  const lines = [
     "CONTEXT:",
     `Goal: ${input.goal}`,
     `Plan: ${input.plan}`,
-    input.userPrompt ? `User Prompt: ${input.userPrompt}` : "",
-    input.progress ? `Progress: ${input.progress}` : "",
+    optionalLine("User Prompt", input.userPrompt),
+    optionalLine("Progress", input.progress),
     input.uncertainties?.length
       ? `Uncertainties: ${input.uncertainties.join(", ")}`
       : "",
-    input.taskContext ? `Task Context: ${input.taskContext}` : "",
+    optionalLine("Task Context", input.taskContext),
     rules.length
       ? `Constitution:\n${rules.map((r) => `- ${r}`).join("\n")}`
       : "",
-    input.historySummary ? `History Context: ${input.historySummary}` : "",
+    optionalLine("History Context", input.historySummary),
     learningContext ? `Learning Context:\n${learningContext}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+  return lines.filter(Boolean).join("\n");
 }
 
 async function generateResponse(input: ReviewInput): Promise<ReviewOutput> {
@@ -98,8 +103,8 @@ async function generateResponse(input: ReviewInput): Promise<ReviewOutput> {
 /** System prompt for the plan-revision LLM call. */
 const PLAN_REVISION_SYSTEM_PROMPT = `AI agent plan reviser.
 
-Address the safety concern in the feedback; preserve everything else. Prioritize goal alignment when feedback conflicts.
-The revised plan returns for re-evaluation — resolve the concern completely so the gate approves.
+Address the safety concern in the feedback with the smallest change that resolves it; preserve everything else. Do not add scope, abstraction, tooling, or process beyond what the concern requires. Prioritize goal alignment when feedback conflicts.
+The revised plan returns for re-evaluation — resolve the concern completely, minimally, so the gate approves.
 Output ONLY the revised plan — no preamble, no extra text. One paragraph or short numbered list.`;
 
 /**
@@ -140,7 +145,8 @@ Output ONLY one line of valid JSON — no markdown, no extra text:
 {"proceed":<bool>,"confidence":<0.0-1.0>,"reason":"<one sentence, 20 words max>"}
 
 - proceed true: plan safe, scoped, goal-aligned; feedback confirms sound or raises only minor/irrelevant concerns
-- proceed false: unresolved hard risk — constitution violation, missing rollback, or irreversible op without safe-stop
+- proceed true: low-blast-radius irreversible op (recoverable via re-run, redeploy, or version control; no data/user/prod impact) — rollback machinery not required
+- proceed false: unresolved hard risk — constitution violation, or an irreversible op with real blast radius (data loss, prod impact, unrecoverable state) lacking rollback or safe-stop
 - proceed false: unverified premise critical to safety; goal misalignment
 - confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
 
@@ -244,7 +250,8 @@ export async function getMentorFeedback(
 ): Promise<ReviewOutput> {
   try {
     return await generateResponse(input);
-  } catch {
-    return { feedback: FALLBACK_FEEDBACK };
+  } catch (error) {
+    const diagnostic = extractErrorMessage(error);
+    return { feedback: FALLBACK_FEEDBACK, failed: true, error: diagnostic };
   }
 }

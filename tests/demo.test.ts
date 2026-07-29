@@ -225,20 +225,17 @@ describe("runDemo", () => {
     expect(getLearningEntries()).toEqual({});
   });
 
-  test("propagates provider failures after the constitution step", async () => {
+  test("blocks with diagnostic when provider resolution fails after constitution step", async () => {
     resetConstitution(["Preserve provider failure rules"]);
 
-    await expect(
-      runDemo({ modelOverride: { provider: "unsupported-provider" } }),
-    ).rejects.toThrow(
-      /Provider 'unsupported-provider' not found in settings\.json/,
-    );
+    await runDemo({ modelOverride: { provider: "unsupported-provider" } });
 
     expect(requests).toHaveLength(0);
     expect(visibleOutput()).toContain("Step 1/4: Set a constitution rule");
     expect(visibleOutput()).toContain(
       "Step 2/4: Run a vibe check on a risky plan",
     );
+    expect(visibleOutput()).toContain("blocked");
     expect(getConstitution()).toEqual(["Preserve provider failure rules"]);
     expect(getLearningEntries()).toEqual({});
   });

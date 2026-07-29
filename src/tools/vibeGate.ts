@@ -18,6 +18,10 @@ export interface VibeGateOutput {
   attempts: number;
   /** Present when the loop stops because the attempt budget ran out. */
   exhausted?: boolean;
+  /** Present when feedback generation faulted; original error message. */
+  diagnostic?: string;
+  /** True when the loop stopped because feedback generation faulted. */
+  feedbackFault?: true;
 }
 
 /**
@@ -32,6 +36,20 @@ export async function vibeGateTool(
   input: VibeCheckInput,
 ): Promise<VibeGateOutput> {
   const checkResult = await vibeCheckTool(input);
+  if (checkResult.status === "failed") {
+    return {
+      proceed: false,
+      confidence: 0,
+      reason: "Feedback generation failed",
+      feedback: checkResult.feedback,
+      plan: input.plan,
+      attempts: 1,
+      feedbackFault: true,
+      ...(checkResult.diagnostic !== undefined && {
+        diagnostic: checkResult.diagnostic,
+      }),
+    };
+  }
   const decision = await getGateDecision({
     goal: input.goal,
     plan: input.plan,
@@ -78,6 +96,9 @@ export async function vibeGateLoop(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const toolResult = await vibeGateTool({ ...input, plan });
+    if (toolResult.feedbackFault) {
+      return { ...toolResult, plan, attempts: attempt, exhausted: true };
+    }
     if (toolResult.proceed) {
       return { ...toolResult, plan, attempts: attempt };
     }

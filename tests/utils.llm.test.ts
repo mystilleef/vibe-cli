@@ -704,14 +704,9 @@ describe("LLM call surfaces", () => {
 });
 
 describe("FALLBACK_FEEDBACK", () => {
-  test("contains three unique numbered items", () => {
-    const lines = FALLBACK_FEEDBACK.split("\n");
-
-    expect(lines).toHaveLength(3);
-    expect(new Set(lines).size).toBe(3);
-    expect(
-      lines.every((line, index) => line.startsWith(`${index + 1}. `)),
-    ).toBe(true);
+  test("is a single advisory sentence naming the mentor as unavailable", () => {
+    expect(FALLBACK_FEEDBACK).not.toContain("\n");
+    expect(FALLBACK_FEEDBACK).toContain("Mentor unavailable");
   });
 });
 

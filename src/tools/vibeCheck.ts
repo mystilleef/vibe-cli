@@ -1,4 +1,5 @@
 import { resolveAutosession } from "../utils/autosession.js";
+import { extractErrorMessage } from "../utils/errors.js";
 import { FALLBACK_FEEDBACK, getMentorFeedback } from "../utils/llm.js";
 import { addToHistory, getHistorySummary } from "../utils/state.js";
 
@@ -24,6 +25,10 @@ export interface VibeCheckInput {
 export interface VibeCheckOutput {
   /** Mentor feedback from the configured LLM, or fallback feedback on failure. */
   feedback: string;
+  /** Whether the feedback is usable or represents a generation fault. */
+  status: "usable" | "failed";
+  /** Original diagnostic when feedback generation faults. */
+  diagnostic?: string;
 }
 
 /**
@@ -58,9 +63,14 @@ export async function vibeCheckTool(
       historySummary,
     });
     await addToHistory(sessionId, input, response.feedback);
-    return { feedback: response.feedback };
+    return {
+      feedback: response.feedback,
+      status: response.failed ? "failed" : "usable",
+      ...(response.failed && { diagnostic: response.error }),
+    };
   } catch (error) {
+    const diagnostic = extractErrorMessage(error);
     console.error("vibe_check error:", error);
-    return { feedback: FALLBACK_FEEDBACK };
+    return { feedback: FALLBACK_FEEDBACK, status: "failed", diagnostic };
   }
 }

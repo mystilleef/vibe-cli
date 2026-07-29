@@ -137,6 +137,17 @@ describe("vibeCheckTool", () => {
     expect(getHistorySummary(sessionId)).toContain(result.feedback);
   });
 
+  test("returns usable status when feedback generation succeeds", async () => {
+    const result = await vibeCheckTool({
+      goal: "ship safely",
+      plan: "run tests",
+      modelOverride: { provider: "anthropic", model: "mock-claude" },
+    });
+
+    expect(result.status).toBe("usable");
+    expect(result.diagnostic).toBeUndefined();
+  });
+
   test("uses boundary defaults for omitted and empty optional context", async () => {
     const result = await vibeCheckTool({
       goal: "",
@@ -184,7 +195,11 @@ describe("vibeCheckTool", () => {
     const sessionId = resolveAutosession().id;
     const summary = getHistorySummary(sessionId);
 
-    expect(result).toEqual({ feedback: FALLBACK_FEEDBACK });
+    expect(result).toEqual({
+      feedback: FALLBACK_FEEDBACK,
+      status: "failed",
+      diagnostic: expect.stringContaining("Provider"),
+    });
     expect(requests).toHaveLength(0);
     expect(summary).toContain("Goal bad provider");
     expect(summary).toContain(FALLBACK_FEEDBACK.slice(0, 80));
@@ -197,7 +212,11 @@ describe("vibeCheckTool", () => {
 
     const result = await vibeCheckTool({ goal: "g", plan: "p" });
 
-    expect(result).toEqual({ feedback: FALLBACK_FEEDBACK });
+    expect(result).toEqual({
+      feedback: FALLBACK_FEEDBACK,
+      status: "failed",
+      diagnostic: expect.any(String),
+    });
     expect(requests).toHaveLength(0);
   });
 });

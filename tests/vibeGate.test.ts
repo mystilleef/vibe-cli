@@ -159,19 +159,108 @@ describe("vibeGateTool", () => {
     expect(result.attempts).toBe(1);
   });
 
-  test("propagates gate provider failures after question fallback", async () => {
-    let thrown: Error | undefined;
-    try {
-      await vibeGateTool(
-        input({ modelOverride: { provider: "unsupported-provider" } }),
-      );
-    } catch (e) {
-      thrown = e as Error;
-    }
-    expect(thrown?.message).toMatch(
-      /Provider 'unsupported-provider' not found in settings\.json/,
+  test("blocks with feedback failure diagnostic when provider resolution fails", async () => {
+    const result = await vibeGateTool(
+      input({ modelOverride: { provider: "unsupported-provider" } }),
     );
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0);
+    expect(result.reason).toBe("Feedback generation failed");
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
+    expect(result.diagnostic).toContain("not found");
+    expect(result.feedbackFault).toBe(true);
+    // Zero gate decision or revision calls after feedback failure
     expect(requests).toHaveLength(0);
+  });
+
+  test("propagates gate provider failures after successful feedback", async () => {
+    // Feedback succeeds, gate decision returns malformed → blocking default
+    responseQueue.push("questions:valid", "not json");
+
+    const result = await vibeGateTool(input());
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+    expect(result.reason).toMatch(/unavailable/);
+    expect(requests).toHaveLength(2);
+  });
+
+  test("blocks with zero confidence and diagnostic when feedback generation faults", async () => {
+    const result = await vibeGateTool(
+      input({ modelOverride: { provider: "unsupported-provider" } }),
+    );
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0);
+    expect(result.reason).toBe("Feedback generation failed");
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
+    expect(result.plan).toBe("run focused tests");
+    expect(result.attempts).toBe(1);
+    expect(result.feedbackFault).toBe(true);
+    expect(result.diagnostic).toContain("not found");
+    // Zero gate decision or revision calls after feedback failure
+    expect(requests).toHaveLength(0);
+  });
+
+  test("retains empty string diagnostic when feedback generation faults with empty error", async () => {
+    // Mock getMentorFeedback to return empty string error
+    const llm = await import("../src/utils/llm");
+    spyOn(llm, "getMentorFeedback").mockImplementation(async () => ({
+      feedback: FALLBACK_FEEDBACK,
+      failed: true,
+      error: "",
+    }));
+
+    const result = await vibeGateTool(input());
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0);
+    expect(result.reason).toBe("Feedback generation failed");
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
+    expect(result.plan).toBe("run focused tests");
+    expect(result.attempts).toBe(1);
+    // Empty string diagnostic is retained as empty string, not converted to undefined
+    expect(result.diagnostic).toBe("");
+    expect(result.feedbackFault).toBe(true);
+    // Zero gate decision or revision calls after feedback failure
+    expect(requests).toHaveLength(0);
+  });
+
+  test("retains undefined diagnostic when feedback generation faults without error", async () => {
+    // Mock getMentorFeedback to return undefined error
+    const llm = await import("../src/utils/llm");
+    spyOn(llm, "getMentorFeedback").mockImplementation(async () => ({
+      feedback: FALLBACK_FEEDBACK,
+      failed: true,
+    }));
+
+    const result = await vibeGateTool(input());
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0);
+    expect(result.reason).toBe("Feedback generation failed");
+    expect(result.feedback).toBe(FALLBACK_FEEDBACK);
+    expect(result.plan).toBe("run focused tests");
+    expect(result.attempts).toBe(1);
+    // Undefined diagnostic is retained as undefined (field absent)
+    expect(result.diagnostic).toBeUndefined();
+    expect(result.feedbackFault).toBe(true);
+    // Zero gate decision or revision calls after feedback failure
+    expect(requests).toHaveLength(0);
+  });
+
+  test("retains blocking behavior after usable feedback followed by malformed decision", async () => {
+    responseQueue.push("questions:valid", "not json");
+
+    const result = await vibeGateTool(input());
+
+    expect(result.proceed).toBe(false);
+    expect(result.confidence).toBe(0.5);
+    expect(result.reason).toMatch(/unavailable/);
+    expect(result.diagnostic).toBeUndefined();
+    expect(result.attempts).toBe(1);
+    expect(requests).toHaveLength(2);
   });
 });
 
@@ -247,7 +336,7 @@ describe("vibeGateLoop", () => {
     expect(requests).toHaveLength(0);
   });
 
-  test("uses fallback questions when check generation fails, then revises from fallback feedback", async () => {
+  test("uses fallback feedback when check generation fails and blocks", async () => {
     responseQueue.push(
       { status: 500, text: "question generator down" },
       gateDecision(false, 0.4, "fallback feedback still blocks"),
@@ -261,14 +350,14 @@ describe("vibeGateLoop", () => {
       2,
     );
 
-    expect(result.proceed).toBe(true);
-    expect(result.plan).toBe("fallback-aware revision");
-    expect(requests[1]?.messages?.[0]?.content).toContain(
-      `Feedback: ${FALLBACK_FEEDBACK}`,
-    );
-    expect(requests[2]?.messages?.[0]?.content).toContain(
-      `Safety feedback: ${FALLBACK_FEEDBACK}`,
-    );
+    // Feedback fault short-circuits the loop with blocking result
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(result.feedbackFault).toBe(true);
+    expect(result.diagnostic).toContain("500");
+    // Only feedback call attempted (1 request), no gate decision or revision
+    expect(requests).toHaveLength(1);
   });
 
   test("exhausts after maxAttempts blocks without passing", async () => {
@@ -322,22 +411,6 @@ describe("vibeGateLoop", () => {
     );
   });
 
-  test("propagates error when vibeGateTool throws during loop", async () => {
-    // gate throws with unknown provider
-    try {
-      await vibeGateLoop(
-        input({ modelOverride: { provider: "unsupported-provider" } }),
-        2,
-      );
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect((err as Error).message).toMatch(
-        /Provider 'unsupported-provider' not found in settings\.json/,
-      );
-    }
-    expect(requests).toHaveLength(0);
-  });
-
   test("propagates error when revisePlan throws mid-loop", async () => {
     responseQueue.push("questions:first", gateDecision(false, 0.3, "blocked"), {
       status: 500,
@@ -364,5 +437,102 @@ describe("vibeGateLoop", () => {
     expect(result.proceed).toBe(false);
     expect(result.plan).toBe("run focused tests");
     expect(requests).toHaveLength(2);
+  });
+
+  test("blocks with diagnostic and zero decision calls when feedback generation faults", async () => {
+    const result = await vibeGateLoop(
+      input({ modelOverride: { provider: "unsupported-provider" } }),
+      3,
+    );
+
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(result.feedbackFault).toBe(true);
+    expect(result.diagnostic).toContain("not found");
+    expect(result.plan).toBe("run focused tests");
+    // Zero decision, revision, or subsequent feedback calls
+    expect(requests).toHaveLength(0);
+  });
+
+  test("blocks with diagnostic and zero calls for negative attempt budgets after feedback fault", async () => {
+    const result = await vibeGateLoop(input(), -1);
+
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(0);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("retains empty string diagnostic when feedback faults with empty error in loop", async () => {
+    // Mock getMentorFeedback to return empty string error
+    const llm = await import("../src/utils/llm");
+    spyOn(llm, "getMentorFeedback").mockImplementation(async () => ({
+      feedback: FALLBACK_FEEDBACK,
+      failed: true,
+      error: "",
+    }));
+
+    const result = await vibeGateLoop(
+      input({ modelOverride: { provider: "unsupported-provider" } }),
+      3,
+    );
+
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(result.plan).toBe("run focused tests");
+    // Empty string diagnostic is retained as empty string
+    expect(result.diagnostic).toBe("");
+    expect(result.feedbackFault).toBe(true);
+    // Zero decision, revision, or subsequent feedback calls
+    expect(requests).toHaveLength(0);
+  });
+
+  test("retains undefined diagnostic when feedback faults without error in loop", async () => {
+    // Mock getMentorFeedback to return undefined error
+    const llm = await import("../src/utils/llm");
+    spyOn(llm, "getMentorFeedback").mockImplementation(async () => ({
+      feedback: FALLBACK_FEEDBACK,
+      failed: true,
+    }));
+
+    const result = await vibeGateLoop(
+      input({ modelOverride: { provider: "unsupported-provider" } }),
+      3,
+    );
+
+    expect(result.proceed).toBe(false);
+    expect(result.exhausted).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(result.plan).toBe("run focused tests");
+    // Undefined diagnostic is retained as undefined (field absent)
+    expect(result.diagnostic).toBeUndefined();
+    expect(result.feedbackFault).toBe(true);
+    // Zero decision, revision, or subsequent feedback calls
+    expect(requests).toHaveLength(0);
+  });
+
+  test("preserves valid blocked-decision revision flow when reason text matches feedback-failure phrase", async () => {
+    // First attempt: blocked decision uses the feedback-failure phrase as reason text.
+    // The loop must NOT treat this as a feedback fault — it should revise and retry.
+    responseQueue.push(
+      "questions:valid",
+      gateDecision(false, 0.3, "Feedback generation failed"),
+      "address the identified gap",
+      "questions:revised",
+      gateDecision(true, 0.85, "gap addressed"),
+    );
+
+    const result = await vibeGateLoop(input(), 3);
+
+    expect(result.proceed).toBe(true);
+    expect(result.confidence).toBe(0.85);
+    expect(result.reason).toBe("gap addressed");
+    expect(result.plan).toBe("address the identified gap");
+    expect(result.attempts).toBe(2);
+    expect(result.feedbackFault).toBeUndefined();
+    // 1 check + 1 gate + 1 revision + 1 check + 1 gate = 5 requests
+    expect(requests).toHaveLength(5);
   });
 });
