@@ -1,3 +1,4 @@
+import { extractErrorMessage } from "./errors.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
 /**
@@ -16,7 +17,7 @@ export function buildSchema() {
     model =
       settings.model ?? providerEntry.defaultModel ?? "(required via --model)";
   } catch (error) {
-    model = error instanceof Error ? error.message : String(error);
+    model = extractErrorMessage(error);
   }
   return {
     v: "1.0.0",
@@ -140,6 +141,41 @@ export function buildSchema() {
           failedTargets: "[{target:str,error:str}]",
         },
         exit: { "0": "success", "1": "error" },
+      },
+      "skills list": {
+        when: "inspect bundled-skill drift against a harness skills directory without mutation",
+        req: {},
+        opt: {
+          "--target": "path (default: ~/.agents/skills)",
+        },
+        out: {
+          target: "absolute path str",
+          skills: "[{name:str,status:missing|up-to-date|modified}]",
+        },
+        exit: { "0": "success", "1": "error" },
+      },
+      "skills install": {
+        when: "opt-in copy of bundled skills into a harness skills directory",
+        req: {},
+        opt: {
+          "--target": "path (default: ~/.agents/skills)",
+          "--dry-run": "plan without writing staging or target files",
+          "--force":
+            "replace every existing bundled target, including hash matches",
+        },
+        out: {
+          target: "absolute path str",
+          dryRun: "bool",
+          force: "bool",
+          ok: "bool",
+          skills:
+            "[{name:str,status:missing|up-to-date|modified,action:would-install|would-replace|installed|replaced|unchanged|blocked|failed,error?:str}]",
+        },
+        exit: {
+          "0": "success",
+          "2": "blocked (modified targets without --force) or failed (partial copy error)",
+          "1": "error",
+        },
       },
     },
   };

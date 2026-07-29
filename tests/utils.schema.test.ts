@@ -123,7 +123,56 @@ describe("buildSchema", () => {
     expect(commands).toContain("verify");
     expect(commands).toContain("prune");
     expect(commands).toContain("migrate");
+    expect(commands).toContain("skills list");
+    expect(commands).toContain("skills install");
     expect(commands).not.toContain("list");
+  });
+
+  test("skills commands define flags, payloads, and exit codes", async () => {
+    await writeSettings(validSettings());
+
+    const schema = buildSchema();
+    const list = schema.commands["skills list"];
+    const install = schema.commands["skills install"];
+
+    expect(list).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": "path (default: ~/.agents/skills)",
+      },
+      out: {
+        target: "absolute path str",
+        skills: "[{name:str,status:missing|up-to-date|modified}]",
+      },
+      exit: {
+        "0": "success",
+        "1": "error",
+      },
+    });
+    expect(install).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": "path (default: ~/.agents/skills)",
+        "--dry-run": "plan without writing staging or target files",
+        "--force":
+          "replace every existing bundled target, including hash matches",
+      },
+      out: {
+        target: "absolute path str",
+        dryRun: "bool",
+        force: "bool",
+        ok: "bool",
+        skills:
+          "[{name:str,status:missing|up-to-date|modified,action:would-install|would-replace|installed|replaced|unchanged|blocked|failed,error?:str}]",
+      },
+      exit: {
+        "0": "success",
+        "2": "blocked (modified targets without --force) or failed (partial copy error)",
+        "1": "error",
+      },
+    });
   });
 
   test("check command schema defines expected output fields", async () => {
