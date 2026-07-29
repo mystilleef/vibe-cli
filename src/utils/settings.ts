@@ -1,17 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { getDataRoot } from "./db-core.js";
-
-/** Walk up from `startDir` to the nearest ancestor containing `package.json`. */
-function findPackageRoot(startDir: string): string {
-  let dir = startDir;
-  while (!existsSync(join(dir, "package.json"))) {
-    const parent = dirname(dir);
-    if (parent === dir) return startDir;
-    dir = parent;
-  }
-  return dir;
-}
+import { findPackageRoot } from "./packageRoot.js";
 
 const SETTINGS_EXAMPLE_PATH = join(
   findPackageRoot(import.meta.dir),

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  isThinkingActive,
   loadProviderSettings,
+  mapThinkingLevel,
+  normalizeBaseUrl,
   resolveProviderEntry,
   SETTINGS_FILE_MISSING_ERROR,
   SUPPORTED_PROVIDER_SPECS,
@@ -1016,6 +1019,82 @@ describe("loadProviderSettings", () => {
     await writeSettings(withoutLearning);
 
     expect(loadProviderSettings().useLearningHistory).toBeUndefined();
+  });
+});
+
+describe("normalizeBaseUrl", () => {
+  test("strips single trailing slash", () => {
+    expect(normalizeBaseUrl("https://api.example.com/v1/")).toBe(
+      "https://api.example.com/v1",
+    );
+  });
+
+  test("strips multiple trailing slashes", () => {
+    expect(normalizeBaseUrl("https://api.example.com/v1///")).toBe(
+      "https://api.example.com/v1",
+    );
+  });
+
+  test("preserves URL without trailing slash", () => {
+    expect(normalizeBaseUrl("https://api.example.com/v1")).toBe(
+      "https://api.example.com/v1",
+    );
+  });
+
+  test("handles root path with trailing slash", () => {
+    expect(normalizeBaseUrl("https://api.example.com/")).toBe(
+      "https://api.example.com",
+    );
+  });
+
+  test("preserves empty string", () => {
+    expect(normalizeBaseUrl("")).toBe("");
+  });
+});
+
+describe("isThinkingActive", () => {
+  test("returns false for undefined", () => {
+    expect(isThinkingActive(undefined)).toBe(false);
+  });
+
+  test("returns false for off", () => {
+    expect(isThinkingActive("off")).toBe(false);
+  });
+
+  test("returns true for low", () => {
+    expect(isThinkingActive("low")).toBe(true);
+  });
+
+  test("returns true for xhigh", () => {
+    expect(isThinkingActive("xhigh")).toBe(true);
+  });
+
+  test("type guard narrows correctly", () => {
+    const level = "medium" as const;
+    if (isThinkingActive(level)) {
+      const mapped: "low" | "medium" | "high" = mapThinkingLevel(level);
+      expect(mapped).toBe("medium");
+    } else {
+      expect.unreachable("level should be active");
+    }
+  });
+});
+
+describe("mapThinkingLevel", () => {
+  test("maps xhigh to high", () => {
+    expect(mapThinkingLevel("xhigh")).toBe("high");
+  });
+
+  test("passes through low unchanged", () => {
+    expect(mapThinkingLevel("low")).toBe("low");
+  });
+
+  test("passes through medium unchanged", () => {
+    expect(mapThinkingLevel("medium")).toBe("medium");
+  });
+
+  test("passes through high unchanged", () => {
+    expect(mapThinkingLevel("high")).toBe("high");
   });
 });
 
