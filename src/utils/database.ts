@@ -6,6 +6,7 @@ import {
   getLegacyArtifactPath,
   importAllLegacyData,
 } from "./legacyImporter.js";
+import { retryOnTransientSqliteError } from "./sqliteRetry.js";
 
 export const DATABASE_FILENAME = "vibe.db";
 
@@ -175,17 +176,33 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
     "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
   );
 
-  db.transaction(() => {
-    for (const migration of MIGRATIONS) {
-      const applied = db
+  for (const migration of MIGRATIONS) {
+    // Read the latest committed state outside any transaction so we see
+    // migrations applied by concurrent processes.
+    const alreadyApplied = db
+      .query("SELECT 1 FROM schema_migrations WHERE id = ? LIMIT 1")
+      .get(migration.id);
+    if (alreadyApplied) continue;
+
+    try {
+      // Apply the migration in its own transaction for atomicity.
+      db.transaction(() => {
+        db.exec(migration.sql);
+        insertMigration.run(migration.id, appliedAt);
+      })();
+      pending.push(migration.id);
+    } catch (err) {
+      // A concurrent process may have applied this migration between our
+      // schema_migrations check and the DDL execution. Re-check the
+      // committed state; if the migration now exists, treat it as already
+      // applied by the concurrent winner.
+      const nowApplied = db
         .query("SELECT 1 FROM schema_migrations WHERE id = ? LIMIT 1")
         .get(migration.id);
-      if (applied) continue;
-      db.exec(migration.sql);
-      insertMigration.run(migration.id, appliedAt);
-      pending.push(migration.id);
+      if (nowApplied) continue;
+      throw err;
     }
-  })();
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS legacy_imports (
@@ -219,33 +236,44 @@ function openDatabase(
     };
   }
 
-  const db = new Database(databasePath, { create: true });
-  db.exec("PRAGMA busy_timeout = 5000");
-  db.exec("PRAGMA foreign_keys = ON");
-  if (databasePath !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
-  const ranAt = new Date().toISOString();
-  const pending = initializeSchema(db, ranAt);
-  const legacyImports = options.legacyImports ?? "all";
-  if (options.path === undefined && legacyImports === "all")
-    importAllLegacyData(db);
+  return retryOnTransientSqliteError(() =>
+    openDatabaseOnce(databasePath, options, captureReport),
+  );
+}
 
-  const handle: VibeDatabase = {
-    db,
-    path: databasePath,
-    close: () => {
-      db.close();
-      cachedHandles.delete(databasePath);
-    },
-  };
-  if (databasePath !== ":memory:") cachedHandles.set(databasePath, handle);
-  return {
-    database: handle,
-    report: createMigrationReport(
+function openDatabaseOnce(
+  databasePath: string,
+  options: VibeDatabaseOptions,
+  captureReport: boolean,
+): VibeDatabaseMigrationResult {
+  const db = new Database(databasePath, { create: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("PRAGMA foreign_keys = ON");
+    if (databasePath !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
+    const ranAt = new Date().toISOString();
+    const pending = initializeSchema(db, ranAt);
+    const legacyImports = options.legacyImports ?? "all";
+    if (options.path === undefined && legacyImports === "all")
+      importAllLegacyData(db);
+
+    const handle: VibeDatabase = {
       db,
-      captureReport ? pending : [],
-      captureReport ? ranAt : new Date().toISOString(),
-    ),
-  };
+      path: databasePath,
+      close: () => {
+        db.close();
+        cachedHandles.delete(databasePath);
+      },
+    };
+    if (databasePath !== ":memory:") cachedHandles.set(databasePath, handle);
+    return {
+      database: handle,
+      report: createMigrationReport(db, captureReport ? pending : [], ranAt),
+    };
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function createMigrationReport(

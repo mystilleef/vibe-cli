@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { withDatabase } from "./database.js";
+import { retryOnTransientSqliteError } from "./sqliteRetry.js";
 
 /** Duration in milliseconds before an unaccessed session expires (4 hours). */
 export const AUTOSESSION_TTL_MS = 4 * 60 * 60 * 1000;
@@ -72,36 +73,40 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
   const cwdKey = getCwdKey(cwd);
   const now = new Date();
 
-  return withDatabase((db) => {
-    const existing = db
-      .query<SessionRow, [string]>(
-        "SELECT id, cwd, created_at, last_accessed_at FROM sessions WHERE cwd_key = ? LIMIT 1",
-      )
-      .get(cwdKey);
+  return retryOnTransientSqliteError(() =>
+    withDatabase((db) => {
+      return db.transaction(() => {
+        const existing = db
+          .query<SessionRow, [string]>(
+            "SELECT id, cwd, created_at, last_accessed_at FROM sessions WHERE cwd_key = ? LIMIT 1",
+          )
+          .get(cwdKey);
 
-    if (existing) {
-      const record = toRecord(existing);
-      if (!isExpired(record, now.getTime())) {
-        const touched = { ...record, lastAccessedAt: now.toISOString() };
+        if (existing) {
+          const record = toRecord(existing);
+          if (!isExpired(record, now.getTime())) {
+            const touched = { ...record, lastAccessedAt: now.toISOString() };
+            db.prepare(
+              "UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?",
+            ).run(touched.lastAccessedAt, cwdKey);
+            return touched;
+          }
+
+          db.prepare("DELETE FROM sessions WHERE cwd_key = ?").run(cwdKey);
+        }
+
+        const record = createRecord(now, cwd);
         db.prepare(
-          "UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?",
-        ).run(touched.lastAccessedAt, cwdKey);
-        return touched;
-      }
-
-      db.prepare("DELETE FROM sessions WHERE cwd_key = ?").run(cwdKey);
-    }
-
-    const record = createRecord(now, cwd);
-    db.prepare(
-      "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(
-      record.id,
-      cwdKey,
-      record.cwd,
-      record.createdAt,
-      record.lastAccessedAt,
-    );
-    return record;
-  });
+          "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
+        ).run(
+          record.id,
+          cwdKey,
+          record.cwd,
+          record.createdAt,
+          record.lastAccessedAt,
+        );
+        return record;
+      })();
+    }),
+  );
 }

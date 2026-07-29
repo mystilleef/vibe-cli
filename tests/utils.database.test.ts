@@ -300,6 +300,41 @@ describe("getVibeDatabase", () => {
       .get() as { count: number };
     expect(count.count).toBe(0);
   });
+
+  test("path change survives close error on orphaned handle", async () => {
+    const home1 = await useTempHome();
+    const first = getVibeDatabase();
+    const firstPath = first.path;
+
+    // Force close to throw, simulating an orphaned-path close failure.
+    const originalClose = first.db.close.bind(first.db);
+    first.db.close = () => {
+      throw new Error("injected close failure");
+    };
+
+    // Switch data root — the singleton must close the old handle,
+    // catch the injected error, and open a new database.
+    await home1.cleanup();
+    homes.splice(homes.indexOf(home1), 1);
+    const home2 = await useTempHome();
+
+    // Must not throw despite the injected close failure.
+    const second = getVibeDatabase();
+
+    expect(second.path).not.toBe(firstPath);
+    expect(second.path).toBe(join(home2.dataRoot, DATABASE_FILENAME));
+
+    // New handle must be operational.
+    const tables = second.db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'",
+      )
+      .get() as { name: string } | null;
+    expect(tables).toEqual({ name: "sessions" });
+
+    // Restore close so afterEach cleanup works.
+    first.db.close = originalClose;
+  });
 });
 
 describe("openVibeDatabase", () => {
