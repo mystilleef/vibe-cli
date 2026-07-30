@@ -1,130 +1,144 @@
 # ORIENT
 
-## Scope
+## Scope and evidence
 
-- Agent-facing architecture guide for repository changes.
-- Complements AGENTS.md; policy and process rules stay there.
-- Evidence: DESIGN.md, README storage/layout notes, source import graph,
-  selected tests.
+- Agent architecture guide complementing `AGENTS.md`.
+- Evidence: `DESIGN.md`, `README.md`, import graph, plus gate, storage,
+  installer, prune, migration, and package tests.
+- `ADR` corpus absent.
+- **Inferred** labels mark conclusions derived from topology rather than
+  design prose.
 
-## Architectural stance
+## System shape
 
-- Layered CLI with a thin edge:
-  - `src/cli.ts` parses user input, normalizes params, emits JSON/text,
-    then delegates.
-  - `src/tools/*` owns use-case orchestration: gate review, learning
-    capture, constitution rules, demo, pruning.
-  - `src/utils/*` owns persistence, provider calls, settings validation,
-    list readers/`formatters`, and low-level primitives.
-- Local-first `metacognitive` system:
-  - `LLM` calls review plans, decide go/no-go, and revise blocked plans.
-  - SQLite memory feeds future reviews via check history, learning
-    summaries, and active constitution rules.
-- Source graph primarily flows `CLI -> tools -> utils`; list-data and
-  prune paths add utility `sublayers` for readers, formatting, parsing,
-  and candidate deletion.
+- Local-first _metacognitive_ `CLI`:
+  - `src/cli.ts`: parses input, normalizes parameters, shapes
+    `JSON`/text output, delegates.
+  - `src/tools/*`: coordinates gate review, learning capture,
+    constitution rules, demo, pruning, bundled-skill installation.
+  - `src/utils/*`: supplies persistence, sessions, prompt/provider
+    mechanics, schemas, list projections, package traversal, primitives.
+- Dominant direction: `CLI` -> `tools` -> `utils`.
+  - Query bridge: `llm.ts` reads constitution rules across tool
+    boundary.
+  - Utility _sublayers_: list and prune add readers, `DTO`s,
+    _formatters_, parsers, candidate collectors, deletion handlers.
+- `SQLite` memory carries review history, lessons, constitution rules,
+  sessions, migration state, legacy import bookkeeping.
 
 ## Core flows
 
-- Gate review:
-  - CLI/helper layer builds `VibeCheckInput`.
-  - `vibeGateLoop` calls `vibeGateTool` per attempt.
-  - `vibeCheckTool` resolves `autosession`, fetches history, requests
-    mentor feedback, then records feedback.
-  - `getGateDecision` converts feedback into go/no-go JSON; blocked
-    attempts call `revisePlan` before the next review.
-- Learning capture:
-  - Validation requires observation/category plus solution for
-    mistake/success entries.
-  - Normalizers collapse observation/solution to one sentence and
-    `canonicalize` category aliases.
-  - Overlap scoring suppresses duplicates before storage; output returns
-    category counts and recent examples.
-- Constitution rules:
-  - `Autosession` resolution supplies the session id.
-  - Database rows store ordered, capped rules; reset/update replace the
-    whole session rule set.
-- Prune/list data:
-  - Readers collect database/settings state; `formatters` and `DTO`
-    transforms shape output.
-  - Candidate collection, count computation, representative samples,
-    backup-backed deletion, and target ordering converge in prune
-    storage helpers.
+### Gate review
 
-## State model
+- `CLI` helpers build `VibeCheckInput`; `vibeGateLoop` owns execution
+  attempts.
+- Each attempt routes through `vibeCheckTool`:
+  - `Autosession` resolution selects history and constitution scope.
+  - `llm.ts` combines goal, plan, uncertainty, progress, task context,
+    constitution, prior feedback, optional learning context.
+  - Provider feedback enters persistent interaction history.
+- Decision parsing processes mentor feedback; blocked attempts invoke
+  `revisePlan` before retry.
+- Final output carries reviewed plan, verdict, attempt count, exhaustion
+  marker.
+- Provider failure returns fallback feedback and retains closed approval
+  state.
 
-- `sessions`: workdir-hash `autosession` records; resolver refreshes
-  activity and rotates expired records.
-- `interactions`: feedback history per `autosession`; state utilities
-  keep recent rows.
-- `learning_entries`: local mistake/preference/success memories; demo
-  rows carry cleanup markers.
-- `constitution_rules`: ordered rules per `autosession`;
-  replace-on-write preserves cap and order.
-- `schema_migrations` plus `legacy_imports`: migration ledger and legacy
-  JSON import bookkeeping.
-- Database access funnels through `withDatabase`/`getVibeDatabase`;
-  default access uses a process singleton, explicit options open scoped
-  handles.
+### Memory and lifecycle
+
+- `AutosessionRecord` binds working-directory identity to interaction
+  and rule ownership; resolver refreshes active and rotates expired
+  records.
+- Database startup applies independently committed migrations, rechecks
+  concurrent winners, retries transient `SQLite` contention.
+- Legacy `JSON` import runs alongside bootstrap; import markers and
+  backups prevent duplicate migration work.
+- Learning capture normalizes category aliases and prose, scores
+  overlap, suppresses duplicates, then feeds listing, pruning, optional
+  mentor context.
+- Constitution updates replace ordered session rules; cap handling stays
+  inside constitution tool.
+- Separate list readers, `DTO` transforms, _formatters_ maintain stable
+  `JSON` and text surfaces.
+
+### Prune
+
+- Candidate collectors supply count estimates and representative samples
+  before destructive actions.
+- Backup creation precedes deletion; target ordering and per-target
+  failure details preserve partial-outcome visibility.
+- Learning, duplicate, demo, stale-session cleanup share
+  `PruneCandidateSets` selection logic.
+
+### Bundled skills
+
+- Bundled skills travel as recursively hashed trees rooted at `SKILL.md`
+  files.
+- Discovery and target reads reject symlinks and unsafe tree shapes;
+  inventory classifies missing, matching, modified targets.
+- Modified targets block installation without explicit replacement
+  authorization; authorized replacement clears target-only files.
+- Installer preflight validates target parent directory even for
+  planning paths; per-skill plain copies surface partial failures
+  without staging or rollback.
+- Package tests exercise packed artifacts, source discovery, inventory,
+  `CLI` contracts, installation behavior together.
 
 ## Provider architecture
 
-- Settings resolution chooses provider entry and model; overrides travel
-  through `DTOs`, not global mutation.
-- Spec dispatch stays central in `provider.ts`:
-  - OpenAI-compatible path uses SDK chat completions.
-  - Anthropic path uses raw fetch plus header builder.
-  - Gemini default path uses SDK; Gemini custom `baseUrl` path uses raw
-    fetch to avoid SDK `hardcoded` version path.
-- Prompt assembly stays in `llm.ts`; provider implementations receive
-  system prompt plus user content only.
-- `llm.ts` composes constitution, interaction history, and optional
-  learning history before provider dispatch.
+- Settings resolution selects provider and model; one-call overrides
+  pass through `DTO`s without global mutation.
+- `provider.ts` centralizes spec dispatch:
+  - `OpenAI`-compatible providers: `SDK` chat completions.
+  - `Anthropic`: raw fetch with dedicated headers and configuration.
+  - `Gemini`: `SDK` for standard endpoints, raw fetch for custom
+    `baseUrl` paths.
+- Preserve `Gemini` custom-endpoint path; proxy compatibility depends on
+  direct `/models/{model}:generateContent` routing.
+- `llm.ts` owns prompt assembly, feedback fallback, plan revision,
+  gate-decision prompting, connectivity probes.
+- Provider implementations receive prompts and credentials only; gate
+  semantics, history, rules, learning context remain above that
+  boundary.
 
-## Central abstractions
+## Central contracts
 
-- **`VibeCheckInput`**: Common payload through CLI helpers, gate loop,
-  mentor feedback, and state history.
-- **`VibeGateOutput`**: Gate verdict contract across CLI, skills, and
-  tests.
-- **`LearningEntry`**: Shared memory shape across storage, list, prune,
-  and duplicate logic.
-- **`ProviderSettingsEntry`**: Provider dispatch contract across
-  settings, provider, schema, and list surfaces.
-- **`AutosessionRecord`**: Session identity bridge for constitution,
-  history, demos, and list readers.
-- **`PruneCandidateSets`**: Shared dry-run/destructive prune planning
-  payload.
+- `VibeCheckInput` / `VibeGateOutput`: review payload and verdict across
+  `CLI`, gate loop, state, skills, tests.
+- `AutosessionRecord`: session identity bridge for review history,
+  constitution, demos, list readers.
+- `LearningEntry`: memory shape across validation, storage, list
+  projections, duplicate scoring, prune.
+- `ProviderSettingsEntry`: settings-to-dispatch contract.
+- `PruneCandidateSets`: dry-run and destructive prune planning payload.
+- `SkillsInventory`: source/target hash comparison contract for list and
+  installation paths.
 
 ## Boundaries and traps
 
-- Keep edge-layer changes in CLI/helpers; don't move prompt, storage, or
-  provider logic upward.
-- Keep tool modules orchestration-only; direct SQL belongs in
-  storage/database/prune/state/constitution utilities.
-- Route all `LLM` text through `llm.ts`; provider layer must not inspect
-  gate semantics, constitution, learning history, or attempts.
-- Route all persistent writes through database utilities; bypassing them
-  skips migrations, legacy import, session caps, backup logic, or
-  singleton handle control.
-- Preserve gate ordering: mentor feedback -> go/no-go JSON -> revision
-  only after block -> final reviewed plan.
-- Preserve `autosession` ownership inside resolver; public surfaces
-  avoid caller-supplied session ids.
-- Keep list readers, `DTO` transforms, and pretty `formatters`
-  separated; tests rely on deterministic seams.
-- Keep Gemini custom-endpoint branch; deleting it breaks proxy
-  compatibility documented in DESIGN.
-- Before destructive prune paths, reuse candidate collectors and backup
-  helper; never delete rows from CLI/tool code.
+- Maintain `CLI` code at edge; locate orchestration in tools,
+  persistence/provider mechanics in utilities.
+- Route `LLM` text through `llm.ts`; keep provider adapters isolated
+  from review attempts, rules, history, learning semantics.
+- Route persistence through database utilities; direct access bypasses
+  migration, import, retry, backup, handle-lifecycle safeguards.
+- Maintain review sequence: feedback -> verdict -> revision after block
+  -> retry review.
+- Restrict _autosession_ ownership to resolver; public interfaces avoid
+  caller-controlled session identifiers.
+- Separate list readers, `DTO` transforms, _formatters_.
+- Reuse candidate collectors and backup helpers before row deletion.
+- Keep recursive hash and symlink validation during skill discovery and
+  target inspection.
+- Maintain whole-batch modified-target blocking and per-skill failure
+  reporting for deterministic outcomes.
 
 ## Evidence and uncertainty
 
-- No `ADR` directory found; DESIGN supplies provider exceptions, README
-  supplies storage/layout intent, tests encode public boundary
-  expectations.
-- Inferred: layered pattern and CLI -> tools -> utils boundary from
-  import graph.
-- Confirmed: provider customization, `autosession`-scoped memory,
-  gate/revision loop, migration-backed SQLite storage, backup-backed
-  prune path.
+- Confirmed: migration-backed `SQLite` memory, _autosession_-scoped
+  review context, gate/revision loop, central provider dispatch, proxy
+  `Gemini` routing, backup-first prune, packaged skill lifecycle.
+- Inferred: layered `CLI` -> `tools` -> `utils` direction and utility
+  _sublayer_ boundaries from imports and test seams.
+- `DESIGN.md` anchors provider exceptions; integration tests anchor
+  installation and migration guarantees.
