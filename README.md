@@ -1,223 +1,177 @@
 # vibe-cli
 
-**Metacognitive** oversight CLI for AI agents. Reviews plans, records
-lessons, stores constitution rules, lists local memory, prunes stale
-data, and verifies provider connectivity through JSON-first commands.
+`Metacognitive` oversight infrastructure for `AI` agents. Equips `LLM`
+coding harnesses with skills to consult mentor models, store persistent
+memory, enforce constitutional rules, and manage local data.
 
 ## Requirements
 
-- Bun >=1.0.0. The CLI uses `bun:sqlite` and cannot run under Node.js.
-- Provider API key matching the selected `settings.json` entry.
+- `Bun` >=1.0.0. The binary uses `bun:sqlite` and requires `Bun`.
+- Provider `API` key matching the selected `settings.json` entry.
 
-## Install
+## Quick start
+
+### Step 1: Install binary
+
+```sh
+bun install -g @mystilleef/vibe-cli
+```
+
+Local checkout alternative:
 
 ```sh
 bun install --frozen-lockfile
 bun run build
 ```
 
-- Local checkout:
+### Step 2: Configure mentor provider
 
-```sh
-bun run src/cli.ts --help
-```
-
-- Built bundle:
-
-```sh
-./dist/vibe.js --help
-```
-
-- Global install:
-
-```sh
-bun install -g @mystilleef/vibe-cli
-vibe --help
-```
-
-## Configuration
-
-Copy the example settings file into the data root:
+Copy example settings into the data root:
 
 ```sh
 mkdir -p ~/.vibe-cli
 cp settings.example.json ~/.vibe-cli/settings.json
 ```
 
-Then edit `~/.vibe-cli/settings.json`:
+Edit `~/.vibe-cli/settings.json` to define the mentor provider, model,
+and credentials:
 
-- `provider`: active provider entry name.
+- `provider`: active mentor provider entry name.
 - `maxAttempts`: refinement limit for `vibe check`.
 - `providers[].spec`: `gemini`, `openai`, or `anthropic`.
-- `providers[].envVar`: environment variable for the provider key.
-- `providers[].defaultModel`: model fallback when `--model` stays
-  omitted.
+- `providers[].envVar`: environment variable for provider key.
+- `providers[].defaultModel`: model fallback.
 - `providers[].thinking`: `off`, `low`, `medium`, `high`, or `xhigh`.
 
-Provider environment examples from `settings.example.json`:
+Export matching `API` key (for example, `GEMINI_API_KEY`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
 
-- `GEMINI_API_KEY`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`
-- `OPENROUTER_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `MIMO_API_KEY`
-- `HF_TOKEN`
-- `OPENCODE_API_KEY`
-- `DASHSCOPE_API_KEY`
+### Step 3: Install harness skills
 
-## Usage
-
-Examples use the package bin name `vibe`. Substitute
-`bun run src/cli.ts` in a checkout.
-
-### Inspect command surface
+Install bundled skills into your preferred `LLM` coding harness:
 
 ```sh
-vibe schema
-vibe --help
+# Antigravity CLI
+vibe skills install --target ~/.gemini/config/skills
+
+# Claude Code
+vibe skills install --target ~/.claude/skills
+
+# Universal Agent Path (Default)
+vibe skills install
 ```
 
-### Check a plan
+### Step 4: Load agent policy
 
-```sh
-vibe check \
-  --goal "Update README" \
-  --plan "Inspect evidence, update docs, run verification" \
-  --uncertainty "No release focus supplied"
-```
+Provide
+[vibe-guide.md](file:///home/lateef/Projects/vibe-cli/docs/vibe-guide.md)
+rules to coding agents via workspace context files (`AGENTS.md`,
+`CLAUDE.md`, or system prompts) so agents know when and how to trigger
+`vibe` skills.
 
-- Returns JSON with `proceed`, `confidence`, `reason`, `feedback`,
-  `plan`, and `attempts`.
-- Non-proceeding result exits with code `2`.
-- `--provider` and `--model` override settings for one call.
+## Harness skill workflows
 
-### Record a lesson
+Developers instruct coding agents via natural language or slash
+commands. The agent consults its policy, executes the underlying `vibe`
+binary, processes mentor feedback, and reports back.
 
-```sh
-vibe learn \
-  --type success \
-  --category "Documentation" \
-  --observation "Project evidence guided the README." \
-  --solution "Inspect source and configuration before drafting."
-```
+### `vibe-check`
 
-- `mistake` and `success` entries require `--solution`.
-- `preference` entries can omit `--solution`.
-- Storage suppresses similar observations.
+Prompts mentor review before executing high-risk, ambiguous, or
+multi-step tasks.
 
-### Manage rules
+- **Natural Language**: _"Draft a proposal for schema migration, vibe
+  check it, then show for review."_
+- **Slash Command**: `/vibe-check`
+- **Execution Loop**:
+  1. Developer requests action.
+  2. Agent matches criteria in `vibe-guide.md`.
+  3. Agent executes `vibe check` `CLI` binary under the hood.
+  4. Agent processes mentor feedback (`proceed: true/false`,
+     recommendations).
+  5. Agent presents approved plan or adjusts strategy.
 
-```sh
-vibe constitution set --rule "Ask before destructive changes."
-vibe constitution get
-vibe constitution reset --rule "Keep responses concise."
-```
+### `vibe-learn`
 
-- Rules attach to the current `autosession`.
-- Storage keeps up to 50 rules per `autosession`.
+Persists lessons into local memory after concrete outcomes.
 
-### Query local data
+- **Natural Language**: _"Record a vibe lesson about this failed
+  database connection attempt."_
+- **Slash Command**: `/vibe-learn`
+- **Categories**: `mistake`, `success`, `preference`.
 
-```sh
-vibe list
-vibe list providers
-vibe list learnings --type mistake --limit 5 --json
-vibe list all --json
-```
+### `vibe-constitution`
 
-`Subcommands`:
+Enforces persistent behavioral rules across sessions.
 
-- `learnings`
-- `constitution`
-- `sessions`
-- `providers`
-- `checks`
-- `categories`
-- `stats`
-- `all`
-
-### Prune local data
-
-```sh
-vibe prune --learnings --dry-run
-vibe prune --duplicates --yes
-```
-
-- Without `--yes`, prune reports candidates only.
-- Destructive prune writes a backup path in the result.
-- Filters: `--age`, `--category`, `--overlap`.
-
-### Install bundled skills
-
-Opt-in only. No install, upgrade, build, or unrelated command copies
-skills.
-
-```sh
-vibe skills list
-vibe skills list --target ~/.claude/skills
-vibe skills install --dry-run
-vibe skills install --target ~/.agents/skills
-vibe skills install --force
-```
-
-- Default target: `~/.agents/skills`.
-- `--target` accepts absolute, relative, or `~`-prefixed paths.
-- `skills list` is read-only; it never creates the target.
-- Success, blocked, and failed responses emit one JSON line on stdout
-  only.
-- Operational and option errors emit one stderr JSON error
-  (`{"error":"..."}`), empty stdout, and exit `1`.
-
-`skills list` payload:
-
-- `target`: absolute path
-- `skills[]`: `{ name, status }` in lexical name order
-- `status`: `missing` | `up-to-date` | `modified`
-- Exit `0` on success
-
-`skills install` payload:
-
-- `target`, `dryRun`, `force`, `ok`
-- `skills[]`: `{ name, status, action, error? }` in lexical name order
-- `action`: `would-install` | `would-replace` | `installed` |
-  `replaced` | `unchanged` | `blocked` | `failed`
-- `error`: present only when `action` is `failed`, holds the copy
-  failure message
-- Exit `0` when `ok` is true
-- Exit `2` when `ok` is false: any modified target lacks `--force`
-  (blocked, no writes), or a copy failed partway (failed)
-- `--dry-run` plans without staging or target writes
-- `--force` replaces every existing bundled target, including hash
-  matches
-
-### Other commands
-
-```sh
-vibe session
-vibe migrate
-vibe verify --provider gemini --model gemini-3.5-flash
-vibe demo
-```
-
-- `session`: active `autosession` ID for the working directory.
-- `migrate`: database migration state.
-- `verify`: live provider connectivity probe.
-- `demo`: live `walkthrough`.
+- **Natural Language**: _"Add a standing rule to vibe constitution
+  requiring test execution before commits."_
+- **Slash Command**: `/vibe-constitution`
 
 ## Storage
 
 - Data root: `~/.vibe-cli`.
 - Settings file: `~/.vibe-cli/settings.json`.
-- SQLite file: `~/.vibe-cli/vibe.db`.
-- `Autosessions` map working directories to 4-hour local sessions.
-- Tables store interactions, learning entries, constitution rules,
-  migrations, and legacy import markers.
+- `SQLite` database: `~/.vibe-cli/vibe.db`.
+- `Autosessions`: map working directories to 4-hour local session
+  scopes.
+- Tables store review history, learning entries, constitution rules,
+  migrations, and import markers.
+
+## Agent protocol reference (`CLI` commands)
+
+Coding agents execute these `CLI` commands behind the scenes. Developers
+can also run them manually for administrative tasks.
+
+### Check plan
+
+```sh
+vibe check \
+  --goal "Update schema" \
+  --plan "Run migration script, update ORM, run tests" \
+  --uncertainty "No backup verified"
+```
+
+- Returns `JSON` with `proceed`, `confidence`, `reason`, `feedback`,
+  `plan`, and `attempts`.
+- Exit code `2` indicates non-proceeding verdict.
+
+### Record lesson
+
+```sh
+vibe learn \
+  --type mistake \
+  --category "Database" \
+  --observation "Connection timeout during heavy load." \
+  --solution "Increase retry backoff threshold."
+```
+
+### Manage constitution rules
+
+```sh
+vibe constitution set --rule "Run test suite before commits."
+vibe constitution get
+vibe constitution reset --rule "Keep output concise."
+```
+
+### Manage skills
+
+```sh
+vibe skills list --target ~/.gemini/config/skills
+vibe skills install --target ~/.claude/skills
+vibe skills install --force
+```
+
+### Query and maintenance
+
+```sh
+vibe list all --json
+vibe prune --duplicates --yes
+vibe session
+vibe verify --provider gemini --model gemini-3.5-flash
+```
 
 ## Development
-
-CI runs on Node.js 22 alongside Bun; this is a CI-only detail and not a
-runtime requirement for the CLI.
 
 ```sh
 bun check
@@ -226,28 +180,18 @@ bun run build
 bun verify
 ```
 
-- `bun check`: Biome check/write plus TypeScript `--noEmit`.
-- `bun coverage`: Bun test suite with coverage settings from
-  `bunfig.toml`.
-- `bun verify`: Biome migration, check, build, coverage chain.
-
-Make targets:
-
-```sh
-make check
-make coverage
-make verify
-```
+- `bun check`: `Biome` check/write plus `TypeScript` `--noEmit`.
+- `bun coverage`: `Bun` test suite with coverage settings.
+- `bun verify`: complete verification pipeline.
 
 ## Project layout
 
-- `src/cli.ts`: Commander command registration.
+- `src/cli.ts`: `Commander` command registration edge.
 - `src/tools/`: plan gate, learning, constitution, demo, prune
   orchestration.
-- `src/utils/`: settings, provider dispatch, storage, schema, list
-  readers, `formatters`.
-- `skills/`: agent skills for `vibe-check`, `vibe-learn`,
-  `vibe-constitution`. Published under the package `skills/` path.
-  Install with `vibe skills install` (opt-in; default
-  `~/.agents/skills`).
-- `tests/`: Bun test suite.
+- `src/utils/`: settings resolution, provider dispatch, `SQLite`
+  persistence, schema projections.
+- `skills/`: bundled agent skills (`vibe-check`, `vibe-learn`,
+  `vibe-constitution`).
+- `docs/vibe-guide.md`: operational policy for harness agent context.
+- `tests/`: `Bun` test suite.
