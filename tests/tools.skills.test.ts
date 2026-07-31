@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
 import {
   chmod,
   mkdir,
@@ -8,7 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   InstallError,
   type InstallResult,
@@ -78,6 +79,30 @@ async function chmodRecursiveWritable(dir: string): Promise<void> {
 
 function actionMap(result: InstallResult): Record<string, string> {
   return Object.fromEntries(result.skills.map((s) => [s.name, s.action]));
+}
+
+/**
+ * Deterministically deny `access(W_OK)` for exactly `targetRoot` by mocking
+ * `node:fs/promises`, so denial holds even under UID 0 where chmod-based
+ * permission checks are bypassed. Every other path falls through to the real
+ * `access`, keeping target-parent preflight intact.
+ */
+function denyAccessToRoot(targetRoot: string): { restore: () => void } {
+  const realAccess = fsPromises.access;
+  const spy = spyOn(fsPromises, "access").mockImplementation(
+    (path: string | URL | Buffer, mode?: number) => {
+      if (resolve(String(path)) === resolve(targetRoot)) {
+        return Promise.reject(
+          Object.assign(
+            new Error(`EACCES: permission denied, access '${targetRoot}'`),
+            { code: "EACCES" },
+          ),
+        );
+      }
+      return realAccess(path, mode);
+    },
+  );
+  return { restore: () => spy.mockRestore() };
 }
 
 describe("installSkills - planning and mixed inventory", () => {
@@ -461,7 +486,7 @@ describe("installSkills - validation failures", () => {
         force: false,
         packageRoot,
       }),
-    ).rejects.toThrow(InstallError);
+    ).rejects.toThrow(InstallValidationError);
     await expect(
       installSkills(targetRoot, {
         dryRun: false,
@@ -504,7 +529,7 @@ describe("installSkills - validation failures", () => {
     }
   });
 
-  test("surfaces permission-denied copy as a per-skill failure", async () => {
+  test("rejects non-writable target root as InstallValidationError", async () => {
     if (process.getuid?.() === 0) {
       return;
     }
@@ -516,17 +541,20 @@ describe("installSkills - validation failures", () => {
     await chmod(targetRoot, 0o555);
 
     try {
-      const result = await installSkills(targetRoot, {
-        dryRun: false,
-        force: false,
-        packageRoot,
-      });
-
-      expect(result.ok).toBe(false);
-      for (const skill of result.skills) {
-        expect(skill.action).toBe("failed");
-        expect(skill.error).toMatch(/EACCES/);
-      }
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/No write access to target root/);
     } finally {
       await chmod(targetRoot, 0o755);
     }
@@ -817,7 +845,7 @@ describe("installSkills — validateTargetParent edge cases", () => {
     }
   });
 
-  test("surfaces cp failure as per-skill failure result", async () => {
+  test("rejects non-writable existing target root as InstallValidationError", async () => {
     const packageRoot = await createPackageRoot(tempDirs, {
       "skill-a": { "SKILL.md": "# A" },
     });
@@ -827,16 +855,370 @@ describe("installSkills — validateTargetParent edge cases", () => {
     await chmod(targetRoot, 0o555);
 
     try {
-      // The root-guard on the existing test would skip this as root.
-      // Running this regardless — if running as root, chmod 0o555 doesn't
-      // prevent writes, so the operation would succeed. We skip the root
-      // case by checking after the result.
       if (process.getuid?.() === 0) {
-        // Restore permissions first
         await chmod(targetRoot, 0o755);
         return;
       }
 
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/No write access to target root/);
+    } finally {
+      await chmod(targetRoot, 0o755);
+    }
+  });
+});
+
+describe("installSkills - root preflight validation", () => {
+  test("rejects existing regular-file root in install path", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const base = await createTempDir(tempDirs);
+    const targetRoot = join(base, "not-a-dir");
+    await writeFile(targetRoot, "file content");
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallValidationError);
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(/not a directory/);
+  });
+
+  test("rejects existing regular-file root in dry-run path", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const base = await createTempDir(tempDirs);
+    const targetRoot = join(base, "not-a-dir");
+    await writeFile(targetRoot, "file content");
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: true,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallValidationError);
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: true,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(/not a directory/);
+  });
+
+  test("rejects non-writable existing directory root in install path", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const targetRoot = await createTempDir(tempDirs);
+    const deny = denyAccessToRoot(targetRoot);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/No write access to target root/);
+    } finally {
+      deny.restore();
+    }
+  });
+
+  test("rejects non-writable existing directory root in dry-run path", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const targetRoot = await createTempDir(tempDirs);
+    const deny = denyAccessToRoot(targetRoot);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/No write access to target root/);
+    } finally {
+      deny.restore();
+    }
+  });
+
+  test("absent roots beneath writable parents retain current behavior", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const base = await createTempDir(tempDirs);
+    const targetRoot = join(base, "new-skills");
+
+    const result = await installSkills(targetRoot, {
+      dryRun: false,
+      force: false,
+      packageRoot,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(actionMap(result)).toEqual({ "skill-a": "installed" });
+    expect(await dirExists(join(targetRoot, "skill-a"))).toBe(true);
+  });
+
+  test("no mutation on existing regular-file root rejection", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const base = await createTempDir(tempDirs);
+    const targetRoot = join(base, "not-a-dir");
+    await writeFile(targetRoot, "file content");
+    const before = await readDirTree(base);
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallValidationError);
+
+    expect(await readDirTree(base)).toEqual(before);
+  });
+
+  test("no mutation on non-writable directory root rejection", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const targetRoot = await createTempDir(tempDirs);
+    const before = await readDirTree(targetRoot);
+    const deny = denyAccessToRoot(targetRoot);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+
+      expect(await readDirTree(targetRoot)).toEqual(before);
+    } finally {
+      deny.restore();
+    }
+  });
+});
+
+describe("installSkills - computeInventory ENOTDIR conversion", () => {
+  test("converts SkillTargetError ENOTDIR to InstallValidationError", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    // Mock computeSkillsInventory to throw SkillTargetError with ENOTDIR.
+    const skillsModule = await import("../src/utils/skills.js");
+    const spy = spyOn(skillsModule, "computeSkillsInventory");
+    const { SkillTargetError } = skillsModule;
+    spy.mockImplementation(() => {
+      throw new SkillTargetError(
+        "ENOTDIR: not a directory, lstat '/some/path'",
+      );
+    });
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/is not a directory/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installSkills - validateTargetParent non-directory parent", () => {
+  test("rejects when parent exists but stat reports non-directory after lstatSync returns ENOENT", async () => {
+    const packageRoot = await createTempDir(tempDirs, "vibe-pkg-");
+    await writeFile(
+      join(packageRoot, "package.json"),
+      '{"name":"test-package"}',
+    );
+    await mkdir(join(packageRoot, "skills"));
+    const base = await createTempDir(tempDirs);
+    const parentDir = join(base, "actual-parent-dir");
+    await mkdir(parentDir);
+    const targetRoot = join(parentDir, "skills");
+
+    const fsPromises = await import("node:fs/promises");
+    const originalLstat = fsPromises.lstat;
+    const lstatSpy = spyOn(fsPromises, "lstat");
+    lstatSpy.mockImplementation(((
+      p: Parameters<typeof fsPromises.lstat>[0],
+    ) => {
+      if (typeof p === "string" && p === targetRoot) {
+        const err = new Error("ENOENT: no such file") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      }
+      return originalLstat(p);
+    }) as typeof fsPromises.lstat);
+
+    const originalStat = fsPromises.stat;
+    const statSpy = spyOn(fsPromises, "stat");
+    statSpy.mockImplementation(((p: Parameters<typeof fsPromises.stat>[0]) => {
+      if (typeof p === "string" && p === parentDir) {
+        return Promise.resolve({
+          isDirectory: () => false,
+          isFile: () => true,
+          isSymbolicLink: () => false,
+        } as unknown as Awaited<ReturnType<typeof fsPromises.stat>>);
+      }
+      return originalStat(p);
+    }) as typeof fsPromises.stat);
+
+    const nodeFs = await import("node:fs");
+    const originalLstatSync = nodeFs.lstatSync;
+    const lstatSyncSpy = spyOn(nodeFs, "lstatSync");
+    lstatSyncSpy.mockImplementation(((
+      p: Parameters<typeof nodeFs.lstatSync>[0],
+    ) => {
+      if (typeof p === "string" && p === targetRoot) {
+        const err = new Error("ENOENT: no such file") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      }
+      return originalLstatSync(p);
+    }) as typeof nodeFs.lstatSync);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/is not a directory/);
+    } finally {
+      lstatSpy.mockRestore();
+      statSpy.mockRestore();
+      lstatSyncSpy.mockRestore();
+    }
+  });
+});
+
+describe("installSkills - mkdir failure", () => {
+  test("throws InstallError when mkdir fails", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const fsPromises = await import("node:fs/promises");
+    const spy = spyOn(fsPromises, "mkdir");
+    spy.mockImplementation((() => {
+      throw new Error("EACCES: permission denied");
+    }) as typeof fsPromises.mkdir);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/Failed to create target/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installSkills - copy failure per-skill", () => {
+  test("marks skill as failed when cp throws", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+      "skill-b": { "SKILL.md": "# B" },
+    });
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const fsPromises = await import("node:fs/promises");
+    const originalCp = fsPromises.cp;
+    const spy = spyOn(fsPromises, "cp");
+    let callCount = 0;
+    spy.mockImplementation(((
+      src: string,
+      dest: string,
+      opts?: Parameters<typeof fsPromises.cp>[2],
+    ) => {
+      callCount++;
+      if (callCount === 1) {
+        // First call is skill-a — succeed
+        return originalCp(src, dest, opts);
+      }
+      // Second call is skill-b — fail
+      throw new Error("ENOSPC: no space left on device");
+    }) as typeof fsPromises.cp);
+
+    try {
       const result = await installSkills(targetRoot, {
         dryRun: false,
         force: false,
@@ -844,11 +1226,200 @@ describe("installSkills — validateTargetParent edge cases", () => {
       });
 
       expect(result.ok).toBe(false);
-      const failedSkill = result.skills.find((s) => s.action === "failed");
-      expect(failedSkill).toBeDefined();
-      expect(failedSkill?.error).toContain("EACCES");
+      const actions = Object.fromEntries(
+        result.skills.map((s) => [
+          s.name,
+          { action: s.action, error: s.error },
+        ]),
+      );
+      expect(actions["skill-a"]).toEqual({
+        action: "installed",
+        error: undefined,
+      });
+      const skillB = actions["skill-b"];
+      if (!skillB) throw new Error("Expected skill-b in actions");
+      expect(skillB.action).toBe("failed");
+      expect(skillB.error).toContain("ENOSPC");
+      // skill-a was installed before skill-b failed
+      expect(await dirExists(join(targetRoot, "skill-a"))).toBe(true);
     } finally {
-      await chmod(targetRoot, 0o755);
+      spy.mockRestore();
+    }
+  });
+
+  test("reports ok false when any skill copy fails", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const fsPromises = await import("node:fs/promises");
+    const spy = spyOn(fsPromises, "cp");
+    spy.mockImplementation(() => {
+      throw new Error("EIO: i/o error");
+    });
+
+    try {
+      const result = await installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      });
+
+      expect(result.ok).toBe(false);
+      const skill0 = result.skills[0];
+      if (!skill0) throw new Error("Expected at least one skill");
+      expect(skill0.action).toBe("failed");
+      expect(skill0.error).toContain("EIO");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installSkills - validateTargetRoot lstat non-ENOENT error", () => {
+  test("throws InstallValidationError when lstat on targetRoot fails with non-ENOENT error", async () => {
+    const packageRoot = await createPackageRoot(tempDirs, {
+      "skill-a": { "SKILL.md": "# A" },
+    });
+    const base = await createTempDir(tempDirs);
+    const targetRoot = join(base, "skills");
+    await mkdir(targetRoot);
+
+    const fsPromises = await import("node:fs/promises");
+    const originalLstat = fsPromises.lstat;
+    const spy = spyOn(fsPromises, "lstat");
+    spy.mockImplementation(((p: Parameters<typeof fsPromises.lstat>[0]) => {
+      if (typeof p === "string" && p === targetRoot) {
+        const err = new Error(
+          "EACCES: permission denied",
+        ) as NodeJS.ErrnoException;
+        err.code = "EACCES";
+        throw err;
+      }
+      return originalLstat(p);
+    }) as typeof fsPromises.lstat);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: true,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/Failed to inspect target root/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installSkills - computeInventory SkillTargetError message routing", () => {
+  test("routes SkillTargetError with 'is a symlink' to InstallValidationError", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const skillsModule = await import("../src/utils/skills.js");
+    const spy = spyOn(skillsModule, "computeSkillsInventory");
+    const { SkillTargetError } = skillsModule;
+    spy.mockImplementation(() => {
+      throw new SkillTargetError("Target path component 'x' is a symlink");
+    });
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/Target error:.*symlink/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("routes SkillTargetError with 'No write access' to InstallValidationError", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const skillsModule = await import("../src/utils/skills.js");
+    const spy = spyOn(skillsModule, "computeSkillsInventory");
+    const { SkillTargetError } = skillsModule;
+    spy.mockImplementation(() => {
+      throw new SkillTargetError("No write access to target root '/x'");
+    });
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow("No write access");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("routes generic SkillTargetError to InstallError", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const targetRoot = join(await createTempDir(tempDirs), "skills");
+
+    const skillsModule = await import("../src/utils/skills.js");
+    const spy = spyOn(skillsModule, "computeSkillsInventory");
+    const { SkillTargetError } = skillsModule;
+    spy.mockImplementation(() => {
+      throw new SkillTargetError("Some unexpected target fatal error");
+    });
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/Target error: Some unexpected/);
+      // Does NOT surface as InstallValidationError
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.not.toThrow(InstallValidationError);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

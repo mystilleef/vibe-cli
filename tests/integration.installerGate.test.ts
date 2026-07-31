@@ -19,6 +19,7 @@ import { runCliInProcess } from "../src/cli";
 import {
   InstallError,
   type InstallResult,
+  InstallValidationError,
   installSkills,
 } from "../src/tools/skillsInstaller.js";
 import {
@@ -196,7 +197,7 @@ describe("Integration - permission errors", () => {
     }
   });
 
-  test("permission-denied copy destination fails the affected skill only", async () => {
+  test("rejects non-writable target root as InstallValidationError", async () => {
     if (process.getuid?.() === 0) {
       return;
     }
@@ -208,17 +209,20 @@ describe("Integration - permission errors", () => {
     await chmod(targetRoot, 0o555);
 
     try {
-      const result = await installSkills(targetRoot, {
-        dryRun: false,
-        force: false,
-        packageRoot,
-      });
-
-      expect(result.ok).toBe(false);
-      for (const skill of result.skills) {
-        expect(skill.action).toBe("failed");
-        expect(skill.error).toMatch(/EACCES/);
-      }
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallValidationError);
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(/No write access to target root/);
     } finally {
       await chmod(targetRoot, 0o755);
     }

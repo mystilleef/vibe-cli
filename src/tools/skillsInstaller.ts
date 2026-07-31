@@ -3,7 +3,8 @@
 // doesn't apply to a single-user home-directory install. See
 // proposals/simplify-skill-installation.md.
 
-import { access, constants, cp, mkdir, rm, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { access, constants, cp, lstat, mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   extractErrorMessage as errorMessage,
@@ -16,6 +17,7 @@ import {
   type SkillsInventory,
   SkillTargetError,
 } from "../utils/skills.js";
+import { InstallerError, validateDirectory } from "../utils/validation.js";
 
 export interface InstallOptions {
   dryRun: boolean;
@@ -48,7 +50,7 @@ export interface InstallResult {
 }
 
 /** Error thrown when installation operation fails (exit 1). */
-export class InstallError extends Error {
+export class InstallError extends InstallerError {
   constructor(message: string) {
     super(message);
     this.name = "InstallError";
@@ -70,33 +72,12 @@ export class InstallValidationError extends InstallError {
  * materializing an arbitrary directory chain.
  */
 async function validateTargetParent(targetRoot: string): Promise<void> {
-  const parentDir = dirname(targetRoot);
-  try {
-    const parentStat = await stat(parentDir);
-    if (!parentStat.isDirectory()) {
-      throw new InstallValidationError(
-        `Target parent '${parentDir}' is not a directory`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof InstallValidationError) throw error;
-    if (isEnoent(error)) {
-      throw new InstallValidationError(
-        `Target parent directory '${parentDir}' does not exist`,
-      );
-    }
-    throw new InstallError(
-      `Failed to inspect target parent '${parentDir}': ${errorMessage(error)}`,
-    );
-  }
-
-  try {
-    await access(parentDir, constants.W_OK);
-  } catch {
-    throw new InstallValidationError(
-      `No write access to target parent '${parentDir}'`,
-    );
-  }
+  await validateDirectory({
+    path: dirname(targetRoot),
+    checkWritable: true,
+    errorClass: InstallValidationError,
+    baseErrorClass: InstallError,
+  });
 }
 
 /**
@@ -153,17 +134,66 @@ async function computeInventory(
       throw new InstallError(`Source error: ${error.message}`);
     }
     if (error instanceof SkillTargetError) {
-      // Convert ENOTDIR (a path component is not a directory) to
-      // InstallValidationError since this is a validation failure, not an
-      // operational one.
-      if (error.message.includes("ENOTDIR")) {
+      // Convert validation failures to InstallValidationError.
+      // ENOTDIR → clean "is not a directory" message for the parent.
+      // Other validation signals (not a directory, symlink, no write)
+      // are forwarded as-is with a prefix.
+      const message = error.message;
+      if (message.includes("ENOTDIR")) {
         throw new InstallValidationError(
           `Target parent '${dirname(targetRoot)}' is not a directory`,
         );
       }
-      throw new InstallError(`Target error: ${error.message}`);
+      if (
+        message.includes("not a directory") ||
+        message.includes("is a symlink") ||
+        message.includes("No write access")
+      ) {
+        throw new InstallValidationError(`Target error: ${message}`);
+      }
+      throw new InstallError(`Target error: ${message}`);
     }
     throw new InstallError(`Inventory failed: ${errorMessage(error)}`);
+  }
+}
+
+/**
+ * Preflight target root before inventory computation.
+ * Rejects existing non-directory and non-writable-directory roots with
+ * InstallValidationError. Symlink rejection is deferred to inventory safety
+ * checks.
+ */
+async function validateTargetRootDirectory(targetRoot: string): Promise<void> {
+  let targetStat: Stats | undefined;
+  try {
+    targetStat = await lstat(targetRoot);
+  } catch (error) {
+    if (isEnoent(error)) {
+      // Absent root — defer to parent validation later
+      return;
+    }
+    throw new InstallValidationError(
+      `Failed to inspect target root '${targetRoot}': ${errorMessage(error)}`,
+    );
+  }
+
+  // Symlink rejection deferred to inventory safety checks
+  if (targetStat.isSymbolicLink()) {
+    return;
+  }
+
+  if (!targetStat.isDirectory()) {
+    throw new InstallValidationError(
+      `Target root '${targetRoot}' is not a directory`,
+    );
+  }
+
+  try {
+    await access(targetRoot, constants.W_OK);
+  } catch {
+    throw new InstallValidationError(
+      `No write access to target root '${targetRoot}'`,
+    );
   }
 }
 
@@ -176,6 +206,12 @@ export async function installSkills(
 ): Promise<InstallResult> {
   const absoluteTargetRoot = resolve(targetRoot);
   const packageRoot = options.packageRoot ?? findPackageRoot(import.meta.dir);
+
+  // Preflight target root — reject existing non-directory and non-writable roots
+  // before inventory computation. Symlink rejection deferred to inventory safety
+  // checks.
+  await validateTargetRootDirectory(absoluteTargetRoot);
+
   const inventory = await computeInventory(absoluteTargetRoot, packageRoot);
   const actions = planInstall(inventory, options);
 
