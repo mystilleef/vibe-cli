@@ -2,6 +2,7 @@
 
 ## Rules
 
+- **MANDATORY:** Consult `ORIENT.md` before editing/writing code.
 - Write testable, asynchronous, non-blocking code.
 - After edits: run `bun check`.
 - After task completion: run `bun verify`.
