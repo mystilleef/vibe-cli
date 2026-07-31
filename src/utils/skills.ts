@@ -7,9 +7,9 @@ import {
   realpathSync,
   type Stats,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { findPackageRoot } from "./packageRoot.js";
+import { expandTildePath, getSafeHomedir } from "./paths.js";
 
 export interface SkillFile {
   relativePath: string;
@@ -441,17 +441,6 @@ export function computeSkillsInventory(
   };
 }
 
-/** Return the user's home directory or throw if unavailable. */
-function getSafeHomedir(): string {
-  const home = process.env["HOME"] ?? homedir();
-  if (!home) {
-    throw new Error(
-      "Unable to determine home directory (HOME/USERPROFILE not set)",
-    );
-  }
-  return home;
-}
-
 /**
  * Resolve the default target root: `~/.agents/skills`.
  * Expands `~` to the user's home directory.
@@ -468,14 +457,5 @@ export function resolveTargetRoot(target?: string): string {
   if (!target) {
     return resolveDefaultTargetRoot();
   }
-
-  if (target === "~") {
-    return resolve(getSafeHomedir());
-  }
-
-  if (target.startsWith("~")) {
-    return resolve(join(getSafeHomedir(), target.slice(1)));
-  }
-
-  return resolve(target);
+  return expandTildePath(target);
 }
