@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   chmod,
+  constants,
   mkdir,
   readdir,
   readFile,
@@ -94,58 +95,51 @@ describe("installGuide - target resolution", () => {
       expect(result.target).toBe(fakeHome);
       expect(result.ok).toBe(true);
 
-      const nestedResult = await installGuide("~/nested/target", {
+      // Nested target with existing parent resolves correctly
+      const nestedParent = join(fakeHome, "nested");
+      await mkdir(nestedParent);
+      const nestedResult = await installGuide("~/nested", {
         dryRun: true,
         anchorDir: getAnchorDir(packageRoot),
       });
 
-      expect(nestedResult.target).toBe(join(fakeHome, "nested", "target"));
+      expect(nestedResult.target).toBe(nestedParent);
       expect(nestedResult.ok).toBe(true);
     } finally {
       process.env["HOME"] = originalHome;
     }
   });
 
-  test("resolves absent nested target path for dry-run without writing", async () => {
+  test("rejects absent nested target path on dry-run when parent does not exist", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
     const base = await createTempDir(tempDirs);
     const absentTarget = join(base, "nested", "deep", "target");
 
-    const result = await installGuide(absentTarget, {
-      dryRun: true,
-      anchorDir: getAnchorDir(packageRoot),
-    });
+    await expect(
+      installGuide(absentTarget, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
 
-    expect(result.target).toBe(absentTarget);
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("missing");
-    expect(result.action).toBe("would-install");
     expect(await dirExists(join(base, "nested"))).toBe(false);
+    expect(await dirExists(absentTarget)).toBe(false);
   });
 
-  test("creates absent nested target path recursively on install", async () => {
-    const content = "# Nested Guide\n";
-    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+  test("rejects absent nested target path on install when parent does not exist", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
     const base = await createTempDir(tempDirs);
     const absentTarget = join(base, "nested", "deep", "target");
 
-    const result = await installGuide(absentTarget, {
-      dryRun: false,
-      anchorDir: getAnchorDir(packageRoot),
-    });
+    await expect(
+      installGuide(absentTarget, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
 
-    expect(result.target).toBe(absentTarget);
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("missing");
-    expect(result.action).toBe("installed");
-    expect(await dirExists(absentTarget)).toBe(true);
-    expect(await fileExists(join(absentTarget, "vibe-guide.md"))).toBe(true);
-
-    const installed = await readFile(
-      join(absentTarget, "vibe-guide.md"),
-      "utf8",
-    );
-    expect(installed).toBe(content);
+    expect(await dirExists(join(base, "nested"))).toBe(false);
+    expect(await dirExists(absentTarget)).toBe(false);
   });
 
   test("names only vibe-guide.md beneath target", async () => {
@@ -521,7 +515,13 @@ describe("installGuide - invalid target failures", () => {
         dryRun: false,
         anchorDir: getAnchorDir(packageRoot),
       }),
-    ).rejects.toThrow(GuideInstallError);
+    ).rejects.toThrow(GuideInstallValidationError);
+    await expect(
+      installGuide(targetDir, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(/is not a directory/);
   });
 });
 
@@ -875,10 +875,10 @@ describe("installGuide - validateTarget edge cases", () => {
     }
   });
 
-  test("rejects when intermediate path component lstat fails with EACCES (not targetRoot / not destPath)", async () => {
+  test("rejects immediate parent lstat EACCES with validation error from symlink walk", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
     // Create a nested path: parent exists, target child doesn't.
-    // Then fail lstat on parentDir (intermediate component — not targetRoot, not destPath).
+    // Then fail lstat on the immediate parent of targetRoot.
     const base = await createTempDir(tempDirs);
     const parentDir = join(base, "parent");
     await mkdir(parentDir);
@@ -888,7 +888,7 @@ describe("installGuide - validateTarget edge cases", () => {
     const originalLstat = fsPromises.lstat;
     const spy = spyOn(fsPromises, "lstat");
 
-    // Fail lstat on parentDir (intermediate component, not targetRoot, not destPath)
+    // Fail lstat on the immediate parent of targetRoot
     spy.mockImplementation(((p: Parameters<typeof fsPromises.lstat>[0]) => {
       if (p === parentDir) {
         const err = new Error(
@@ -901,24 +901,24 @@ describe("installGuide - validateTarget edge cases", () => {
     }) as typeof fsPromises.lstat);
 
     try {
-      await expect(
-        installGuide(targetDir, {
-          dryRun: true,
-          anchorDir: getAnchorDir(packageRoot),
-        }),
-      ).rejects.toThrow(GuideInstallError);
-      await expect(
-        installGuide(targetDir, {
-          dryRun: true,
-          anchorDir: getAnchorDir(packageRoot),
-        }),
-      ).rejects.toThrow(/Failed to inspect target path/);
+      const error = await installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }).catch((e: unknown) => e);
+      // The symlink walk runs before immediate-parent inspection, so a
+      // non-ENOENT/non-ENOTDIR lstat fault at the immediate parent is
+      // classified as a validation failure by the walk.
+      expect(error).toBeInstanceOf(GuideInstallValidationError);
+      expect(error).toBeInstanceOf(GuideInstallError);
+      expect((error as Error).message).toBe(
+        `Failed to inspect target path '${parentDir}': EACCES: permission denied`,
+      );
     } finally {
       spy.mockRestore();
     }
   });
 
-  test("rejects when findExistingAncestor lstat fails with non-ENOENT/non-ENOTDIR error", async () => {
+  test("rejects when ancestor above the immediate parent lstat fails with non-ENOENT/non-ENOTDIR error", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
     const base = await createTempDir(tempDirs);
     const parentDir = join(base, "parent");
@@ -929,10 +929,10 @@ describe("installGuide - validateTarget edge cases", () => {
     const originalLstat = fsPromises.lstat;
     const spy = spyOn(fsPromises, "lstat");
 
-    // Fail lstat on parentDir when findExistingAncestor walks up from
-    // nonexistent targetDir.
+    // Fail lstat on base — an ancestor above the immediate parent — so
+    // the symlink walk classifies it as a validation failure.
     spy.mockImplementation(((p: Parameters<typeof fsPromises.lstat>[0]) => {
-      if (typeof p === "string" && p === parentDir) {
+      if (typeof p === "string" && p === base) {
         const err = new Error(
           "EACCES: permission denied",
         ) as NodeJS.ErrnoException;
@@ -948,7 +948,721 @@ describe("installGuide - validateTarget edge cases", () => {
           dryRun: true,
           anchorDir: getAnchorDir(packageRoot),
         }),
+      ).rejects.toThrow(GuideInstallValidationError);
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
       ).rejects.toThrow("Failed to inspect target path");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installGuide - existing root preflight", () => {
+  test("rejects existing regular-file target root on dry-run", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetFile = join(base, "existing-file");
+    await writeFile(targetFile, "not a directory");
+
+    await expect(
+      installGuide(targetFile, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+    await expect(
+      installGuide(targetFile, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(/not a directory/);
+
+    // Target file content preserved
+    const content = await readFile(targetFile, "utf8");
+    expect(content).toBe("not a directory");
+  });
+
+  test("rejects existing regular-file target root on install", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetFile = join(base, "existing-file");
+    await writeFile(targetFile, "not a directory");
+
+    await expect(
+      installGuide(targetFile, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+
+    // Target file content preserved (no mutation)
+    const content = await readFile(targetFile, "utf8");
+    expect(content).toBe("not a directory");
+  });
+
+  test("rejects existing non-writable directory target root on dry-run", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const targetDir = await createTempDir(tempDirs);
+
+    // Mock access to deny write on the target directory — deterministic
+    // under root, where chmod-based permission denial is ineffective.
+    const fsPromises = await import("node:fs/promises");
+    const originalAccess = fsPromises.access;
+    const spy = spyOn(fsPromises, "access");
+    spy.mockImplementation(((path: string, mode?: number) => {
+      if (path === targetDir && mode === constants.W_OK) {
+        throw new Error("EACCES: permission denied");
+      }
+      return originalAccess(path, mode);
+    }) as typeof fsPromises.access);
+
+    try {
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(GuideInstallValidationError);
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(/No write access/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("rejects existing non-writable directory target root on install", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const targetDir = await createTempDir(tempDirs);
+
+    // Mock access to deny write on the target directory — deterministic
+    // under root, where chmod-based permission denial is ineffective.
+    const fsPromises = await import("node:fs/promises");
+    const originalAccess = fsPromises.access;
+    const spy = spyOn(fsPromises, "access");
+    spy.mockImplementation(((path: string, mode?: number) => {
+      if (path === targetDir && mode === constants.W_OK) {
+        throw new Error("EACCES: permission denied");
+      }
+      return originalAccess(path, mode);
+    }) as typeof fsPromises.access);
+
+    try {
+      await expect(
+        installGuide(targetDir, {
+          dryRun: false,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(GuideInstallValidationError);
+
+      // No guide file created
+      expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("retains missing status and would-install for existing writable root", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const targetDir = await createTempDir(tempDirs);
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("missing");
+    expect(result.action).toBe("would-install");
+  });
+
+  test("retains identical status and would-skip for existing writable root", async () => {
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const targetDir = await createTempDir(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), content);
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("identical");
+    expect(result.action).toBe("would-skip");
+  });
+
+  test("retains outdated status and would-replace for existing writable root", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# New\n");
+    const targetDir = await createTempDir(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), "# Old\n");
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("outdated");
+    expect(result.action).toBe("would-replace");
+  });
+
+  test("retains installed action for existing writable root", async () => {
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const targetDir = await createTempDir(tempDirs);
+
+    const result = await installGuide(targetDir, {
+      dryRun: false,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("missing");
+    expect(result.action).toBe("installed");
+    expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(true);
+  });
+
+  test("retains replaced action for existing writable root", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# New\n");
+    const targetDir = await createTempDir(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), "# Old\n");
+
+    const result = await installGuide(targetDir, {
+      dryRun: false,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("outdated");
+    expect(result.action).toBe("replaced");
+  });
+
+  test("retains skipped action for existing writable root", async () => {
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const targetDir = await createTempDir(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), content);
+
+    const result = await installGuide(targetDir, {
+      dryRun: false,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("identical");
+    expect(result.action).toBe("skipped");
+  });
+
+  test("rejects existing regular-file root via access mock for deterministic denial", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetFile = join(base, "regular-file");
+    await writeFile(targetFile, "content");
+
+    // Mock access to deny write on the target file
+    const fsPromises = await import("node:fs/promises");
+    const originalAccess = fsPromises.access;
+    const spy = spyOn(fsPromises, "access");
+    spy.mockImplementation(((path: string, mode?: number) => {
+      if (path === targetFile && mode === constants.W_OK) {
+        throw new Error("EACCES: permission denied");
+      }
+      return originalAccess(path, mode);
+    }) as typeof fsPromises.access);
+
+    try {
+      await expect(
+        installGuide(targetFile, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(GuideInstallValidationError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installGuide - validateGuideImmediateParent", () => {
+  test("rejects missing immediate parent on dry-run without creating any parent chain", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetDir = join(base, "nonexistent-parent", "target");
+
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(/does not exist/);
+
+    expect(await dirExists(join(base, "nonexistent-parent"))).toBe(false);
+    expect(await dirExists(targetDir)).toBe(false);
+  });
+
+  test("rejects missing immediate parent on install without creating any parent chain", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetDir = join(base, "nonexistent-parent", "target");
+
+    await expect(
+      installGuide(targetDir, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+
+    expect(await dirExists(join(base, "nonexistent-parent"))).toBe(false);
+    expect(await dirExists(targetDir)).toBe(false);
+  });
+
+  test("rejects non-directory immediate parent with validation error", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const parentFile = join(base, "not-a-directory");
+    await writeFile(parentFile, "file content");
+    const targetDir = join(parentFile, "target");
+
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(/is not a directory/);
+  });
+
+  test("rejects unwritable immediate parent with validation error", async () => {
+    if (process.getuid?.() === 0) return;
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const parentDir = join(base, "readonly-parent");
+    await mkdir(parentDir);
+    const targetDir = join(parentDir, "target");
+    await chmod(parentDir, 0o555);
+
+    try {
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(GuideInstallValidationError);
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow("No write access");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("rejects immediate parent lstat failure with install error", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    // A regular file as an intermediate component makes the immediate
+    // parent path uninspectable (ENOTDIR) deterministically, including
+    // when running as root.
+    const blockerFile = join(base, "blocker-file");
+    await writeFile(blockerFile, "file content");
+    const parentDir = join(blockerFile, "subdir");
+    const targetDir = join(parentDir, "target");
+
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallError);
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(`Failed to inspect target parent '${parentDir}'`);
+  });
+
+  test("retains missing status and would-install for existing writable parent with absent target", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const parentDir = await createTempDir(tempDirs);
+    const targetDir = join(parentDir, "new-target");
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("missing");
+    expect(result.action).toBe("would-install");
+    expect(await dirExists(targetDir)).toBe(false);
+  });
+
+  test("installs beneath existing writable parent with absent target", async () => {
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const parentDir = await createTempDir(tempDirs);
+    const targetDir = join(parentDir, "new-target");
+
+    const result = await installGuide(targetDir, {
+      dryRun: false,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("missing");
+    expect(result.action).toBe("installed");
+    expect(await dirExists(targetDir)).toBe(true);
+    expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(true);
+  });
+
+  test("retains outdated status and would-replace for existing writable parent", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# New\n");
+    const parentDir = await createTempDir(tempDirs);
+    const targetDir = join(parentDir, "new-target");
+    await mkdir(targetDir);
+    await writeFile(join(targetDir, "vibe-guide.md"), "# Old\n");
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("outdated");
+    expect(result.action).toBe("would-replace");
+
+    const content = await readFile(join(targetDir, "vibe-guide.md"), "utf8");
+    expect(content).toBe("# Old\n");
+  });
+
+  test("retains identical status and would-skip for existing writable parent", async () => {
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const parentDir = await createTempDir(tempDirs);
+    const targetDir = join(parentDir, "new-target");
+    await mkdir(targetDir);
+    await writeFile(join(targetDir, "vibe-guide.md"), content);
+
+    const result = await installGuide(targetDir, {
+      dryRun: true,
+      anchorDir: getAnchorDir(packageRoot),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("identical");
+    expect(result.action).toBe("would-skip");
+  });
+
+  test("symlink-component check runs before immediate parent inspection", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const realDir = await createTempDir(tempDirs);
+    const parentDir = await createTempDir(tempDirs);
+    const symlinkDir = join(parentDir, "symlinked");
+    await symlink(realDir, symlinkDir, "dir");
+
+    const targetDir = join(symlinkDir, "target");
+
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(GuideInstallValidationError);
+    await expect(
+      installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      }),
+    ).rejects.toThrow(/symlink/i);
+  });
+});
+
+describe("installGuide - existing writable root beneath non-writable parent", () => {
+  async function createWritableRootInReadonlyParent(
+    tracking: string[],
+  ): Promise<{ parentDir: string; targetDir: string }> {
+    const base = await createTempDir(tracking);
+    const parentDir = join(base, "readonly-parent");
+    await mkdir(parentDir);
+    const targetDir = join(parentDir, "existing-root");
+    await mkdir(targetDir);
+    return { parentDir, targetDir };
+  }
+
+  test("retains missing status and would-install on dry-run for existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("missing");
+      expect(result.action).toBe("would-install");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("installs into existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# Guide\n");
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("missing");
+      expect(result.action).toBe("installed");
+      expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(true);
+      const installed = await readFile(
+        join(targetDir, "vibe-guide.md"),
+        "utf8",
+      );
+      expect(installed).toBe("# Guide\n");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("retains identical status and would-skip on dry-run for existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), content);
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("identical");
+      expect(result.action).toBe("would-skip");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("retains outdated status and would-replace on dry-run for existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# New\n");
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), "# Old\n");
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("outdated");
+      expect(result.action).toBe("would-replace");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("replaces into existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const packageRoot = await createGuidePackageRoot(tempDirs, "# New\n");
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), "# Old\n");
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("outdated");
+      expect(result.action).toBe("replaced");
+      const installed = await readFile(
+        join(targetDir, "vibe-guide.md"),
+        "utf8",
+      );
+      expect(installed).toBe("# New\n");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+
+  test("skips in existing writable root beneath non-writable parent", async () => {
+    if (process.getuid?.() === 0) return;
+    const content = "# Guide\n";
+    const packageRoot = await createGuidePackageRoot(tempDirs, content);
+    const { parentDir, targetDir } =
+      await createWritableRootInReadonlyParent(tempDirs);
+    await writeFile(join(targetDir, "vibe-guide.md"), content);
+    await chmod(parentDir, 0o555);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: false,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("identical");
+      expect(result.action).toBe("skipped");
+    } finally {
+      await chmod(parentDir, 0o755);
+    }
+  });
+});
+
+describe("installGuide - parent write check scoped to absent roots", () => {
+  test("skips parent write check for existing writable root when parent access is denied", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const parentDir = join(base, "parent");
+    await mkdir(parentDir);
+    const targetDir = join(parentDir, "existing-root");
+    await mkdir(targetDir);
+
+    const fsPromises = await import("node:fs/promises");
+    const originalAccess = fsPromises.access;
+    const spy = spyOn(fsPromises, "access");
+    spy.mockImplementation(((path: string, mode?: number) => {
+      if (path === parentDir && mode === constants.W_OK) {
+        throw new Error("EACCES: permission denied");
+      }
+      return originalAccess(path, mode);
+    }) as typeof fsPromises.access);
+
+    try {
+      const result = await installGuide(targetDir, {
+        dryRun: true,
+        anchorDir: getAnchorDir(packageRoot),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe("missing");
+      expect(result.action).toBe("would-install");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("keeps parent write check for absent target root when parent access is denied", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const parentDir = join(base, "parent");
+    await mkdir(parentDir);
+    const targetDir = join(parentDir, "absent-target");
+
+    const fsPromises = await import("node:fs/promises");
+    const originalAccess = fsPromises.access;
+    const spy = spyOn(fsPromises, "access");
+    spy.mockImplementation(((path: string, mode?: number) => {
+      if (path === parentDir && mode === constants.W_OK) {
+        throw new Error("EACCES: permission denied");
+      }
+      return originalAccess(path, mode);
+    }) as typeof fsPromises.access);
+
+    try {
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(GuideInstallValidationError);
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow("No write access to target parent");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("installGuide - lstat targetRoot non-ENOENT non-ENOTDIR failure", () => {
+  test("throws GuideInstallValidationError when preflight lstat on targetRoot fails after symlink walk succeeds", async () => {
+    const packageRoot = await createGuidePackageRoot(tempDirs);
+    const base = await createTempDir(tempDirs);
+    const targetDir = join(base, "target");
+    await mkdir(targetDir);
+
+    const fsPromises = await import("node:fs/promises");
+    const originalLstat = fsPromises.lstat;
+    const spy = spyOn(fsPromises, "lstat");
+    let lstatTargetDirCalls = 0;
+    spy.mockImplementation(((p: Parameters<typeof fsPromises.lstat>[0]) => {
+      if (typeof p === "string" && p === targetDir) {
+        lstatTargetDirCalls++;
+        // First call is from the symlink walk — let it succeed.
+        // Subsequent calls (preflight lstat) — throw EACCES.
+        if (lstatTargetDirCalls > 1) {
+          const err = new Error(
+            "EACCES: permission denied",
+          ) as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        }
+      }
+      return originalLstat(p);
+    }) as typeof fsPromises.lstat);
+
+    try {
+      // Single installGuide call — the counter is stable across one call.
+      // The symlink walk lstats targetDir once (success), then the preflight
+      // lstats it again (EACCES) hitting the else branch at lines 142-144.
+      await expect(
+        installGuide(targetDir, {
+          dryRun: true,
+          anchorDir: getAnchorDir(packageRoot),
+        }),
+      ).rejects.toThrow(
+        `Failed to inspect target root '${targetDir}': EACCES: permission denied`,
+      );
     } finally {
       spy.mockRestore();
     }

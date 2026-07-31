@@ -4,6 +4,7 @@
  * Follows the same patterns as skillsInstaller.ts but for a single file.
  */
 
+import type { Stats } from "node:fs";
 import {
   access,
   constants,
@@ -29,6 +30,7 @@ import {
   rejectSymlinkPathComponents,
   resolveGuideTarget,
 } from "../utils/guide.js";
+import { InstallerError, validateDirectory } from "../utils/validation.js";
 
 export interface InstallGuideOptions {
   dryRun: boolean;
@@ -53,7 +55,7 @@ export interface InstallGuideResult {
 }
 
 /** Error thrown when guide installation fails (exit 1). */
-export class GuideInstallError extends Error {
+export class GuideInstallError extends InstallerError {
   constructor(message: string) {
     super(message);
     this.name = "GuideInstallError";
@@ -69,46 +71,12 @@ export class GuideInstallValidationError extends GuideInstallError {
 }
 
 /**
- * Walk up from `targetRoot` until an existing directory is found.
- * Returns the first ancestor that exists and is a directory.
- */
-async function findExistingAncestor(targetRoot: string): Promise<string> {
-  let ancestor = targetRoot;
-  while (true) {
-    try {
-      const stats = await lstat(ancestor);
-      if (!stats.isDirectory()) {
-        const label = ancestor === targetRoot ? "Target" : "Target parent";
-        throw new GuideInstallValidationError(
-          `${label} '${ancestor}' is not a directory`,
-        );
-      }
-      return ancestor;
-    } catch (error) {
-      if (error instanceof GuideInstallValidationError) throw error;
-      if (
-        isEnoent(error) ||
-        (error as NodeJS.ErrnoException).code === "ENOTDIR"
-      ) {
-        const parent = dirname(ancestor);
-        if (parent === ancestor) break;
-        ancestor = parent;
-      } else {
-        throw new GuideInstallError(
-          `Failed to inspect target path '${ancestor}': ${errorMessage(error)}`,
-        );
-      }
-    }
-  }
-  throw new GuideInstallValidationError(
-    `Target parent directory '${targetRoot}' does not exist`,
-  );
-}
-
-/**
  * Validate the target path and its existing ancestor directory.
  * - Target destination file must not be a symlink
- * - Closest existing ancestor directory of target path must be a directory and writable
+ * - Target path components must not be symlinks
+ * - Immediate parent must exist, be a directory, and be writable
+ *   (when the target root does not yet exist)
+ * - Existing target root must be a writable directory
  *
  * Runs unconditionally (including dry-run) so an invalid or unwritable target
  * path fails fast instead of silently attempting impossible operations.
@@ -118,6 +86,7 @@ async function validateTarget(
   guideFilename: string,
 ): Promise<void> {
   const destPath = join(targetRoot, guideFilename);
+  const parentDir = dirname(targetRoot);
 
   await rejectSymlinkPathComponents(getPathAncestorsAndSelf(destPath), lstat, {
     destPath,
@@ -134,15 +103,64 @@ async function validateTarget(
     },
   });
 
-  const existingAncestor = await findExistingAncestor(targetRoot);
-
+  // Preflight target root: reject existing regular-file and non-writable-directory roots
+  let targetExists = false;
+  let targetStat: Stats | undefined;
   try {
-    await access(existingAncestor, constants.W_OK);
-  } catch {
-    throw new GuideInstallValidationError(
-      `No write access to target parent '${existingAncestor}'`,
-    );
+    targetStat = await lstat(targetRoot);
+    targetExists = true;
+  } catch (error) {
+    if (isEnoent(error)) {
+      // Absent root — defer to parent validation below
+    } else if ((error as NodeJS.ErrnoException).code === "ENOTDIR") {
+      // A path component is not a directory — defer to parent validation
+      // which will classify this as a non-directory parent
+    } else {
+      throw new GuideInstallValidationError(
+        `Failed to inspect target root '${targetRoot}': ${errorMessage(error)}`,
+      );
+    }
   }
+
+  if (targetExists && targetStat) {
+    if (!targetStat.isDirectory()) {
+      throw new GuideInstallValidationError(
+        `Target root '${targetRoot}' is not a directory`,
+      );
+    }
+
+    try {
+      await access(targetRoot, constants.W_OK);
+    } catch {
+      throw new GuideInstallValidationError(
+        `No write access to target root '${targetRoot}'`,
+      );
+    }
+  }
+
+  // Validate immediate parent: must exist, be a directory, and be writable
+  // only when the target root doesn't exist yet (creation happens in the parent).
+  if (!targetExists) {
+    await validateGuideImmediateParent(parentDir, true);
+  }
+}
+
+/**
+ * Validate the immediate parent directory of the guide target.
+ * - Must exist
+ * - Must be a directory
+ * - Must be writable when `checkWritable` is true
+ */
+async function validateGuideImmediateParent(
+  parentDir: string,
+  checkWritable: boolean,
+): Promise<void> {
+  await validateDirectory({
+    path: parentDir,
+    checkWritable,
+    errorClass: GuideInstallValidationError,
+    baseErrorClass: GuideInstallError,
+  });
 }
 
 /**
