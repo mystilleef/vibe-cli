@@ -22,6 +22,7 @@ const captureStore = new AsyncLocalStorage<CaptureContext>();
  */
 import { resetConstitution, updateConstitution } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
+import { installGuide } from "./tools/guideInstaller.js";
 import { runPrune } from "./tools/prune.js";
 import { installSkills } from "./tools/skillsInstaller.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
@@ -35,6 +36,7 @@ import {
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
 import { warnLegacyDotenv } from "./utils/dotenv.js";
 import { extractErrorMessage } from "./utils/errors.js";
+import { inspectGuide } from "./utils/guide.js";
 import {
   formatListAll,
   formatListCategories,
@@ -467,6 +469,42 @@ skills
       });
       emit(result);
       if (!result.ok) process.exit(2);
+    }),
+  );
+
+const guide = program
+  .command("guide")
+  .description("Inspect or install the bundled guide");
+
+guide
+  .command("list")
+  .description(
+    "Inspect guide drift against a target directory without mutation",
+  )
+  .option("--target <path>", "path (default: cwd)")
+  .action(
+    withCliError((opts) => {
+      const target = opts.target ?? process.cwd();
+      const inspection = inspectGuide(target);
+      emit({
+        target: inspection.target,
+        status: inspection.status,
+      });
+    }),
+  );
+
+guide
+  .command("install")
+  .description("Install or update the bundled guide into a target directory")
+  .option("--target <path>", "path (default: cwd)")
+  .option("--dry-run", "plan without writing target files")
+  .action(
+    withCliError(async (opts) => {
+      const target = opts.target ?? process.cwd();
+      const result = await installGuide(target, {
+        dryRun: Boolean(opts.dryRun),
+      });
+      emit(result);
     }),
   );
 

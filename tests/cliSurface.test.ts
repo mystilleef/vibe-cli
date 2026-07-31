@@ -1673,6 +1673,8 @@ describe("CLI autosession surface", () => {
       "migrate",
       "skills list",
       "skills install",
+      "guide list",
+      "guide install",
     ]) {
       expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
@@ -1714,6 +1716,40 @@ describe("CLI autosession surface", () => {
         "2": expect.any(String),
         "1": expect.any(String),
       }),
+    });
+    expect(schema.commands["guide list"]).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": expect.any(String),
+      },
+      out: expect.objectContaining({
+        target: expect.any(String),
+        status: expect.any(String),
+      }),
+      exit: {
+        "0": expect.any(String),
+        "1": expect.any(String),
+      },
+    });
+    expect(schema.commands["guide install"]).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: expect.objectContaining({
+        "--target": expect.any(String),
+        "--dry-run": expect.any(String),
+      }),
+      out: expect.objectContaining({
+        target: expect.any(String),
+        dryRun: expect.any(String),
+        ok: expect.any(String),
+        status: expect.any(String),
+        action: expect.any(String),
+      }),
+      exit: {
+        "0": expect.any(String),
+        "1": expect.any(String),
+      },
     });
     expect(schema.commands["migrate"]).toMatchObject({
       when: expect.any(String),
@@ -3575,6 +3611,128 @@ describe("CLI autosession surface", () => {
     expect(result.stderr).toBe("");
     const after = await readDirTree(target);
     expect(after).toEqual(before);
+  });
+
+  describe("CLI guide command surface", () => {
+    test("guide list emits one JSON line for default and custom targets without mutation", async () => {
+      const cwd = await createCwd();
+
+      const result = await runCli(["guide", "list"], { cwd });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+      expect(result.stdout).toBe(`${result.stdout.trim()}\n`);
+
+      const payload = JSON.parse(result.stdout) as {
+        target: string;
+        status: string;
+      };
+      expect(payload.target).toBe(cwd);
+      expect(["missing", "identical", "outdated"]).toContain(payload.status);
+      expect(await fileExists(join(cwd, "vibe-guide.md"))).toBe(false);
+
+      const target = await createCwd();
+      const customResult = await runCli(["guide", "list", "--target", target]);
+      expect(customResult.exitCode).toBe(0);
+      expect(customResult.stderr).toBe("");
+      expect(customResult.stdout.trim().split("\n")).toHaveLength(1);
+      const customPayload = JSON.parse(customResult.stdout) as {
+        target: string;
+        status: string;
+      };
+      expect(customPayload.target).toBe(target);
+      expect(await fileExists(join(target, "vibe-guide.md"))).toBe(false);
+    });
+
+    test("guide list rejects unsupported options with stderr-only fatal JSON", async () => {
+      const result = await runCli(["guide", "list", "--bogus"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      expect(JSON.parse(result.stderr)).toEqual({
+        error: "error: unknown option '--bogus'",
+      });
+    });
+
+    test("guide list surfaces fatal target validation errors as stderr-only fatal JSON", async () => {
+      const result = await runCli(["guide", "list", "--target", "/dev/null"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      const payload = JSON.parse(result.stderr) as { error: string };
+      expect(payload.error).toContain("Failed to stat guide destination");
+    });
+
+    test("guide install --dry-run plans without writing target files", async () => {
+      const cwd = await createCwd();
+
+      const result = await runCli(["guide", "install", "--dry-run"], { cwd });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+
+      const payload = JSON.parse(result.stdout) as {
+        target: string;
+        dryRun: boolean;
+        ok: boolean;
+        status: string;
+        action: string;
+      };
+      expect(payload.target).toBe(cwd);
+      expect(payload.dryRun).toBe(true);
+      expect(payload.ok).toBe(true);
+      expect(["missing", "identical", "outdated"]).toContain(payload.status);
+      expect(["would-install", "would-replace", "would-skip"]).toContain(
+        payload.action,
+      );
+      expect(await fileExists(join(cwd, "vibe-guide.md"))).toBe(false);
+    });
+
+    test("guide install writes guide file and emits one JSON line", async () => {
+      const cwd = await createCwd();
+
+      const result = await runCli(["guide", "install"], { cwd });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
+
+      const payload = JSON.parse(result.stdout) as {
+        target: string;
+        dryRun: boolean;
+        ok: boolean;
+        status: string;
+        action: string;
+      };
+      expect(payload.target).toBe(cwd);
+      expect(payload.dryRun).toBe(false);
+      expect(payload.ok).toBe(true);
+      expect(payload.action).toBe("installed");
+      expect(await fileExists(join(cwd, "vibe-guide.md"))).toBe(true);
+    });
+
+    test("guide install rejects unsupported options with stderr-only fatal JSON", async () => {
+      const result = await runCli(["guide", "install", "--bogus"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      expect(JSON.parse(result.stderr)).toEqual({
+        error: "error: unknown option '--bogus'",
+      });
+    });
+
+    test("guide install surfaces fatal target validation errors as stderr-only fatal JSON", async () => {
+      const result = await runCli([
+        "guide",
+        "install",
+        "--target",
+        "/dev/null",
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      const payload = JSON.parse(result.stderr) as { error: string };
+      expect(payload.error).toContain("Target '/dev/null' is not a directory");
+    });
   });
 
   describe("concurrent local list bootstrap process safety", () => {

@@ -63,11 +63,17 @@ vibe skills install
 
 ### Step 4: Load agent policy
 
-Provide
-[vibe-guide.md](file:///home/lateef/Projects/vibe-cli/docs/vibe-guide.md)
-rules to coding agents via workspace context files (`AGENTS.md`,
-`CLAUDE.md`, or system prompts) so agents know when and how to trigger
-`vibe` skills.
+Install the guide and load it into agent context:
+
+```sh
+# Install vibe-guide.md into project root
+vibe guide install
+```
+
+Add the guide to `AGENTS.md`, `CLAUDE.md`, or paste its content into your
+agent's system prompt so agents know when and how to trigger `vibe`
+skills. Loading is opt-in; the install command does not modify context
+files automatically.
 
 ## Harness skill workflows
 

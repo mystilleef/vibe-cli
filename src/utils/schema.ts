@@ -177,6 +177,38 @@ export function buildSchema() {
           "1": "error",
         },
       },
+      "guide list": {
+        when: "inspect guide drift against a target directory without mutation",
+        req: {},
+        opt: {
+          "--target": "path (default: cwd)",
+        },
+        out: {
+          target: "absolute path str",
+          status: "missing|identical|outdated",
+        },
+        exit: { "0": "success", "1": "error" },
+      },
+      "guide install": {
+        when: "install or update the bundled guide into a target directory",
+        req: {},
+        opt: {
+          "--target": "path (default: cwd)",
+          "--dry-run": "plan without writing target files",
+        },
+        out: {
+          target: "absolute path str",
+          dryRun: "bool",
+          ok: "bool",
+          status: "missing|identical|outdated",
+          action:
+            "would-install|would-replace|would-skip|installed|replaced|skipped",
+        },
+        exit: {
+          "0": "success",
+          "1": "error",
+        },
+      },
     },
   };
 }

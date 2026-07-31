@@ -26,6 +26,7 @@
   },
   "files": [
     "dist",
+    "docs/vibe-guide.md",
     "settings.example.json",
     "skills"
   ],
