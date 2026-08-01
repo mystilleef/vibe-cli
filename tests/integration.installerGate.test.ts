@@ -287,6 +287,7 @@ describe("Integration - partial-failure exit semantics", () => {
         "skills",
         "install",
         "--force",
+        "--json",
         "--target",
         targetRoot,
       ]);

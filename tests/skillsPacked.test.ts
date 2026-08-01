@@ -195,9 +195,22 @@ describe("packed package skills surface", () => {
     const home = await createTempRoot(".skills-pack-home-");
     const target = join(home, "agents-skills");
 
-    const list = runPackedCli(
+    // Default output prints readable Skills section.
+    const listPretty = runPackedCli(
       extractedRoot,
       ["skills", "list", "--target", target],
+      { home },
+    );
+    expect(listPretty.exitCode).toBe(0);
+    expect(listPretty.stderr).toBe("");
+    expect(listPretty.stdout).toContain("Skills");
+    expect(listPretty.stdout).toContain("vibe-check");
+    expect(listPretty.stdout).toContain("missing");
+
+    // --json preserves parseable payload.
+    const list = runPackedCli(
+      extractedRoot,
+      ["skills", "list", "--json", "--target", target],
       { home },
     );
     expect(list.exitCode).toBe(0);
@@ -216,9 +229,23 @@ describe("packed package skills surface", () => {
     expect(listPayload.skills.every((s) => s.status === "missing")).toBe(true);
     expect(await dirExists(target)).toBe(false);
 
-    const dryRun = runPackedCli(
+    // Default output prints readable Skills Install section.
+    const dryPretty = runPackedCli(
       extractedRoot,
       ["skills", "install", "--dry-run", "--target", target],
+      { home },
+    );
+    expect(dryPretty.exitCode).toBe(0);
+    expect(dryPretty.stderr).toBe("");
+    expect(dryPretty.stdout).toContain("Skills Install");
+    expect(dryPretty.stdout).toContain("dryRun: true");
+    expect(dryPretty.stdout).toContain("would-install");
+    expect(await dirExists(target)).toBe(false);
+
+    // --json preserves parseable payload.
+    const dryRun = runPackedCli(
+      extractedRoot,
+      ["skills", "install", "--dry-run", "--json", "--target", target],
       { home },
     );
     expect(dryRun.exitCode).toBe(0);
@@ -240,9 +267,26 @@ describe("packed package skills surface", () => {
     const home = await createTempRoot(".skills-pack-home-");
     const target = join(home, "agents-skills");
 
-    const install = runPackedCli(
+    // Default output prints readable Skills Install section.
+    const installPretty = runPackedCli(
       extractedRoot,
       ["skills", "install", "--target", target],
+      { home },
+    );
+    expect(installPretty.exitCode).toBe(0);
+    expect(installPretty.stderr).toBe("");
+    expect(installPretty.stdout).toContain("Skills Install");
+    expect(installPretty.stdout).toContain("installed");
+    expect(await fileExists(join(target, "vibe-check", "SKILL.md"))).toBe(true);
+    expect(
+      await fileExists(join(target, "vibe-constitution", "SKILL.md")),
+    ).toBe(true);
+    expect(await fileExists(join(target, "vibe-learn", "SKILL.md"))).toBe(true);
+
+    // --json preserves parseable payload.
+    const install = runPackedCli(
+      extractedRoot,
+      ["skills", "install", "--json", "--target", target],
       { home },
     );
     expect(install.exitCode).toBe(0);
@@ -252,23 +296,32 @@ describe("packed package skills surface", () => {
       skills: Array<{ action: string }>;
     };
     expect(installPayload.ok).toBe(true);
-    expect(installPayload.skills.every((s) => s.action === "installed")).toBe(
+    // Second install is idempotent — skills are unchanged.
+    expect(installPayload.skills.every((s) => s.action === "unchanged")).toBe(
       true,
     );
-    expect(await fileExists(join(target, "vibe-check", "SKILL.md"))).toBe(true);
-    expect(
-      await fileExists(join(target, "vibe-constitution", "SKILL.md")),
-    ).toBe(true);
-    expect(await fileExists(join(target, "vibe-learn", "SKILL.md"))).toBe(true);
 
     await writeFile(
       join(target, "vibe-learn", "SKILL.md"),
       "packed-layout local edit\n",
     );
 
-    const blocked = runPackedCli(
+    // Default blocked output prints readable section with error detail.
+    const blockedPretty = runPackedCli(
       extractedRoot,
       ["skills", "install", "--target", target],
+      { home },
+    );
+    expect(blockedPretty.exitCode).toBe(2);
+    expect(blockedPretty.stderr).toBe("");
+    expect(blockedPretty.stdout).toContain("Skills Install");
+    expect(blockedPretty.stdout).toContain("blocked");
+    expect(blockedPretty.stdout).toContain("vibe-learn");
+
+    // --json preserves parseable payload with blocked action.
+    const blocked = runPackedCli(
+      extractedRoot,
+      ["skills", "install", "--json", "--target", target],
       { home },
     );
     expect(blocked.exitCode).toBe(2);
@@ -294,7 +347,7 @@ describe("packed package skills surface", () => {
 
     const install = runPackedCli(
       extractedRoot,
-      ["skills", "install", "--target", target],
+      ["skills", "install", "--json", "--target", target],
       { home },
     );
     expect(install.exitCode).toBe(0);
@@ -305,9 +358,22 @@ describe("packed package skills surface", () => {
       "packed-layout local edit\n",
     );
 
-    const forced = runPackedCli(
+    // Default output prints readable Skills Install section.
+    const forcedPretty = runPackedCli(
       extractedRoot,
       ["skills", "install", "--force", "--target", target],
+      { home },
+    );
+    expect(forcedPretty.exitCode).toBe(0);
+    expect(forcedPretty.stderr).toBe("");
+    expect(forcedPretty.stdout).toContain("Skills Install");
+    expect(forcedPretty.stdout).toContain("force: true");
+    expect(forcedPretty.stdout).toContain("replaced");
+
+    // --json preserves parseable payload.
+    const forced = runPackedCli(
+      extractedRoot,
+      ["skills", "install", "--force", "--json", "--target", target],
       { home },
     );
     expect(forced.exitCode).toBe(0);
@@ -374,6 +440,13 @@ describe("packed package skills surface", () => {
     expect(help.stdout).toContain("--target");
     expect(help.stdout).toContain("--dry-run");
     expect(help.stdout).toContain("--force");
+    expect(help.stdout).toContain("--json");
+
+    const listHelp = runPackedCli(extractedRoot, ["skills", "list", "--help"], {
+      home,
+    });
+    expect(listHelp.exitCode).toBe(0);
+    expect(listHelp.stdout).toContain("--json");
   }, 60_000);
 
   test("extracted package keeps operational failures on stderr only", async () => {

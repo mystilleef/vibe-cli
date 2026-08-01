@@ -140,6 +140,7 @@ describe("buildSchema", () => {
       req: {},
       opt: {
         "--target": "path (default: ~/.agents/skills)",
+        "--json": "Emit machine-readable JSON instead of pretty text",
       },
       out: {
         target: "absolute path str",
@@ -158,6 +159,7 @@ describe("buildSchema", () => {
         "--dry-run": "plan without writing staging or target files",
         "--force":
           "replace every existing bundled target, including hash matches",
+        "--json": "Emit machine-readable JSON instead of pretty text",
       },
       out: {
         target: "absolute path str",
@@ -170,6 +172,52 @@ describe("buildSchema", () => {
       exit: {
         "0": "success",
         "2": "blocked (modified targets without --force) or failed (partial copy error)",
+        "1": "error",
+      },
+    });
+  });
+
+  test("guide commands define flags, payloads, and exit codes", async () => {
+    await writeSettings(validSettings());
+
+    const schema = buildSchema();
+    const list = schema.commands["guide list"];
+    const install = schema.commands["guide install"];
+
+    expect(list).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": "path (default: cwd)",
+        "--json": "Emit machine-readable JSON instead of pretty text",
+      },
+      out: {
+        target: "absolute path str",
+        status: "missing|identical|outdated",
+      },
+      exit: {
+        "0": "success",
+        "1": "error",
+      },
+    });
+    expect(install).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--target": "path (default: cwd)",
+        "--dry-run": "plan without writing target files",
+        "--json": "Emit machine-readable JSON instead of pretty text",
+      },
+      out: {
+        target: "absolute path str",
+        dryRun: "bool",
+        ok: "bool",
+        status: "missing|identical|outdated",
+        action:
+          "would-install|would-replace|would-skip|installed|replaced|skipped",
+      },
+      exit: {
+        "0": "success",
         "1": "error",
       },
     });

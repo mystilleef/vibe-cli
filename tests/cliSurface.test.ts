@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import {
   cp,
@@ -13,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
 import { getMigrationIds, initializeSchema } from "../src/utils/database";
@@ -2833,7 +2833,9 @@ describe("CLI autosession surface", () => {
     const spacedTarget = join(home.home, "skill dir", "nested");
     const absoluteTarget = join(home.home, "absolute-skills");
 
-    const defaultList = await runCli(["skills", "list"], { home: home.home });
+    const defaultList = await runCli(["skills", "list", "--json"], {
+      home: home.home,
+    });
     expect(defaultList.exitCode).toBe(0);
     expect(defaultList.stderr).toBe("");
     expect(defaultList.stdout.trim().split("\n")).toHaveLength(1);
@@ -2862,7 +2864,7 @@ describe("CLI autosession surface", () => {
     expect(await dirExists(target)).toBe(false);
 
     const relativeList = await runCli(
-      ["skills", "list", "--target", "rel-skills"],
+      ["skills", "list", "--target", "rel-skills", "--json"],
       {
         home: home.home,
         cwd: home.home,
@@ -2879,7 +2881,7 @@ describe("CLI autosession surface", () => {
     expect(await dirExists(join(home.home, "rel-skills"))).toBe(false);
 
     const spacedList = await runCli(
-      ["skills", "list", "--target", spacedTarget],
+      ["skills", "list", "--target", spacedTarget, "--json"],
       {
         home: home.home,
       },
@@ -2892,7 +2894,7 @@ describe("CLI autosession surface", () => {
     expect(await dirExists(spacedTarget)).toBe(false);
 
     const tildeList = await runCli(
-      ["skills", "list", "--target", "~/tilde-skills"],
+      ["skills", "list", "--target", "~/tilde-skills", "--json"],
       {
         home: home.home,
       },
@@ -2904,7 +2906,7 @@ describe("CLI autosession surface", () => {
     expect(await dirExists(join(home.home, "tilde-skills"))).toBe(false);
 
     const absoluteList = await runCli(
-      ["skills", "list", "--target", absoluteTarget],
+      ["skills", "list", "--target", absoluteTarget, "--json"],
       { home: home.home },
     );
     expect(absoluteList.exitCode).toBe(0);
@@ -2942,9 +2944,12 @@ describe("CLI autosession surface", () => {
       "utf8",
     );
 
-    const listed = await runCli(["skills", "list", "--target", target], {
-      home: home.home,
-    });
+    const listed = await runCli(
+      ["skills", "list", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
     expect(listed.exitCode).toBe(0);
     expect(listed.stderr).toBe("");
     expect(listed.stdout.trim().split("\n")).toHaveLength(1);
@@ -2989,9 +2994,12 @@ describe("CLI autosession surface", () => {
     await mkdir(target, { recursive: true });
     await symlink("/tmp", join(target, "vibe-check"));
 
-    const result = await runCli(["skills", "list", "--target", target], {
-      home: home.home,
-    });
+    const result = await runCli(
+      ["skills", "list", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -3009,7 +3017,7 @@ describe("CLI autosession surface", () => {
     // Missing skills/ directory is a fatal source error.
     await writeFile(join(packageRoot, "package.json"), "{}\n");
 
-    const result = await runCli(["skills", "list"], {
+    const result = await runCli(["skills", "list", "--json"], {
       home: home.home,
       preload: skillsPackageRoot,
       env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
@@ -3031,11 +3039,14 @@ describe("CLI autosession surface", () => {
     await mkdir(join(packageRoot, "skills"), { recursive: true });
     const target = join(home.home, "empty-list-target");
 
-    const result = await runCli(["skills", "list", "--target", target], {
-      home: home.home,
-      preload: skillsPackageRoot,
-      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
-    });
+    const result = await runCli(
+      ["skills", "list", "--target", target, "--json"],
+      {
+        home: home.home,
+        preload: skillsPackageRoot,
+        env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+      },
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -3051,9 +3062,12 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const missing = join(home.home, "no", "such", "skills");
 
-    const result = await runCli(["skills", "list", "--target", missing], {
-      home: home.home,
-    });
+    const result = await runCli(
+      ["skills", "list", "--target", missing, "--json"],
+      {
+        home: home.home,
+      },
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -3076,7 +3090,7 @@ describe("CLI autosession surface", () => {
     const target = join(targetRoot, "skills");
 
     const result = await runCli(
-      ["skills", "install", "--dry-run", "--target", target],
+      ["skills", "install", "--dry-run", "--target", target, "--json"],
       { home: home.home },
     );
     expect(result.exitCode).toBe(0);
@@ -3110,9 +3124,12 @@ describe("CLI autosession surface", () => {
     cwdRoots.push(targetRoot);
     const target = join(targetRoot, "skills");
 
-    const installed = await runCli(["skills", "install", "--target", target], {
-      home: home.home,
-    });
+    const installed = await runCli(
+      ["skills", "install", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
     expect(installed.exitCode).toBe(0);
     expect(installed.stderr).toBe("");
     const installedPayload = JSON.parse(installed.stdout) as {
@@ -3127,9 +3144,12 @@ describe("CLI autosession surface", () => {
     ]);
     expect(await fileExists(join(target, "vibe-check", "SKILL.md"))).toBe(true);
 
-    const listAfter = await runCli(["skills", "list", "--target", target], {
-      home: home.home,
-    });
+    const listAfter = await runCli(
+      ["skills", "list", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
     const listPayload = JSON.parse(listAfter.stdout) as {
       skills: Array<{ status: string }>;
     };
@@ -3142,9 +3162,12 @@ describe("CLI autosession surface", () => {
       "locally modified skill content\n",
     );
 
-    const blocked = await runCli(["skills", "install", "--target", target], {
-      home: home.home,
-    });
+    const blocked = await runCli(
+      ["skills", "install", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
     expect(blocked.exitCode).toBe(2);
     expect(blocked.stderr).toBe("");
     const blockedPayload = JSON.parse(blocked.stdout) as {
@@ -3163,7 +3186,7 @@ describe("CLI autosession surface", () => {
     );
 
     const forced = await runCli(
-      ["skills", "install", "--force", "--target", target],
+      ["skills", "install", "--force", "--target", target, "--json"],
       { home: home.home },
     );
     expect(forced.exitCode).toBe(0);
@@ -3185,7 +3208,7 @@ describe("CLI autosession surface", () => {
 
   test("skills install rejects unsupported options with stderr-only fatal JSON", async () => {
     const home = await useTempHome();
-    const result = await runCli(["skills", "install", "--bogus"], {
+    const result = await runCli(["skills", "install", "--bogus", "--json"], {
       home: home.home,
     });
 
@@ -3202,7 +3225,7 @@ describe("CLI autosession surface", () => {
     const missingParent = join(home.home, "missing-parent", "skills");
 
     const result = await runCli(
-      ["skills", "install", "--target", missingParent],
+      ["skills", "install", "--target", missingParent, "--json"],
       {
         home: home.home,
       },
@@ -3227,11 +3250,14 @@ describe("CLI autosession surface", () => {
     cwdRoots.push(targetRoot);
     const target = join(targetRoot, "skills");
 
-    const result = await runCli(["skills", "install", "--target", target], {
-      home: home.home,
-      preload: skillsPackageRoot,
-      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
-    });
+    const result = await runCli(
+      ["skills", "install", "--target", target, "--json"],
+      {
+        home: home.home,
+        preload: skillsPackageRoot,
+        env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+      },
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -3258,7 +3284,7 @@ describe("CLI autosession surface", () => {
     const missingParent = join(home.home, "no-parent", "skills");
 
     const result = await runCli(
-      ["skills", "install", "--dry-run", "--target", missingParent],
+      ["skills", "install", "--dry-run", "--target", missingParent, "--json"],
       {
         home: home.home,
         preload: skillsPackageRoot,
@@ -3297,7 +3323,15 @@ describe("CLI autosession surface", () => {
     );
 
     const result = await runCli(
-      ["skills", "install", "--dry-run", "--force", "--target", target],
+      [
+        "skills",
+        "install",
+        "--dry-run",
+        "--force",
+        "--target",
+        target,
+        "--json",
+      ],
       { home: home.home },
     );
 
@@ -3348,7 +3382,7 @@ describe("CLI autosession surface", () => {
     );
 
     const result = await runCli(
-      ["skills", "install", "--dry-run", "--target", target],
+      ["skills", "install", "--dry-run", "--target", target, "--json"],
       { home: home.home },
     );
 
@@ -3379,7 +3413,7 @@ describe("CLI autosession surface", () => {
     await mkdir(join(targetRoot, "skill dir"), { recursive: true });
 
     const result = await runCli(
-      ["skills", "install", "--dry-run", "--target", target],
+      ["skills", "install", "--dry-run", "--target", target, "--json"],
       { home: home.home },
     );
 
@@ -3411,7 +3445,7 @@ describe("CLI autosession surface", () => {
     await symlink(realTarget, join(linkBase, "link-root"), "dir");
 
     const result = await runCli(
-      ["skills", "list", "--target", join(linkBase, "link-root")],
+      ["skills", "list", "--target", join(linkBase, "link-root"), "--json"],
       { home: home.home },
     );
 
@@ -3429,9 +3463,12 @@ describe("CLI autosession surface", () => {
     const fileTarget = join(base, "not-a-dir");
     await writeFile(fileTarget, "file content");
 
-    const result = await runCli(["skills", "list", "--target", fileTarget], {
-      home: home.home,
-    });
+    const result = await runCli(
+      ["skills", "list", "--target", fileTarget, "--json"],
+      {
+        home: home.home,
+      },
+    );
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -3447,7 +3484,7 @@ describe("CLI autosession surface", () => {
     await symlink(realTarget, join(linkBase, "link-root"), "dir");
 
     const result = await runCli(
-      ["skills", "install", "--target", join(linkBase, "link-root")],
+      ["skills", "install", "--target", join(linkBase, "link-root"), "--json"],
       { home: home.home },
     );
 
@@ -3475,11 +3512,14 @@ describe("CLI autosession surface", () => {
     cwdRoots.push(targetRoot);
     const target = join(targetRoot, "skills");
 
-    const result = await runCli(["skills", "install", "--target", target], {
-      home: home.home,
-      preload: skillsPackageRoot,
-      env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
-    });
+    const result = await runCli(
+      ["skills", "install", "--target", target, "--json"],
+      {
+        home: home.home,
+        preload: skillsPackageRoot,
+        env: { VIBE_TEST_SKILLS_PACKAGE_ROOT: packageRoot },
+      },
+    );
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
@@ -3568,9 +3608,12 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const missing = join(home.home, "no", "such", "skills");
 
-    const result = await runCli(["skills", "list", "--target", missing], {
-      home: home.home,
-    });
+    const result = await runCli(
+      ["skills", "list", "--target", missing, "--json"],
+      {
+        home: home.home,
+      },
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -3613,11 +3656,381 @@ describe("CLI autosession surface", () => {
     expect(after).toEqual(before);
   });
 
+  describe("CLI skills/guide output modes", () => {
+    test("skills list emits readable default output and JSON under --json", async () => {
+      const home = await useTempHome();
+
+      const pretty = await runCli(["skills", "list"], { home: home.home });
+      const json = await runCli(["skills", "list", "--json"], {
+        home: home.home,
+      });
+
+      // Default output is readable text
+      expect(pretty.exitCode).toBe(0);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Skills");
+      expect(pretty.stdout).toContain("name");
+      expect(pretty.stdout).toContain("status");
+      expect(pretty.stdout).toContain("missing");
+
+      // --json produces parseable JSON payload
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        target: string;
+        skills: Array<{ name: string; status: string }>;
+      };
+      expect(payload.target).toBe(join(home.home, ".agents", "skills"));
+      expect(payload.skills.length).toBeGreaterThan(0);
+      expect(payload.skills.every((s) => s.status === "missing")).toBe(true);
+    });
+
+    test("skills install emits readable default output and JSON under --json", async () => {
+      const home = await useTempHome();
+      const targetRoot = await mkdtemp(
+        join(originalCwd, ".skills-cli-output-"),
+      );
+      cwdRoots.push(targetRoot);
+      const target = join(targetRoot, "skills");
+
+      const pretty = await runCli(
+        ["skills", "install", "--dry-run", "--target", target],
+        { home: home.home },
+      );
+      const json = await runCli(
+        ["skills", "install", "--dry-run", "--target", target, "--json"],
+        { home: home.home },
+      );
+
+      // Default output is readable text
+      expect(pretty.exitCode).toBe(0);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Skills Install");
+      expect(pretty.stdout).toContain("dryRun: true");
+      expect(pretty.stdout).toContain("name");
+      expect(pretty.stdout).toContain("status");
+      expect(pretty.stdout).toContain("action");
+
+      // --json produces parseable JSON payload with original fields
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        target: string;
+        dryRun: boolean;
+        force: boolean;
+        ok: boolean;
+        skills: Array<{ name: string; status: string; action: string }>;
+      };
+      expect(payload).toMatchObject({
+        target,
+        dryRun: true,
+        force: false,
+        ok: true,
+      });
+      expect(payload.skills.every((s) => s.action === "would-install")).toBe(
+        true,
+      );
+    });
+
+    test("guide list emits readable default output and JSON under --json", async () => {
+      const cwd = await createCwd();
+
+      const pretty = await runCli(["guide", "list"], { cwd });
+      const json = await runCli(["guide", "list", "--json"], { cwd });
+
+      // Default output is readable text
+      expect(pretty.exitCode).toBe(0);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Guide");
+      expect(pretty.stdout).toContain("target:");
+      expect(pretty.stdout).toContain("status:");
+
+      // --json produces parseable JSON payload
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        target: string;
+        status: string;
+      };
+      expect(payload.target).toBe(cwd);
+      expect(["missing", "identical", "outdated"]).toContain(payload.status);
+    });
+
+    test("guide install emits readable default output and JSON under --json", async () => {
+      const cwd = await createCwd();
+
+      const pretty = await runCli(["guide", "install", "--dry-run"], { cwd });
+      const json = await runCli(["guide", "install", "--dry-run", "--json"], {
+        cwd,
+      });
+
+      // Default output is readable text
+      expect(pretty.exitCode).toBe(0);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Guide Install");
+      expect(pretty.stdout).toContain("target:");
+      expect(pretty.stdout).toContain("dryRun: true");
+      expect(pretty.stdout).toContain("ok: true");
+      expect(pretty.stdout).toContain("status:");
+      expect(pretty.stdout).toContain("action:");
+
+      // --json produces parseable JSON payload
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        target: string;
+        dryRun: boolean;
+        ok: boolean;
+        status: string;
+        action: string;
+      };
+      expect(payload).toMatchObject({
+        target: cwd,
+        dryRun: true,
+        ok: true,
+      });
+      expect(["would-install", "would-replace", "would-skip"]).toContain(
+        payload.action,
+      );
+    });
+
+    test("skills list help advertises --json option", async () => {
+      const result = await runCli(["skills", "list", "--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("--json");
+    });
+
+    test("skills install help advertises --json option", async () => {
+      const result = await runCli(["skills", "install", "--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("--json");
+    });
+
+    test("guide list help advertises --json option", async () => {
+      const result = await runCli(["guide", "list", "--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("--json");
+    });
+
+    test("guide install help advertises --json option", async () => {
+      const result = await runCli(["guide", "install", "--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("--json");
+    });
+
+    test("skills install blocked result retains exit 2 with error column in default output", async () => {
+      const home = await useTempHome();
+      const targetRoot = await mkdtemp(
+        join(originalCwd, ".skills-cli-block-output-"),
+      );
+      cwdRoots.push(targetRoot);
+      const target = join(targetRoot, "skills");
+      const bundledSkills = join(originalCwd, "skills");
+
+      await mkdir(target, { recursive: true });
+      await cp(join(bundledSkills, "vibe-check"), join(target, "vibe-check"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(target, "vibe-check", "SKILL.md"),
+        "locally modified skill content\n",
+      );
+
+      const pretty = await runCli(["skills", "install", "--target", target], {
+        home: home.home,
+      });
+      const json = await runCli(
+        ["skills", "install", "--target", target, "--json"],
+        { home: home.home },
+      );
+
+      // Default output: readable text with blocked status
+      expect(pretty.exitCode).toBe(2);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Skills Install");
+      expect(pretty.stdout).toContain("blocked");
+
+      // --json preserves original payload shape
+      expect(json.exitCode).toBe(2);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        ok: boolean;
+        skills: Array<{ name: string; action: string }>;
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.skills.find((s) => s.name === "vibe-check")?.action).toBe(
+        "blocked",
+      );
+    });
+
+    test("skills install partial failure retains exit 2 with error detail in default output", async () => {
+      const home = await useTempHome();
+      const targetRoot = await mkdtemp(
+        join(originalCwd, ".skills-cli-partial-fail-"),
+      );
+      cwdRoots.push(targetRoot);
+      const target = join(targetRoot, "skills");
+      const bundledSkills = join(originalCwd, "skills");
+
+      // Pre-install every bundled skill so --force replaces each one.
+      await mkdir(target, { recursive: true });
+      await cp(join(bundledSkills, "vibe-check"), join(target, "vibe-check"), {
+        recursive: true,
+      });
+      await cp(
+        join(bundledSkills, "vibe-constitution"),
+        join(target, "vibe-constitution"),
+        { recursive: true },
+      );
+      await cp(join(bundledSkills, "vibe-learn"), join(target, "vibe-learn"), {
+        recursive: true,
+      });
+
+      // Deterministically fail only the vibe-learn copy while others succeed.
+      // Mocking node:fs/promises holds even under UID 0 where chmod-based
+      // permission denial is bypassed; exact-path matching keeps the failure
+      // scoped to one skill regardless of copy order.
+      const fsPromises = await import("node:fs/promises");
+      const originalCp = fsPromises.cp;
+      const spy = spyOn(fsPromises, "cp");
+      spy.mockImplementation(((
+        src: string | URL,
+        dest: string | URL,
+        opts?: Parameters<typeof fsPromises.cp>[2],
+      ) => {
+        if (resolve(String(dest)) === resolve(join(target, "vibe-learn"))) {
+          throw Object.assign(
+            new Error(`EACCES: permission denied, copyfile '${String(dest)}'`),
+            { code: "EACCES" },
+          );
+        }
+        return originalCp(src, dest, opts);
+      }) as typeof fsPromises.cp);
+
+      try {
+        const pretty = await runCli(
+          ["skills", "install", "--force", "--target", target],
+          { home: home.home },
+        );
+        const json = await runCli(
+          ["skills", "install", "--force", "--target", target, "--json"],
+          { home: home.home },
+        );
+
+        // Default output: readable text with error column and failed-row detail
+        expect(pretty.exitCode).toBe(2);
+        expect(pretty.stderr).toBe("");
+        expect(pretty.stdout).toContain("Skills Install");
+        expect(pretty.stdout).toContain("error");
+        expect(pretty.stdout).toContain("vibe-learn");
+        expect(pretty.stdout).toContain("failed");
+        expect(pretty.stdout).toContain("EACCES");
+
+        // --json preserves the original payload shape and partial-failure detail
+        expect(json.exitCode).toBe(2);
+        expect(json.stderr).toBe("");
+        const payload = JSON.parse(json.stdout) as {
+          ok: boolean;
+          skills: Array<{
+            name: string;
+            action: string;
+            error?: string;
+          }>;
+        };
+        expect(payload.ok).toBe(false);
+        const failedSkill = payload.skills.find((s) => s.name === "vibe-learn");
+        expect(failedSkill?.action).toBe("failed");
+        expect(failedSkill?.error).toContain("EACCES");
+        expect(
+          payload.skills.find((s) => s.name === "vibe-check")?.action,
+        ).toBe("replaced");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    test("fatal failures retain stderr-only JSON and exit 1 for skills commands", async () => {
+      const home = await useTempHome();
+      const missingParent = join(home.home, "missing-parent", "skills");
+
+      const pretty = await runCli(
+        ["skills", "install", "--target", missingParent],
+        { home: home.home },
+      );
+      const json = await runCli(
+        ["skills", "install", "--target", missingParent, "--json"],
+        { home: home.home },
+      );
+
+      // Both modes: stderr-only JSON, exit 1, no stdout
+      expect(pretty.exitCode).toBe(1);
+      expect(pretty.stdout).toBe("");
+      expect(JSON.parse(pretty.stderr)).toEqual({
+        error: expect.any(String),
+      });
+
+      expect(json.exitCode).toBe(1);
+      expect(json.stdout).toBe("");
+      expect(JSON.parse(json.stderr)).toEqual({
+        error: expect.any(String),
+      });
+    });
+
+    test("fatal failures retain stderr-only JSON and exit 1 for guide commands", async () => {
+      const pretty = await runCli([
+        "guide",
+        "install",
+        "--target",
+        "/dev/null",
+      ]);
+      const json = await runCli([
+        "guide",
+        "install",
+        "--target",
+        "/dev/null",
+        "--json",
+      ]);
+
+      // Both modes: stderr-only JSON, exit 1, no stdout
+      expect(pretty.exitCode).toBe(1);
+      expect(pretty.stdout).toBe("");
+      expect(JSON.parse(pretty.stderr)).toEqual({
+        error: expect.any(String),
+      });
+
+      expect(json.exitCode).toBe(1);
+      expect(json.stdout).toBe("");
+      expect(JSON.parse(json.stderr)).toEqual({
+        error: expect.any(String),
+      });
+    });
+
+    test("schema advertises --json for all four skills/guide commands", async () => {
+      const result = await runCli(["schema"]);
+      const schema = JSON.parse(result.stdout) as {
+        commands: Record<string, { opt?: Record<string, string> }>;
+      };
+
+      expect(schema.commands["skills list"]?.opt).toHaveProperty("--json");
+      expect(schema.commands["skills install"]?.opt).toHaveProperty("--json");
+      expect(schema.commands["guide list"]?.opt).toHaveProperty("--json");
+      expect(schema.commands["guide install"]?.opt).toHaveProperty("--json");
+    });
+  });
+
   describe("CLI guide command surface", () => {
     test("guide list emits one JSON line for default and custom targets without mutation", async () => {
       const cwd = await createCwd();
 
-      const result = await runCli(["guide", "list"], { cwd });
+      const result = await runCli(["guide", "list", "--json"], { cwd });
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim().split("\n")).toHaveLength(1);
@@ -3632,7 +4045,13 @@ describe("CLI autosession surface", () => {
       expect(await fileExists(join(cwd, "vibe-guide.md"))).toBe(false);
 
       const target = await createCwd();
-      const customResult = await runCli(["guide", "list", "--target", target]);
+      const customResult = await runCli([
+        "guide",
+        "list",
+        "--target",
+        target,
+        "--json",
+      ]);
       expect(customResult.exitCode).toBe(0);
       expect(customResult.stderr).toBe("");
       expect(customResult.stdout.trim().split("\n")).toHaveLength(1);
@@ -3645,7 +4064,7 @@ describe("CLI autosession surface", () => {
     });
 
     test("guide list rejects unsupported options with stderr-only fatal JSON", async () => {
-      const result = await runCli(["guide", "list", "--bogus"]);
+      const result = await runCli(["guide", "list", "--bogus", "--json"]);
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -3655,7 +4074,13 @@ describe("CLI autosession surface", () => {
     });
 
     test("guide list surfaces fatal target validation errors as stderr-only fatal JSON", async () => {
-      const result = await runCli(["guide", "list", "--target", "/dev/null"]);
+      const result = await runCli([
+        "guide",
+        "list",
+        "--target",
+        "/dev/null",
+        "--json",
+      ]);
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -3666,7 +4091,9 @@ describe("CLI autosession surface", () => {
     test("guide install --dry-run plans without writing target files", async () => {
       const cwd = await createCwd();
 
-      const result = await runCli(["guide", "install", "--dry-run"], { cwd });
+      const result = await runCli(["guide", "install", "--dry-run", "--json"], {
+        cwd,
+      });
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim().split("\n")).toHaveLength(1);
@@ -3691,7 +4118,7 @@ describe("CLI autosession surface", () => {
     test("guide install writes guide file and emits one JSON line", async () => {
       const cwd = await createCwd();
 
-      const result = await runCli(["guide", "install"], { cwd });
+      const result = await runCli(["guide", "install", "--json"], { cwd });
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim().split("\n")).toHaveLength(1);
@@ -3711,7 +4138,7 @@ describe("CLI autosession surface", () => {
     });
 
     test("guide install rejects unsupported options with stderr-only fatal JSON", async () => {
-      const result = await runCli(["guide", "install", "--bogus"]);
+      const result = await runCli(["guide", "install", "--bogus", "--json"]);
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -3726,6 +4153,7 @@ describe("CLI autosession surface", () => {
         "install",
         "--target",
         "/dev/null",
+        "--json",
       ]);
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
@@ -3938,9 +4366,12 @@ describe("CLI autosession surface", () => {
     cwdRoots.push(targetRoot);
     const target = join(targetRoot, "skills");
 
-    const installed = await runCli(["skills", "install", "--target", target], {
-      home: home.home,
-    });
+    const installed = await runCli(
+      ["skills", "install", "--target", target, "--json"],
+      {
+        home: home.home,
+      },
+    );
     expect(installed.exitCode).toBe(0);
     expect(installed.stderr).toBe("");
     const payload = JSON.parse(installed.stdout) as { ok: boolean };
@@ -3973,8 +4404,8 @@ describe("CLI autosession surface", () => {
     const targetB = join(dirB, "skills-b");
 
     const [resA, resB] = await Promise.all([
-      runCliInProcess(["skills", "list", "--target", targetA]),
-      runCliInProcess(["skills", "list", "--target", targetB]),
+      runCliInProcess(["skills", "list", "--target", targetA, "--json"]),
+      runCliInProcess(["skills", "list", "--target", targetB, "--json"]),
     ]);
 
     expect(resA.exitCode).toBe(0);
@@ -4098,8 +4529,14 @@ describe("CLI autosession surface", () => {
     const targetB = join(dirB, "skills-b");
 
     const [resA, resB] = await Promise.all([
-      runCliInProcess(["skills", "list", "--target", targetA], markerA),
-      runCliInProcess(["skills", "list", "--target", targetB], markerB),
+      runCliInProcess(
+        ["skills", "list", "--target", targetA, "--json"],
+        markerA,
+      ),
+      runCliInProcess(
+        ["skills", "list", "--target", targetB, "--json"],
+        markerB,
+      ),
     ]);
 
     expect(resA.exitCode).toBe(0);
