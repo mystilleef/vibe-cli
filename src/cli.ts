@@ -679,10 +679,20 @@ export async function runCliInProcess(
 
 warnLegacyDotenv();
 
+/**
+ * True when `moduleUrl` (an `import.meta.url`) refers to the same file as
+ * `argv1` (a raw `process.argv[1]` filesystem path), distinguishing direct
+ * execution (`bun run cli.ts`) from a plain import. Pure — `pathToFileURL`
+ * only percent-encodes the path, it performs no filesystem access.
+ */
+export function isDirectCliEntry(
+  argv1: string | undefined,
+  moduleUrl: string,
+): boolean {
+  return argv1 !== undefined && moduleUrl === pathToFileURL(argv1).href;
+}
+
 // Only run CLI when executed directly, not when imported.
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isDirectCliEntry(process.argv[1], import.meta.url)) {
   program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));
 }

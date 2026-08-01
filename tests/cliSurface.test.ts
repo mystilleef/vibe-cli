@@ -14,7 +14,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { runCliInProcess } from "../src/cli";
+import { pathToFileURL } from "node:url";
+import { isDirectCliEntry, runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
 import { getMigrationIds, initializeSchema } from "../src/utils/database";
 import type { LearningType } from "../src/utils/storage";
@@ -4738,7 +4739,64 @@ describe("CLI autosession surface", () => {
   });
 });
 
+/**
+ * Assembles the minimal file set the direct-entry CLI needs to run under
+ * `specialProject`: source (relative imports), package.json (package-root
+ * discovery), and a symlinked node_modules (dependency resolution). Copying
+ * the full repo instead would race other `--parallel` tests that create and
+ * remove their own temp dirs directly under `originalCwd`, causing
+ * intermittent ENOENT during the recursive walk.
+ */
+async function buildSpecialCliProject(specialProject: string): Promise<void> {
+  await cp(join(originalCwd, "src"), join(specialProject, "src"), {
+    recursive: true,
+  });
+  await cp(
+    join(originalCwd, "package.json"),
+    join(specialProject, "package.json"),
+  );
+  await symlink(
+    join(originalCwd, "node_modules"),
+    join(specialProject, "node_modules"),
+    "dir",
+  );
+}
+
+describe("isDirectCliEntry", () => {
+  test("matches when moduleUrl is the pathToFileURL of argv1", () => {
+    const argv1 = "/repo/src/cli.ts";
+    expect(isDirectCliEntry(argv1, pathToFileURL(argv1).href)).toBe(true);
+  });
+
+  test("matches paths containing spaces and percent characters", () => {
+    const argv1 = "/vibe-cli special%dir/project/src/cli.ts";
+    expect(isDirectCliEntry(argv1, pathToFileURL(argv1).href)).toBe(true);
+  });
+
+  test("rejects a naive unencoded file:// comparison for special characters", () => {
+    // Guards against regressing to `file://${argv1}`-style construction,
+    // which doesn't percent-encode and silently breaks the entry guard for
+    // any path containing a space or `%`.
+    const argv1 = "/vibe-cli special%dir/project/src/cli.ts";
+    expect(isDirectCliEntry(argv1, `file://${argv1}`)).toBe(false);
+  });
+
+  test("rejects when moduleUrl points at a different file", () => {
+    const argv1 = "/repo/src/cli.ts";
+    const otherUrl = pathToFileURL("/repo/src/other.ts").href;
+    expect(isDirectCliEntry(argv1, otherUrl)).toBe(false);
+  });
+
+  test("rejects when argv1 is undefined", () => {
+    expect(isDirectCliEntry(undefined, "file:///repo/src/cli.ts")).toBe(false);
+  });
+});
+
 describe("CLI entry point edge cases", () => {
+  // One real subprocess smoke test, kept alongside the `isDirectCliEntry`
+  // unit tests above: it verifies Bun's actual argv[1]/import.meta.url
+  // behavior matches what those unit tests assume, which a pure unit test
+  // of our own predicate can't confirm on its own.
   test("direct CLI entry with path containing space and percent character emits expected JSON", async () => {
     // Create a temp project directory with special characters in its path
     const specialRoot = await mkdtemp(join(tmpdir(), "vibe-cli special%dir-"));
@@ -4746,8 +4804,7 @@ describe("CLI entry point edge cases", () => {
     const specialCli = join(specialProject, "src", "cli.ts");
 
     try {
-      // Copy the entire project to a path with space and percent characters
-      await cp(originalCwd, specialProject, { recursive: true });
+      await buildSpecialCliProject(specialProject);
 
       // Execute the CLI from the special path
       const result = Bun.spawnSync({
@@ -4797,38 +4854,6 @@ console.log("import successful");
       expect(result.stdout.toString().trim()).toBe("import successful");
     } finally {
       await rm(importScript, { force: true });
-    }
-  });
-
-  test("canonical file URL comparison handles space and percent encoding", async () => {
-    // Create a temp project directory with special characters in its path
-    const specialRoot = await mkdtemp(join(tmpdir(), "vibe-cli special%dir-"));
-    const specialProject = join(specialRoot, "project");
-    const specialCli = join(specialProject, "src", "cli.ts");
-
-    try {
-      // Copy the entire project to a path with space and percent characters
-      await cp(originalCwd, specialProject, { recursive: true });
-
-      // Execute the CLI from the special path - this tests that the direct entry
-      // guard correctly handles paths with space and percent characters
-      const result = Bun.spawnSync({
-        cmd: ["bun", "run", specialCli, "session"],
-        cwd: specialProject,
-        env: { ...process.env, HOME: EMPTY_CLI_HOME },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 10_000,
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr.toString()).toBe("");
-      const payload = JSON.parse(result.stdout.toString()) as {
-        session: string;
-      };
-      expect(payload.session).toMatch(/^[0-9a-f-]{36}$/);
-    } finally {
-      await rm(specialRoot, { recursive: true, force: true });
     }
   });
 });
