@@ -1,8 +1,11 @@
 # vibe-cli
 
+> Vibe check your agent's ideas, proposals, plans, or solutions for
+> **metacognitive** flaws with a mentor agent.
+
 _Metacognitive_ oversight infrastructure for `AI` agents. Equips `LLM`
 coding harnesses with skills to consult mentor models, store persistent
-memory, enforce constitutional rules, and manage local data.
+memory, and enforce constitutional rules.
 
 ## Requirements
 
@@ -15,13 +18,6 @@ memory, enforce constitutional rules, and manage local data.
 
 ```sh
 bun install -g @mystilleef/vibe-cli
-```
-
-Local checkout alternative:
-
-```sh
-bun install --frozen-lockfile
-bun run build
 ```
 
 ### Step 2: Configure mentor provider
