@@ -42,7 +42,10 @@ export function withDatabase<T>(
   const handle =
     options !== undefined ? openVibeDatabase(options) : getVibeDatabase();
   try {
-    return fn(handle.db);
+    // Concurrent processes sharing this SQLite file (WAL mode) can transiently
+    // contend for locks; retrying is safe because every multi-statement
+    // callback in this codebase runs inside its own db.transaction().
+    return retryOnTransientSqliteError(() => fn(handle.db));
   } finally {
     if (options !== undefined) {
       handle.close();

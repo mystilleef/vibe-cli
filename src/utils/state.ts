@@ -68,11 +68,13 @@ export async function addToHistory(
   input: VibeCheckInput,
   output: string,
 ): Promise<void> {
-  withDatabase((db) => {
-    ensureSession(db, sessionId);
-    db.prepare(
-      "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
-    ).run(sessionId, input.goal, output, Date.now());
-    pruneSession(db, sessionId);
-  });
+  withDatabase((db) =>
+    db.transaction(() => {
+      ensureSession(db, sessionId);
+      db.prepare(
+        "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
+      ).run(sessionId, input.goal, output, Date.now());
+      pruneSession(db, sessionId);
+    })(),
+  );
 }
