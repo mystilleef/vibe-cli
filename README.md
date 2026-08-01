@@ -1,6 +1,6 @@
 # vibe-cli
 
-`Metacognitive` oversight infrastructure for `AI` agents. Equips `LLM`
+_Metacognitive_ oversight infrastructure for `AI` agents. Equips `LLM`
 coding harnesses with skills to consult mentor models, store persistent
 memory, enforce constitutional rules, and manage local data.
 
@@ -57,7 +57,7 @@ vibe skills install --target ~/.gemini/config/skills
 # Claude Code
 vibe skills install --target ~/.claude/skills
 
-# Universal Agent Path (Default)
+# Universal Agent Path (Default: ~/.agents/skills)
 vibe skills install
 ```
 
@@ -70,9 +70,9 @@ Install the guide and load it into agent context:
 vibe guide install
 ```
 
-Add the guide to `AGENTS.md`, `CLAUDE.md`, or paste its content into your
-agent's system prompt so agents know when and how to trigger `vibe`
-skills. Loading is opt-in; the install command does not modify context
+Add the guide to `AGENTS.md`, `CLAUDE.md`, or paste its content into
+your agent's system prompt so agents know when and how to trigger `vibe`
+skills. Loading remains opt-in. The install command never alters context
 files automatically.
 
 ## Harness skill workflows
@@ -86,10 +86,10 @@ binary, processes mentor feedback, and reports back.
 Prompts mentor review before executing high-risk, ambiguous, or
 multi-step tasks.
 
-- **Natural Language**: _"Draft a proposal for schema migration, vibe
+- **Natural language**: _"Draft a proposal for schema migration, vibe
   check it, then show for review."_
-- **Slash Command**: `/vibe-check`
-- **Execution Loop**:
+- **Slash command**: `/vibe-check`
+- **Execution loop**:
   1. Developer requests action.
   2. Agent matches criteria in `vibe-guide.md`.
   3. Agent executes `vibe check` `CLI` binary under the hood.
@@ -101,25 +101,25 @@ multi-step tasks.
 
 Persists lessons into local memory after concrete outcomes.
 
-- **Natural Language**: _"Record a vibe lesson about this failed
+- **Natural language**: _"Record a vibe lesson about this failed
   database connection attempt."_
-- **Slash Command**: `/vibe-learn`
+- **Slash command**: `/vibe-learn`
 - **Categories**: `mistake`, `success`, `preference`.
 
 ### `vibe-constitution`
 
 Enforces persistent behavioral rules across sessions.
 
-- **Natural Language**: _"Add a standing rule to vibe constitution
+- **Natural language**: _"Add a standing rule to vibe constitution
   requiring test execution before commits."_
-- **Slash Command**: `/vibe-constitution`
+- **Slash command**: `/vibe-constitution`
 
 ## Storage
 
 - Data root: `~/.vibe-cli`.
 - Settings file: `~/.vibe-cli/settings.json`.
 - `SQLite` database: `~/.vibe-cli/vibe.db`.
-- `Autosessions`: map working directories to 4-hour local session
+- `Autosessions`: maps working directories to 4-hour local session
   scopes.
 - Tables store review history, learning entries, constitution rules,
   migrations, and import markers.
@@ -162,8 +162,8 @@ vibe constitution reset --rule "Keep output concise."
 
 ### Manage skills
 
-`skills list` and `skills install` print readable text by default.
-Pass `--json` to emit the prior machine-readable payload for automation.
+`skills list` and `skills install` print readable text by default. Pass
+`--json` to emit the prior machine-readable payload for automation.
 
 ```sh
 vibe skills list --target ~/.gemini/config/skills
@@ -177,8 +177,8 @@ vibe skills install --target ~/.claude/skills --json
 
 ### Manage guide
 
-`guide list` and `guide install` print readable text by default.
-Pass `--json` to emit the prior machine-readable payload for automation.
+`guide list` and `guide install` print readable text by default. Pass
+`--json` to emit the prior machine-readable payload for automation.
 
 ```sh
 vibe guide list
