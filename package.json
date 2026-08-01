@@ -1,6 +1,6 @@
 {
   "name": "@mystilleef/vibe-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Metacognitive AI agent oversight — pure CLI with JSON I/O",
   "keywords": [
     "ai",
