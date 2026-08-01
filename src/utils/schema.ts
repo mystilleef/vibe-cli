@@ -1,3 +1,4 @@
+import { JSON_OPTION_DESCRIPTION } from "./cliConstants.js";
 import { extractErrorMessage } from "./errors.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
@@ -147,6 +148,7 @@ export function buildSchema() {
         req: {},
         opt: {
           "--target": "path (default: ~/.agents/skills)",
+          "--json": JSON_OPTION_DESCRIPTION,
         },
         out: {
           target: "absolute path str",
@@ -162,6 +164,7 @@ export function buildSchema() {
           "--dry-run": "plan without writing staging or target files",
           "--force":
             "replace every existing bundled target, including hash matches",
+          "--json": JSON_OPTION_DESCRIPTION,
         },
         out: {
           target: "absolute path str",
@@ -182,6 +185,7 @@ export function buildSchema() {
         req: {},
         opt: {
           "--target": "path (default: cwd)",
+          "--json": JSON_OPTION_DESCRIPTION,
         },
         out: {
           target: "absolute path str",
@@ -195,6 +199,7 @@ export function buildSchema() {
         opt: {
           "--target": "path (default: cwd)",
           "--dry-run": "plan without writing target files",
+          "--json": JSON_OPTION_DESCRIPTION,
         },
         out: {
           target: "absolute path str",

@@ -29,6 +29,10 @@ import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
 import {
+  JSON_OPTION_DESCRIPTION,
+  JSON_OPTION_FLAG,
+} from "./utils/cliConstants.js";
+import {
   buildCheckParams,
   buildPruneParams,
   resolveModelOverride,
@@ -64,6 +68,12 @@ import { verifyConnection } from "./utils/llm.js";
 import { buildSchema } from "./utils/schema.js";
 import { loadProviderSettings } from "./utils/settings.js";
 import { computeSkillsInventory, resolveTargetRoot } from "./utils/skills.js";
+import {
+  formatGuideInstall,
+  formatGuideList,
+  formatSkillsInstall,
+  formatSkillsList,
+} from "./utils/skillsGuideFormatters.js";
 
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
@@ -127,7 +137,7 @@ function registerListCommand(
   for (const opt of extraOptions) {
     cmd.option(opt.flags, opt.description);
   }
-  cmd.option("--json", "Emit machine-readable JSON instead of pretty text");
+  cmd.option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION);
   cmd.action((opts: Record<string, string | undefined>, command: Command) => {
     const { data, pretty } = action(opts, command);
     emitListResult(command, data, pretty);
@@ -385,7 +395,7 @@ demoCmd.action(async (opts) => {
 const list = program
   .command("list")
   .description("List local stored data and configured providers")
-  .option("--json", "Emit machine-readable JSON instead of pretty text");
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION);
 list.action(() => {
   emitListResult(list, toListOverviewJson(), formatListCommandOverview());
 });
@@ -437,17 +447,19 @@ skills
     "Inspect bundled-skill drift against a harness skills directory without mutation",
   )
   .option("--target <path>", "path (default: ~/.agents/skills)")
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
-    withCliError((opts) => {
+    withCliError((opts, command: Command) => {
       const target = resolveTargetRoot(opts.target);
       const inventory = computeSkillsInventory(target, {});
-      emit({
+      const result = {
         target: inventory.targetRoot,
         skills: inventory.skills.map((s) => ({
           name: s.name,
           status: s.status,
         })),
-      });
+      };
+      emitListResult(command, result, formatSkillsList(result));
     }),
   );
 
@@ -460,14 +472,15 @@ skills
     "--force",
     "replace every existing bundled target, including hash matches",
   )
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
-    withCliError(async (opts) => {
+    withCliError(async (opts, command: Command) => {
       const target = resolveTargetRoot(opts.target);
       const result = await installSkills(target, {
         dryRun: Boolean(opts.dryRun),
         force: Boolean(opts.force),
       });
-      emit(result);
+      emitListResult(command, result, formatSkillsInstall(result));
       if (!result.ok) process.exit(2);
     }),
   );
@@ -482,14 +495,16 @@ guide
     "Inspect guide drift against a target directory without mutation",
   )
   .option("--target <path>", "path (default: cwd)")
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
-    withCliError((opts) => {
+    withCliError((opts, command: Command) => {
       const target = opts.target ?? process.cwd();
       const inspection = inspectGuide(target);
-      emit({
+      const result = {
         target: inspection.target,
         status: inspection.status,
-      });
+      };
+      emitListResult(command, result, formatGuideList(result));
     }),
   );
 
@@ -498,13 +513,14 @@ guide
   .description("Install or update the bundled guide into a target directory")
   .option("--target <path>", "path (default: cwd)")
   .option("--dry-run", "plan without writing target files")
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
-    withCliError(async (opts) => {
+    withCliError(async (opts, command: Command) => {
       const target = opts.target ?? process.cwd();
       const result = await installGuide(target, {
         dryRun: Boolean(opts.dryRun),
       });
-      emit(result);
+      emitListResult(command, result, formatGuideInstall(result));
     }),
   );
 
