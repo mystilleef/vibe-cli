@@ -162,10 +162,31 @@ vibe constitution reset --rule "Keep output concise."
 
 ### Manage skills
 
+`skills list` and `skills install` print readable text by default.
+Pass `--json` to emit the prior machine-readable payload for automation.
+
 ```sh
 vibe skills list --target ~/.gemini/config/skills
 vibe skills install --target ~/.claude/skills
 vibe skills install --force
+
+# Automation consumers
+vibe skills list --target ~/.gemini/config/skills --json
+vibe skills install --target ~/.claude/skills --json
+```
+
+### Manage guide
+
+`guide list` and `guide install` print readable text by default.
+Pass `--json` to emit the prior machine-readable payload for automation.
+
+```sh
+vibe guide list
+vibe guide install
+
+# Automation consumers
+vibe guide list --json
+vibe guide install --json
 ```
 
 ### Query and maintenance
