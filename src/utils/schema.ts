@@ -214,6 +214,28 @@ export function buildSchema() {
           "1": "error",
         },
       },
+      "settings install": {
+        when: "install the bundled settings.example.json into the data root",
+        req: {},
+        opt: {
+          "--dry-run": "plan without writing target files",
+          "--force": "replace existing settings.json",
+          "--json": JSON_OPTION_DESCRIPTION,
+        },
+        out: {
+          destination: "absolute path str",
+          dryRun: "bool",
+          force: "bool",
+          ok: "bool",
+          status: "missing|present",
+          action:
+            "would-install|would-replace|would-skip|installed|replaced|skipped",
+        },
+        exit: {
+          "0": "success",
+          "1": "error",
+        },
+      },
     },
   };
 }

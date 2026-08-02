@@ -125,6 +125,7 @@ describe("buildSchema", () => {
     expect(commands).toContain("migrate");
     expect(commands).toContain("skills list");
     expect(commands).toContain("skills install");
+    expect(commands).toContain("settings install");
     expect(commands).not.toContain("list");
   });
 
@@ -213,6 +214,36 @@ describe("buildSchema", () => {
         dryRun: "bool",
         ok: "bool",
         status: "missing|identical|outdated",
+        action:
+          "would-install|would-replace|would-skip|installed|replaced|skipped",
+      },
+      exit: {
+        "0": "success",
+        "1": "error",
+      },
+    });
+  });
+
+  test("settings install command defines flags, payloads, and exit codes", async () => {
+    await writeSettings(validSettings());
+
+    const schema = buildSchema();
+    const install = schema.commands["settings install"];
+
+    expect(install).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: {
+        "--dry-run": "plan without writing target files",
+        "--force": "replace existing settings.json",
+        "--json": "Emit machine-readable JSON instead of pretty text",
+      },
+      out: {
+        destination: "absolute path str",
+        dryRun: "bool",
+        force: "bool",
+        ok: "bool",
+        status: "missing|present",
         action:
           "would-install|would-replace|would-skip|installed|replaced|skipped",
       },

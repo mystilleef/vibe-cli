@@ -22,11 +22,10 @@ bun install -g @mystilleef/vibe-cli
 
 ### Step 2: Configure mentor provider
 
-Copy example settings into the data root:
+Install the bundled settings template:
 
 ```sh
-mkdir -p ~/.vibe-cli
-cp settings.example.json ~/.vibe-cli/settings.json
+vibe settings install
 ```
 
 Edit `~/.vibe-cli/settings.json` to define the mentor provider, model,

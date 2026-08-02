@@ -24,6 +24,7 @@ import { resetConstitution, updateConstitution } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
 import { installGuide } from "./tools/guideInstaller.js";
 import { runPrune } from "./tools/prune.js";
+import { installSettings } from "./tools/settingsInstaller.js";
 import { installSkills } from "./tools/skillsInstaller.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
@@ -38,6 +39,7 @@ import {
   resolveModelOverride,
 } from "./utils/cliHelpers.js";
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
+import { getDataRoot } from "./utils/db-core.js";
 import { warnLegacyDotenv } from "./utils/dotenv.js";
 import { extractErrorMessage } from "./utils/errors.js";
 import { inspectGuide } from "./utils/guide.js";
@@ -67,6 +69,10 @@ import {
 import { verifyConnection } from "./utils/llm.js";
 import { buildSchema } from "./utils/schema.js";
 import { loadProviderSettings } from "./utils/settings.js";
+import {
+  formatSettingsInstall,
+  maybeAppendProviderGuidance,
+} from "./utils/settingsInstallFormatters.js";
 import { computeSkillsInventory, resolveTargetRoot } from "./utils/skills.js";
 import {
   formatGuideInstall,
@@ -521,6 +527,29 @@ guide
         dryRun: Boolean(opts.dryRun),
       });
       emitListResult(command, result, formatGuideInstall(result));
+    }),
+  );
+
+const settings = program
+  .command("settings")
+  .description("Install bundled settings template");
+
+settings
+  .command("install")
+  .description("Install the bundled settings.example.json into the data root")
+  .option("--dry-run", "plan without writing target files")
+  .option("--force", "replace existing settings.json")
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
+  .action(
+    withCliError(async (opts, command: Command) => {
+      const result = await installSettings("~/.vibe-cli", {
+        dryRun: Boolean(opts.dryRun),
+        force: Boolean(opts.force),
+        dataRoot: getDataRoot(),
+      });
+      const pretty = formatSettingsInstall(result);
+      const prettyWithGuidance = maybeAppendProviderGuidance(result, pretty);
+      emitListResult(command, result, prettyWithGuidance);
     }),
   );
 

@@ -1676,6 +1676,7 @@ describe("CLI autosession surface", () => {
       "skills install",
       "guide list",
       "guide install",
+      "settings install",
     ]) {
       expect(schema.commands[command]).toBeDefined();
       expect(schema.commands[command]?.opt ?? {}).not.toHaveProperty(
@@ -1743,6 +1744,26 @@ describe("CLI autosession surface", () => {
       out: expect.objectContaining({
         target: expect.any(String),
         dryRun: expect.any(String),
+        ok: expect.any(String),
+        status: expect.any(String),
+        action: expect.any(String),
+      }),
+      exit: {
+        "0": expect.any(String),
+        "1": expect.any(String),
+      },
+    });
+    expect(schema.commands["settings install"]).toMatchObject({
+      when: expect.any(String),
+      req: {},
+      opt: expect.objectContaining({
+        "--dry-run": expect.any(String),
+        "--force": expect.any(String),
+      }),
+      out: expect.objectContaining({
+        destination: expect.any(String),
+        dryRun: expect.any(String),
+        force: expect.any(String),
         ok: expect.any(String),
         status: expect.any(String),
         action: expect.any(String),
@@ -3825,6 +3846,87 @@ describe("CLI autosession surface", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("--json");
+    });
+
+    test("settings install help advertises --json option", async () => {
+      const result = await runCli(["settings", "install", "--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("--json");
+      expect(result.stdout).toContain("--dry-run");
+      expect(result.stdout).toContain("--force");
+    });
+
+    test("settings install emits readable default output and JSON under --json", async () => {
+      const home = await useTempHome();
+
+      const pretty = await runCli(["settings", "install"], { home: home.home });
+      const json = await runCli(["settings", "install", "--json"], {
+        home: home.home,
+      });
+
+      // Default output is readable text
+      expect(pretty.exitCode).toBe(0);
+      expect(pretty.stderr).toBe("");
+      expect(pretty.stdout).toContain("Settings Install");
+      expect(pretty.stdout).toMatch(/destination: .*settings\.json/);
+      expect(pretty.stdout).toMatch(/dryRun\s*: false/);
+      expect(pretty.stdout).toMatch(/force\s*: false/);
+      expect(pretty.stdout).toMatch(/ok\s*: true/);
+      expect(pretty.stdout).toMatch(/status\s*: missing/);
+      expect(pretty.stdout).toMatch(/action\s*: installed/);
+
+      // --json produces parseable JSON payload
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      const payload = JSON.parse(json.stdout) as {
+        destination: string;
+        dryRun: boolean;
+        force: boolean;
+        ok: boolean;
+        status: string;
+        action: string;
+      };
+      expect(payload).toMatchObject({
+        dryRun: false,
+        force: false,
+        ok: true,
+      });
+      expect(["installed", "skipped"]).toContain(payload.action);
+    });
+
+    test("settings install suppresses guidance under JSON", async () => {
+      const home = await useTempHome();
+
+      const result = await runCli(["settings", "install", "--json"], {
+        home: home.home,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toContain("provider API key");
+    });
+
+    test("settings install shows guidance for actual installs", async () => {
+      const home = await useTempHome();
+
+      const result = await runCli(["settings", "install"], { home: home.home });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("provider API key");
+    });
+
+    test("settings install hides guidance for skips", async () => {
+      const home = await useTempHome();
+
+      await runCli(["settings", "install"], { home: home.home });
+      const result = await runCli(["settings", "install"], { home: home.home });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toContain("provider API key");
     });
 
     test("skills install blocked result retains exit 2 with error column in default output", async () => {

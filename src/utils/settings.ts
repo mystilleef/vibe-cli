@@ -1,14 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDataRoot } from "./db-core.js";
-import { findPackageRoot } from "./packageRoot.js";
 
-const SETTINGS_EXAMPLE_PATH = join(
-  findPackageRoot(import.meta.dir),
-  "settings.example.json",
-);
-
-export const SETTINGS_FILE_MISSING_ERROR = `No settings found. Copy ${SETTINGS_EXAMPLE_PATH} to ~/.vibe-cli/settings.json`;
+export const SETTINGS_FILE_MISSING_ERROR = `No settings found. Run 'vibe settings install' to create settings from the bundled template.`;
 
 export const SUPPORTED_PROVIDER_SPECS = [
   "openai",
@@ -100,7 +94,7 @@ export function resolveProviderEntry(
   return provider;
 }
 
-function validateProviderSettings(value: unknown): ProviderSettings {
+export function validateProviderSettings(value: unknown): ProviderSettings {
   const root = asObject(value, "settings.json");
   const provider = requiredString(
     root["provider"],

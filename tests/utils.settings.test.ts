@@ -172,6 +172,12 @@ describe("loadProviderSettings", () => {
     expect(() => loadProviderSettings()).toThrow(SETTINGS_FILE_MISSING_ERROR);
   });
 
+  test("missing-settings error recommends vibe settings install", () => {
+    expect(SETTINGS_FILE_MISSING_ERROR).toContain("vibe settings install");
+    expect(SETTINGS_FILE_MISSING_ERROR).not.toContain("mkdir");
+    expect(SETTINGS_FILE_MISSING_ERROR).not.toContain("cp ");
+  });
+
   test("fails on malformed JSON", async () => {
     await writeSettings("{not-json");
 
