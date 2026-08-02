@@ -42,7 +42,7 @@ export function throwIfSymlink(
   if (!isSymbolicLink) return;
   const { destPath, targetRoot, errorClass } = options;
   if (component === destPath) {
-    throw new errorClass(`Guide destination is a symlink: ${destPath}`);
+    throw new errorClass(`Destination is a symlink: ${destPath}`);
   }
   if (component === targetRoot) {
     throw new errorClass(`Target directory is a symlink: ${targetRoot}`);

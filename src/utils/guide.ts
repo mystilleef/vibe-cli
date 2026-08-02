@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync, type Stats, statSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageRoot } from "./packageRoot.js";
-import { expandTildePath } from "./paths.js";
+import { resolveTargetPath } from "./paths.js";
 import {
   getPathAncestorsAndSelf,
   rejectSymlinkPathComponentsSync,
@@ -100,13 +100,7 @@ export function readGuideSourceBuffer(
  * @throws {GuideTargetError} When target is `~` and home directory is unavailable.
  */
 export function resolveGuideTarget(target?: string): string {
-  try {
-    return expandTildePath(target);
-  } catch {
-    throw new GuideTargetError(
-      "Unable to determine home directory (HOME/USERPROFILE not set)",
-    );
-  }
+  return resolveTargetPath(target, GuideTargetError);
 }
 
 /** Status of the guide relative to its source. */

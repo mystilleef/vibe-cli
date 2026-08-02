@@ -666,7 +666,7 @@ describe("installGuide - copy fault failures", () => {
           dryRun: false,
           anchorDir: getAnchorDir(packageRoot),
         }),
-      ).rejects.toThrow(/Failed to install guide/);
+      ).rejects.toThrow(/Failed to install to/);
       // Temp file cleaned up
       expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(false);
     } finally {

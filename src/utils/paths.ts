@@ -30,3 +30,27 @@ export function expandTildePath(target?: string, defaultTo?: string): string {
   }
   return resolve(target);
 }
+
+/**
+ * Resolve a target path with tilde expansion, throwing a typed error
+ * when the home directory is unavailable.
+ *
+ * Consolidates the pattern shared by `resolveGuideTarget`,
+ * `resolveTargetRoot`, and the settings installer's target resolution.
+ *
+ * @param target - Optional target path (absolute, relative, or tilde).
+ * @param errorClass - Error constructor for the home-directory failure.
+ * @returns Absolute resolved path.
+ */
+export function resolveTargetPath<E extends new (message: string) => Error>(
+  target: string | undefined,
+  errorClass: E,
+): string {
+  try {
+    return expandTildePath(target);
+  } catch {
+    throw new errorClass(
+      "Unable to determine home directory (HOME/USERPROFILE not set)",
+    );
+  }
+}

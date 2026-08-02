@@ -1423,3 +1423,118 @@ describe("installSkills - computeInventory SkillTargetError message routing", ()
     }
   });
 });
+
+describe("installSkills - nested directory symlink in source skill", () => {
+  test("rejects source skill with nested symlinked subdirectory", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const skillsDir = join(packageRoot, "skills");
+    // Create a real directory outside the skill
+    const externalDir = await createTempDir(tempDirs);
+    await writeFile(join(externalDir, "nested-file.txt"), "external");
+    // Create a skill with a symlinked subdirectory pointing outside
+    await createSkillDir(skillsDir, "my-skill", { "SKILL.md": "# My Skill" });
+    await symlink(externalDir, join(skillsDir, "my-skill", "nested"), "dir");
+
+    const targetRoot = await createTempDir(tempDirs);
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallError);
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(/symlink/);
+  });
+});
+
+describe("installSkills - nested file symlink in source skill", () => {
+  test("rejects source skill with nested symlinked file", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const skillsDir = join(packageRoot, "skills");
+    // Create a real file outside the skill
+    const externalFile = join(await createTempDir(tempDirs), "external.txt");
+    await writeFile(externalFile, "external content");
+    // Create a skill with a symlinked file inside
+    await createSkillDir(skillsDir, "my-skill", { "SKILL.md": "# My Skill" });
+    await symlink(
+      externalFile,
+      join(skillsDir, "my-skill", "link.txt"),
+      "file",
+    );
+
+    const targetRoot = await createTempDir(tempDirs);
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallError);
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(/symlink/);
+  });
+});
+
+describe("installSkills - SKILL.md not a regular file", () => {
+  test("rejects source skill when SKILL.md is a directory", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const skillsDir = join(packageRoot, "skills");
+    // Create a skill where SKILL.md is actually a directory
+    await mkdir(join(skillsDir, "my-skill"), { recursive: true });
+    await mkdir(join(skillsDir, "my-skill", "SKILL.md"));
+
+    const targetRoot = await createTempDir(tempDirs);
+
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(InstallError);
+    await expect(
+      installSkills(targetRoot, {
+        dryRun: false,
+        force: false,
+        packageRoot,
+      }),
+    ).rejects.toThrow(/not a regular file/);
+  });
+});
+
+describe("installSkills - source skill readdir failure", () => {
+  test("rejects when skills directory cannot be read", async () => {
+    const packageRoot = await createPackageRoot(tempDirs);
+    const skillsDir = join(packageRoot, "skills");
+    await createSkillDir(skillsDir, "my-skill", { "SKILL.md": "# My Skill" });
+    // Remove read permission from skills directory
+    await chmod(skillsDir, 0o222);
+
+    const targetRoot = await createTempDir(tempDirs);
+
+    try {
+      await expect(
+        installSkills(targetRoot, {
+          dryRun: false,
+          force: false,
+          packageRoot,
+        }),
+      ).rejects.toThrow(InstallError);
+    } finally {
+      await chmod(skillsDir, 0o755);
+    }
+  });
+});
