@@ -46,14 +46,15 @@ Export matching `API` key (for example, `GEMINI_API_KEY`,
 Install bundled skills into your preferred `LLM` coding harness:
 
 ```sh
-# Antigravity CLI
-vibe skills install --target ~/.gemini/config/skills
+# Universal Agent Path (Default: ~/.agents/skills)
+vibe skills install
 
 # Claude Code
 vibe skills install --target ~/.claude/skills
 
-# Universal Agent Path (Default: ~/.agents/skills)
-vibe skills install
+# Antigravity CLI
+vibe skills install --target ~/.gemini/config/skills
+
 ```
 
 ### Step 4: Load agent policy
