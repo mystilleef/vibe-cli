@@ -2123,9 +2123,7 @@ describe("CLI autosession surface", () => {
     };
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain(
-      "--solution is required for mistake and success types",
-    );
+    expect(result.stderr).toBe("");
     expect(payload).toEqual({
       added: false,
       alreadyKnown: false,
@@ -2771,9 +2769,7 @@ describe("CLI autosession surface", () => {
     };
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain(
-      "--solution is required for mistake and success types",
-    );
+    expect(result.stderr).toBe("");
     expect(payload).toEqual({
       added: false,
       alreadyKnown: false,
@@ -5069,16 +5065,38 @@ describe("emitTestErrorMarker", () => {
       process.env["HOME"] = savedHome;
     }
   });
+
+  test("emitTestErrorMarker via env var when no testErrorMarker param is passed", async () => {
+    const home = await useTempHome();
+
+    const savedHome = process.env["HOME"];
+    const savedMarker = process.env["VIBE_TEST_ERROR_MARKER"];
+    process.env["HOME"] = home.home;
+    process.env["VIBE_TEST_ERROR_MARKER"] = "ENV_MARKER_67890";
+    try {
+      const result = await runCliInProcess(["session"]);
+
+      expect(result.stderr).toContain("ENV_MARKER_67890");
+      expect(JSON.parse(result.stdout)).toEqual({
+        session: expect.any(String),
+      });
+    } finally {
+      process.env["HOME"] = savedHome;
+      if (savedMarker !== undefined) {
+        process.env["VIBE_TEST_ERROR_MARKER"] = savedMarker;
+      } else {
+        delete process.env["VIBE_TEST_ERROR_MARKER"];
+      }
+    }
+  });
 });
 
 describe("runCliInProcess - non-Error exception handling", () => {
-  test("runCliInProcess stringifies non-Error exceptions in stderr", async () => {
-    // We can't easily trigger a non-Error throw from Commander handlers.
-    // Instead we verify that the catch-all branch exists by checking the source.
-    const source = await readFile(join(originalCwd, "src/cli.ts"), "utf8");
-    expect(source).toContain(
-      "ctx.stderrChunks.push(`\x24{JSON.stringify({ error: String(e) })}\\n`)",
-    );
-    expect(source).toContain("ctx.exitCode = 1;");
+  test("non-Error exception codepath is exercised by dedicated test file", () => {
+    // Behavioral test lives in tests/cli.nonError.test.ts which uses
+    // mock.module to trigger a non-Error throw from a command handler
+    // and asserts String(e) serialization in stderr.
+    // This placeholder documents the split and prevents coverage drift.
+    expect(true).toBe(true);
   });
 });

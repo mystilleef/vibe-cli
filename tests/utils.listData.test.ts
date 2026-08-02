@@ -31,6 +31,7 @@ import { buildListStats } from "../src/utils/listDataReaders";
 import { applyListLimit } from "../src/utils/listDataUtilsCollections";
 import {
   formatAlignedRows,
+  formatListSection,
   formatRelativeTime,
   truncateText,
 } from "../src/utils/listDataUtilsFormatting";
@@ -383,6 +384,86 @@ describe("list data foundations", () => {
     expect(formatAlignedRows(["a", "long"], [["xx", "y"]])).toContain("xx  y");
     expect(formatListCommandOverview()).toContain("- learnings");
     expect(toListOverviewJson().commands).toContain("all");
+  });
+
+  test("formatRelativeTime handles all time unit boundaries", () => {
+    const base = 100_000;
+    // "just now" when diff < 1s
+    expect(formatRelativeTime(base, { now: base + 500 })).toBe("just now");
+    expect(formatRelativeTime(base, { now: base })).toBe("just now");
+    // seconds
+    expect(formatRelativeTime(base, { now: base + 1_000 })).toBe("1s ago");
+    expect(formatRelativeTime(base, { now: base + 59_000 })).toBe("59s ago");
+    // minutes
+    expect(formatRelativeTime(base, { now: base + 60_000 })).toBe("1m ago");
+    expect(formatRelativeTime(base, { now: base + 3_599_000 })).toBe("59m ago");
+    // hours
+    expect(formatRelativeTime(base, { now: base + 3_600_000 })).toBe("1h ago");
+    expect(formatRelativeTime(base, { now: base + 86_399_000 })).toBe(
+      "23h ago",
+    );
+    // days
+    expect(formatRelativeTime(base, { now: base + 86_400_000 })).toBe("1d ago");
+    expect(formatRelativeTime(base, { now: base + 86_400_000 * 7 })).toBe(
+      "7d ago",
+    );
+    // future times
+    expect(formatRelativeTime(base + 60_000, { now: base })).toBe(
+      "1m from now",
+    );
+    // Date object for `now`
+    expect(formatRelativeTime(base, { now: new Date(base + 120_000) })).toBe(
+      "2m ago",
+    );
+    // string timestamps
+    expect(
+      formatRelativeTime("2026-01-01T00:00:00Z", {
+        now: new Date("2026-01-01T00:01:00Z").getTime(),
+      }),
+    ).toBe("1m ago");
+    // invalid string
+    expect(formatRelativeTime("garbage", { now: 0 })).toBe("unknown");
+  });
+
+  test("formatAlignedRows handles edge cases", () => {
+    // Empty rows
+    expect(formatAlignedRows(["a", "b"], [])).toBe("a  b\n-  -");
+    // Single row
+    const single = formatAlignedRows(["key"], [["value"]]);
+    expect(single).toContain("key");
+    expect(single).toContain("value");
+    expect(single).toContain("---");
+    // Uneven row lengths with missing cells treated as empty
+    const uneven = formatAlignedRows(["a", "b"], [["x"], ["y", "z"]]);
+    expect(uneven).toContain("a  b");
+    expect(uneven).toContain("x");
+    // Trailing whitespace trimmed
+    const trimmed = formatAlignedRows(["col"], [["val  "]]);
+    expect(trimmed).not.toMatch(/ {2}$/m);
+  });
+
+  test("formatListSection handles empty and whitespace-only body", () => {
+    expect(formatListSection("Title", "")).toContain("(none)");
+    expect(formatListSection("Title", "   ")).toContain("(none)");
+    expect(formatListSection("Title", "\n")).toContain("(none)");
+    // Normal body
+    const result = formatListSection("H", "body");
+    expect(result).toBe("H\n-\nbody");
+  });
+
+  test("truncateText throws on non-integer maxLength", () => {
+    expect(() => truncateText("abc", 3.5)).toThrow(
+      "maxLength must be a non-negative integer",
+    );
+    expect(() => truncateText("abc", NaN)).toThrow(
+      "maxLength must be a non-negative integer",
+    );
+    expect(() => truncateText("abc", Infinity)).toThrow(
+      "maxLength must be a non-negative integer",
+    );
+    // zero is valid
+    expect(truncateText("abc", 0)).toBe("…");
+    expect(truncateText("", 0)).toBe("");
   });
 
   test("formatListLearnings groups by category and shows solutions", () => {

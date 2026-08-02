@@ -89,8 +89,7 @@ export async function vibeLearnTool(
       categoryCount: categoryData?.count ?? 1,
       topCategories: categorySummary.slice(0, 3),
     };
-  } catch (error) {
-    console.error("vibe_learn error:", error);
+  } catch (_error) {
     return {
       added: false,
       alreadyKnown: false,

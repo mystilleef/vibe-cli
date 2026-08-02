@@ -70,7 +70,6 @@ export async function vibeCheckTool(
     };
   } catch (error) {
     const diagnostic = extractErrorMessage(error);
-    console.error("vibe_check error:", error);
     return { feedback: FALLBACK_FEEDBACK, status: "failed", diagnostic };
   }
 }

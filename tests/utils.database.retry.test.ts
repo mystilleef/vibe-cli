@@ -3,6 +3,10 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  isTransientSqliteError,
+  retryOnTransientSqliteError,
+} from "../src/utils/sqliteRetry";
 
 /**
  * Tests for the SQLite retry logic in openDatabase().
@@ -54,7 +58,6 @@ mock.module("bun:sqlite", () => ({
 // Import the module under test AFTER mock is registered so the mock
 // takes effect when database.ts imports bun:sqlite.
 import { DATABASE_FILENAME, openVibeDatabase } from "../src/utils/database";
-import { isTransientSqliteError } from "../src/utils/sqliteRetry";
 
 const roots: string[] = [];
 
@@ -211,5 +214,128 @@ describe("isTransientSqliteError", () => {
 
   test("returns false for Error without a code property", () => {
     expect(isTransientSqliteError(new Error("plain error"))).toBe(false);
+  });
+});
+
+describe("retryOnTransientSqliteError", () => {
+  test("returns result on first success", () => {
+    let calls = 0;
+    const result = retryOnTransientSqliteError(() => {
+      calls++;
+      return 42;
+    });
+    expect(result).toBe(42);
+    expect(calls).toBe(1);
+  });
+
+  test("retries on SQLITE_BUSY and succeeds on second attempt", () => {
+    let calls = 0;
+    const result = retryOnTransientSqliteError(() => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error("locked") as Error & { code: string };
+        err.code = "SQLITE_BUSY";
+        throw err;
+      }
+      return "success";
+    });
+    expect(result).toBe("success");
+    expect(calls).toBe(2);
+  });
+
+  test("retries on SQLITE_BUSY_SNAPSHOT and succeeds", () => {
+    let calls = 0;
+    const result = retryOnTransientSqliteError(() => {
+      calls++;
+      if (calls < 3) {
+        const err = new Error("snapshot") as Error & { code: string };
+        err.code = "SQLITE_BUSY_SNAPSHOT";
+        throw err;
+      }
+      return "recovered";
+    });
+    expect(result).toBe("recovered");
+    expect(calls).toBe(3);
+  });
+
+  test("throws immediately on non-transient error", () => {
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        const err = new Error("corrupt") as Error & { code: string };
+        err.code = "SQLITE_CORRUPT";
+        throw err;
+      }),
+    ).toThrow("corrupt");
+  });
+
+  test("throws immediately on error without code property", () => {
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        throw new Error("generic failure");
+      }),
+    ).toThrow("generic failure");
+  });
+
+  test("throws last error after exhausting all 3 retry attempts", () => {
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        const err = new Error("persistent lock") as Error & { code: string };
+        err.code = "SQLITE_BUSY";
+        throw err;
+      }),
+    ).toThrow("persistent lock");
+  });
+
+  test("makes exactly maxAttempts attempts before giving up", () => {
+    let calls = 0;
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        calls++;
+        const err = new Error("busy") as Error & { code: string };
+        err.code = "SQLITE_BUSY";
+        throw err;
+      }),
+    ).toThrow("busy");
+    expect(calls).toBe(3);
+  });
+
+  test("retries with mixed transient and non-transient errors", () => {
+    // A non-transient error between transient ones should abort immediately
+    let calls = 0;
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        calls++;
+        if (calls === 1) {
+          const err = new Error("busy") as Error & { code: string };
+          err.code = "SQLITE_BUSY";
+          throw err;
+        }
+        // Second call: non-transient — should abort
+        throw new Error("fatal");
+      }),
+    ).toThrow("fatal");
+    expect(calls).toBe(2);
+  });
+
+  test("preserves return value type through retry", () => {
+    let calls = 0;
+    const result: { value: string } = retryOnTransientSqliteError(() => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error("busy") as Error & { code: string };
+        err.code = "SQLITE_BUSY";
+        throw err;
+      }
+      return { value: "preserved" };
+    });
+    expect(result).toEqual({ value: "preserved" });
+  });
+
+  test("handles non-Error throws from the wrapped function", () => {
+    expect(() =>
+      retryOnTransientSqliteError(() => {
+        throw "string error";
+      }),
+    ).toThrow("string error");
   });
 });
