@@ -281,18 +281,20 @@ const checkCmd = program
   .option("--prompt <text>", "Original user prompt")
   .option("--max-attempts <n>", "Max refinement attempts before giving up");
 addModelOptions(checkCmd);
-checkCmd.action(async (opts) => {
-  let settingsMaxAttempts: number | undefined;
-  try {
-    settingsMaxAttempts = loadProviderSettings().maxAttempts;
-  } catch {
-    // Graceful degradation: missing/invalid settings fall through to env/default
-  }
-  const { params, maxAttempts } = buildCheckParams(opts, settingsMaxAttempts);
-  const result = await vibeGateLoop(params, maxAttempts);
-  emit(result);
-  if (!result.proceed) process.exit(2);
-});
+checkCmd.action(
+  withCliError(async (opts) => {
+    let settingsMaxAttempts: number | undefined;
+    try {
+      settingsMaxAttempts = loadProviderSettings().maxAttempts;
+    } catch {
+      // Graceful degradation: missing/invalid settings fall through to env/default
+    }
+    const { params, maxAttempts } = buildCheckParams(opts, settingsMaxAttempts);
+    const result = await vibeGateLoop(params, maxAttempts);
+    emit(result);
+    if (!result.proceed) process.exit(2);
+  }),
+);
 
 program
   .command("learn")
@@ -334,12 +336,14 @@ constitution
   .command("set")
   .description("Add one or more rules to the current constitution")
   .requiredOption("--rule <text...>", "Rule(s) to add (repeatable)")
-  .action((opts) => {
-    for (const rule of opts.rule as string[]) {
-      updateConstitution(rule);
-    }
-    emit(readListConstitution());
-  });
+  .action(
+    withCliError((opts) => {
+      for (const rule of opts.rule as string[]) {
+        updateConstitution(rule);
+      }
+      emit(readListConstitution());
+    }),
+  );
 
 constitution
   .command("reset")
@@ -347,17 +351,21 @@ constitution
     "Replace all rules for the current constitution (omit --rule to clear)",
   )
   .option("--rule <text...>", "Replacement rules (repeatable)")
-  .action((opts) => {
-    resetConstitution(opts.rule ?? []);
-    emit(readListConstitution());
-  });
+  .action(
+    withCliError((opts) => {
+      resetConstitution(opts.rule ?? []);
+      emit(readListConstitution());
+    }),
+  );
 
 constitution
   .command("get")
   .description("Get the active rules for the current constitution")
-  .action(() => {
-    emit(readListConstitution());
-  });
+  .action(
+    withCliError(() => {
+      emit(readListConstitution());
+    }),
+  );
 
 program
   .command("session")
