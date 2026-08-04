@@ -81,6 +81,10 @@ on the login page, vibe check it, then show for review._"
 The agent consults its policy, executes the underlying `vibe` binary,
 processes mentor feedback, and reports back.
 
+**NOTE:** The agent uses the `vibe-learn` and `vibe-constitution` skills
+on-demand and by discretion. Users don't need to activate the _learn_
+and _constitution_ skills.
+
 ### `vibe-check`
 
 Prompts mentor review before executing high-risk, ambiguous, or
