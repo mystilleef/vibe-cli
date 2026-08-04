@@ -209,3 +209,9 @@ bun verify
   `vibe-constitution`).
 - `docs/vibe-guide.md`: operational policy for harness agent context.
 - `tests/`: `Bun` test suite.
+
+## Credits
+
+Original project:
+[vibe-check-mcp](https://github.com/PV-Bhat/vibe-check-mcp-server) by
+[Pruthvi Bhat](https://github.com/PV-Bhat).
