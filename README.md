@@ -22,14 +22,14 @@ bun install -g @mystilleef/vibe-cli
 
 ### Step 2: Configure mentor provider
 
-Install the bundled settings template:
+1. Install the bundled settings template:
 
 ```sh
 vibe settings install
 ```
 
-Edit `~/.vibe-cli/settings.json` to define the mentor provider, model,
-and credentials:
+2. Edit `~/.vibe-cli/settings.json` to define the mentor provider,
+   model, and credentials:
 
 - `provider`: active mentor provider entry name.
 - `maxAttempts`: refinement limit for `vibe check`.
@@ -38,8 +38,8 @@ and credentials:
 - `providers[].defaultModel`: model fallback.
 - `providers[].thinking`: `off`, `low`, `medium`, `high`, or `xhigh`.
 
-Export matching `API` key (for example, `GEMINI_API_KEY`,
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+3. Export matching `API` key (for example, `GEMINI_API_KEY`,
+   `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
 
 ### Step 3: Install harness skills
 
