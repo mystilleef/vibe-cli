@@ -93,23 +93,6 @@ multi-step tasks.
      recommendations).
   5. Agent presents approved plan or adjusts strategy.
 
-### `vibe-learn`
-
-Persists lessons into local memory after concrete outcomes.
-
-- **Natural language**: _"Record a vibe lesson about this failed
-  database connection attempt."_
-- **Slash command**: `/vibe-learn`
-- **Categories**: `mistake`, `success`, `preference`.
-
-### `vibe-constitution`
-
-Enforces persistent behavioral rules across sessions.
-
-- **Natural language**: _"Add a standing rule to vibe constitution
-  requiring test execution before commits."_
-- **Slash command**: `/vibe-constitution`
-
 ## Storage
 
 - Data root: `~/.vibe-cli`.
