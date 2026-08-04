@@ -73,9 +73,13 @@ files automatically.
 
 ## Harness skill workflows
 
-Developers instruct coding agents via natural language or slash
-commands. The agent consults its policy, executes the underlying `vibe`
-binary, processes mentor feedback, and reports back.
+Developers instruct coding agents via natural language.
+
+For example, "_Draft a proposal to fix the stutter issues when scrolling
+on the login page, vibe check it, then show for review._"
+
+The agent consults its policy, executes the underlying `vibe` binary,
+processes mentor feedback, and reports back.
 
 ### `vibe-check`
 
