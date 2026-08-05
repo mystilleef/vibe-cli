@@ -190,7 +190,6 @@ vibe verify --provider gemini --model gemini-3.5-flash
 ```sh
 bun check
 bun coverage
-bun run build
 bun verify
 ```
 
