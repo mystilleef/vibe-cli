@@ -181,9 +181,42 @@ vibe guide install --json
 ```sh
 vibe list all --json
 vibe prune --duplicates --yes
+vibe doctor --vacuum --purge-backups --yes
 vibe session
 vibe verify --provider gemini --model gemini-3.5-flash
 ```
+
+### Diagnose and maintain local state
+
+Offline, provider-free diagnostics and confirmed maintenance for
+unreachable local state. Reports findings and counts as `JSON` without
+changing data.
+
+```sh
+vibe doctor
+vibe doctor --vacuum --purge-backups --keep-backups 3 --yes
+```
+
+- `--vacuum`: reclaim free pages.
+- `--purge-backups`: delete retired managed backups beyond retention.
+- `--purge-legacy`: delete recorded legacy `.bak` copies.
+- `--keep-backups <n>`: retained backup count; defaults to five.
+- `-y, --yes`: confirm applying explicit targets.
+
+Maintenance applies only when explicit targets accompany `--yes`. One
+safety backup precedes every apply and lands at `backupPath`.
+
+- Findings (`integrityCheck`, `foreignKeyCheck`, `freelistCount`,
+  `excessBackups`, `latestBackupPath`, `legacyBackups`,
+  `strandedOriginals`) keep pre-application values.
+- With `--purge-backups`, `excessBackups` counts the pending safety
+  backup, predicting the purge.
+- `appliedCounts` reports actual results: reclaimed free pages for
+  `vacuum`, deleted files for each purge.
+- `skippedTargets` lists unselected targets; `failedTargets` entries
+  carry `{target, message}`.
+- Exit `1` covers unhealthy diagnostics, backup or target failures, and
+  operational errors.
 
 ## Development
 
