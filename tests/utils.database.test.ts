@@ -7,9 +7,11 @@ import {
   DATABASE_FILENAME,
   getDatabasePath,
   getMigrationIds,
+  getMigrationSql,
   getVibeDatabase,
   openVibeDatabase,
   openVibeDatabaseWithMigrationReport,
+  readAppliedMigrationIds,
   type VibeDatabase,
   withDatabase,
 } from "../src/utils/database";
@@ -849,5 +851,41 @@ describe("openVibeDatabase branch coverage", () => {
     expect(report.pending.length).toBeGreaterThan(0);
     expect(report.status).toBe("migrated");
     expect(readMigrationIds(database)).toEqual(EXPECTED_MIGRATION_IDS);
+  });
+});
+
+describe("readAppliedMigrationIds", () => {
+  test("reports no applied migrations on an unbootstrapped database", () => {
+    const raw = new Database(":memory:");
+    try {
+      expect(readAppliedMigrationIds(raw)).toEqual([]);
+    } finally {
+      raw.close();
+    }
+  });
+
+  test("reports applied migration ids in schema order after bootstrap", () => {
+    const handle = openTracked();
+    expect(readAppliedMigrationIds(handle.db)).toEqual(EXPECTED_MIGRATION_IDS);
+  });
+});
+
+describe("getMigrationSql", () => {
+  test("rejects an unknown migration id", () => {
+    expect(() => getMigrationSql("999_unknown_migration")).toThrow(
+      "unknown migration id: 999_unknown_migration",
+    );
+  });
+
+  test("returns exact SQL for a known migration id", () => {
+    expect(getMigrationSql("002_sessions_display_cwd")).toBe(
+      "ALTER TABLE sessions ADD COLUMN cwd TEXT;",
+    );
+  });
+
+  test("returns non-empty SQL for every known migration id", () => {
+    for (const id of getMigrationIds()) {
+      expect(getMigrationSql(id).length).toBeGreaterThan(0);
+    }
   });
 });

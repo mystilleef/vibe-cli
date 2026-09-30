@@ -2,17 +2,11 @@ import type Database from "bun:sqlite";
 import type { VibeCheckInput } from "../tools/vibeCheck.js";
 import { getCwdKey } from "./autosession.js";
 import { withDatabase } from "./database.js";
+import { ensureSessionRow } from "./sessionRows.js";
 
 interface InteractionRow {
   goal: string;
   output: string;
-}
-
-function ensureSession(db: Database, sessionId: string): void {
-  const now = new Date().toISOString();
-  db.prepare(
-    "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
-  ).run(sessionId, `history:${getCwdKey(sessionId)}`, now, now);
 }
 
 function pruneSession(db: Database, sessionId: string): void {
@@ -69,12 +63,18 @@ export async function addToHistory(
   output: string,
 ): Promise<void> {
   withDatabase((db) =>
-    db.transaction(() => {
-      ensureSession(db, sessionId);
-      db.prepare(
-        "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
-      ).run(sessionId, input.goal, output, Date.now());
-      pruneSession(db, sessionId);
-    })(),
+    db
+      .transaction(() => {
+        ensureSessionRow(db, {
+          id: sessionId,
+          cwdKey: `history:${getCwdKey(sessionId)}`,
+          createdAt: new Date().toISOString(),
+        });
+        db.prepare(
+          "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
+        ).run(sessionId, input.goal, output, Date.now());
+        pruneSession(db, sessionId);
+      })
+      .immediate(),
   );
 }

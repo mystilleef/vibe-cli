@@ -1,15 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { spawnChild } from "./helpers/childProcess.js";
+import { packAndExtract } from "./helpers/packedPackage.js";
+import { fileExists } from "./helpers/skillsTestUtils.js";
 
 const originalCwd = process.cwd();
 const packageRoot = originalCwd;
@@ -23,87 +17,15 @@ afterAll(async () => {
   }
 });
 
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Pack and extract the package, returning the extracted root.
- * The fixture is reused across tests via beforeAll/afterAll.
- */
-async function packAndExtract(): Promise<string> {
-  const workRoot = await mkdtemp(join(packageRoot, ".guide-pack-"));
-  const packDir = join(workRoot, "pack");
-  const extractDir = join(workRoot, "extract");
-  await mkdir(packDir, { recursive: true });
-  await mkdir(extractDir, { recursive: true });
-
-  // Rebuild dist so the packed CLI matches current source contracts.
-  const buildResult = spawnSync("bun", ["run", "build"], {
-    cwd: packageRoot,
-    env: {
-      ...process.env,
-      CI: "true",
-      NO_COLOR: "1",
-      PAGER: "cat",
-      TERM: "dumb",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
-    encoding: "utf-8",
-  });
-  expect(buildResult.status).toBe(0);
-
-  const packResult = spawnSync(
-    "bun",
-    ["pm", "pack", "--destination", packDir, "--ignore-scripts", "--quiet"],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        CI: "true",
-        NO_COLOR: "1",
-        PAGER: "cat",
-        TERM: "dumb",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
-      encoding: "utf-8",
-    },
-  );
-  expect(packResult.status).toBe(0);
-
-  const packedFiles = (await readdir(packDir)).filter((name) =>
-    name.endsWith(".tgz"),
-  );
-  expect(packedFiles).toHaveLength(1);
-  const tarball = join(packDir, packedFiles[0] as string);
-
-  const extractResult = spawnSync("tar", ["-xzf", tarball, "-C", extractDir], {
-    cwd: packageRoot,
-    env: process.env as Record<string, string>,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 15_000,
-    encoding: "utf-8",
-  });
-  expect(extractResult.status).toBe(0);
-
-  const extractedRoot = join(extractDir, "package");
-  expect(await fileExists(join(extractedRoot, "package.json"))).toBe(true);
-  expect(await fileExists(join(extractedRoot, "dist", "vibe.js"))).toBe(true);
-
-  packFixtureRoot = workRoot;
-  return extractedRoot;
-}
-
 let extractedRoot: string;
 
+/** Pack and extract once; the fixture is reused across tests. */
 beforeAll(async () => {
-  extractedRoot = await packAndExtract();
+  const fixture = await packAndExtract(".guide-pack-");
+  packFixtureRoot = fixture.workRoot;
+  extractedRoot = fixture.extractedRoot;
+  expect(await fileExists(join(extractedRoot, "package.json"))).toBe(true);
+  expect(await fileExists(join(extractedRoot, "dist", "vibe.js"))).toBe(true);
 }, 90_000);
 
 describe("packed package guide surface", () => {
@@ -149,15 +71,13 @@ describe("packed package guide surface", () => {
     const workDir = await mkdtemp(join(extractedRoot, ".guide-test-"));
     try {
       // Default output prints readable Guide section.
-      const pretty = spawnSync(
+      const pretty = await spawnChild(
         "bun",
         [join(extractedRoot, "dist", "vibe.js"), "guide", "list"],
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -168,15 +88,13 @@ describe("packed package guide surface", () => {
       expect(pretty.stdout).toContain("status:");
 
       // --json preserves parseable payload.
-      const result = spawnSync(
+      const result = await spawnChild(
         "bun",
         [join(extractedRoot, "dist", "vibe.js"), "guide", "list", "--json"],
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -197,7 +115,7 @@ describe("packed package guide surface", () => {
     const workDir = await mkdtemp(join(extractedRoot, ".guide-test-"));
     try {
       // Default output prints readable Guide Install section.
-      const pretty = spawnSync(
+      const pretty = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -208,9 +126,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -221,7 +137,7 @@ describe("packed package guide surface", () => {
       expect(pretty.stdout).toContain("ok: true");
 
       // --json preserves parseable payload.
-      const result = spawnSync(
+      const result = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -233,9 +149,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -263,15 +177,13 @@ describe("packed package guide surface", () => {
   });
 
   test("packed guide list rejects unsupported options with stderr-only fatal JSON", async () => {
-    const result = spawnSync(
+    const result = await spawnChild(
       "bun",
       [join(extractedRoot, "dist", "vibe.js"), "guide", "list", "--bogus"],
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 
@@ -287,15 +199,13 @@ describe("packed package guide surface", () => {
     const workDir = await mkdtemp(join(extractedRoot, ".guide-test-"));
     try {
       // Default output prints readable Guide Install section.
-      const pretty = spawnSync(
+      const pretty = await spawnChild(
         "bun",
         [join(extractedRoot, "dist", "vibe.js"), "guide", "install"],
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -310,15 +220,13 @@ describe("packed package guide surface", () => {
       expect(await fileExists(join(workDir, "vibe-guide.md"))).toBe(true);
 
       // --json preserves parseable payload (second install is idempotent).
-      const result = spawnSync(
+      const result = await spawnChild(
         "bun",
         [join(extractedRoot, "dist", "vibe.js"), "guide", "install", "--json"],
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -348,7 +256,7 @@ describe("packed package guide surface", () => {
     const targetDir = join(workDir, "target");
     try {
       // Pretty list against an explicit target reports missing without writing.
-      const listPretty = spawnSync(
+      const listPretty = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -360,9 +268,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -374,7 +280,7 @@ describe("packed package guide surface", () => {
       expect(await fileExists(join(targetDir, "vibe-guide.md"))).toBe(false);
 
       // --json list reports the explicit target, not the cwd default.
-      const listJson = spawnSync(
+      const listJson = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -387,9 +293,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -403,7 +307,7 @@ describe("packed package guide surface", () => {
       expect(listPayload.status).toBe("missing");
 
       // Pretty install writes into the explicit target, not the cwd.
-      const installPretty = spawnSync(
+      const installPretty = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -415,9 +319,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -432,7 +334,7 @@ describe("packed package guide surface", () => {
       expect(await fileExists(join(workDir, "vibe-guide.md"))).toBe(false);
 
       // --json install reports the explicit target with the full field set.
-      const installJson = spawnSync(
+      const installJson = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -445,9 +347,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -482,7 +382,7 @@ describe("packed package guide surface", () => {
     const targetDir = join(workDir, "target");
     try {
       // Seed an installed guide, then modify the target copy.
-      const seed = spawnSync(
+      const seed = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -495,9 +395,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -513,7 +411,7 @@ describe("packed package guide surface", () => {
       );
 
       // List reports outdated drift against the modified target.
-      const list = spawnSync(
+      const list = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -526,9 +424,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -542,7 +438,7 @@ describe("packed package guide surface", () => {
       expect(listPayload.status).toBe("outdated");
 
       // Dry-run plans a replace without touching the modified file.
-      const dryRun = spawnSync(
+      const dryRun = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -556,9 +452,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -581,7 +475,7 @@ describe("packed package guide surface", () => {
       );
 
       // Real install replaces the modified file byte-for-byte.
-      const install = spawnSync(
+      const install = await spawnChild(
         "bun",
         [
           join(extractedRoot, "dist", "vibe.js"),
@@ -594,9 +488,7 @@ describe("packed package guide surface", () => {
         {
           cwd: workDir,
           env: { ...process.env, HOME: workDir },
-          stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000,
-          encoding: "utf-8",
         },
       );
 
@@ -626,15 +518,13 @@ describe("packed package guide surface", () => {
   });
 
   test("packed guide install rejects unsupported options with stderr-only fatal JSON", async () => {
-    const result = spawnSync(
+    const result = await spawnChild(
       "bun",
       [join(extractedRoot, "dist", "vibe.js"), "guide", "install", "--bogus"],
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 
@@ -647,7 +537,7 @@ describe("packed package guide surface", () => {
   });
 
   test("packed guide install surfaces fatal target validation errors as stderr-only fatal JSON", async () => {
-    const result = spawnSync(
+    const result = await spawnChild(
       "bun",
       [
         join(extractedRoot, "dist", "vibe.js"),
@@ -659,9 +549,7 @@ describe("packed package guide surface", () => {
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 
@@ -677,15 +565,13 @@ describe("packed package guide surface", () => {
   });
 
   test("packed guide help advertises --json option", async () => {
-    const listHelp = spawnSync(
+    const listHelp = await spawnChild(
       "bun",
       [join(extractedRoot, "dist", "vibe.js"), "guide", "list", "--help"],
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 
@@ -693,15 +579,13 @@ describe("packed package guide surface", () => {
     expect(listHelp.stderr).toBe("");
     expect(listHelp.stdout).toContain("--json");
 
-    const installHelp = spawnSync(
+    const installHelp = await spawnChild(
       "bun",
       [join(extractedRoot, "dist", "vibe.js"), "guide", "install", "--help"],
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 
@@ -711,15 +595,13 @@ describe("packed package guide surface", () => {
   });
 
   test("packed schema advertises --json for guide commands", async () => {
-    const result = spawnSync(
+    const result = await spawnChild(
       "bun",
       [join(extractedRoot, "dist", "vibe.js"), "schema"],
       {
         cwd: extractedRoot,
         env: { ...process.env, HOME: extractedRoot },
-        stdio: ["ignore", "pipe", "pipe"],
         timeout: 10_000,
-        encoding: "utf-8",
       },
     );
 

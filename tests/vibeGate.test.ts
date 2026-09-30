@@ -535,4 +535,25 @@ describe("vibeGateLoop", () => {
     // 1 check + 1 gate + 1 revision + 1 check + 1 gate = 5 requests
     expect(requests).toHaveLength(5);
   });
+
+  test("fails closed when a fractional attempt budget exits the loop without running", async () => {
+    await expect(vibeGateLoop(input(), 0.5)).rejects.toThrow(
+      "vibeGateLoop: unexpected loop exit",
+    );
+    expect(requests).toHaveLength(0);
+  });
+
+  test("fails closed when a fractional attempt budget exits the loop after a revision", async () => {
+    responseQueue.push(
+      "questions:first",
+      gateDecision(false, 0.3, "missing rollback"),
+      "add rollback and smoke tests",
+    );
+
+    await expect(vibeGateLoop(input(), 1.5)).rejects.toThrow(
+      "vibeGateLoop: unexpected loop exit",
+    );
+    // 1 check + 1 gate + 1 revision = 3 requests
+    expect(requests).toHaveLength(3);
+  });
 });

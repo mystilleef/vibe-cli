@@ -12,7 +12,6 @@ import {
   collectDuplicateLearningPruneGroups,
   collectStaleLearningPruneCandidates,
   collectStaleSessionPruneCandidates,
-  createPruneDatabaseBackup,
 } from "../src/utils/pruneStorage";
 import {
   addLearningEntry,
@@ -22,11 +21,16 @@ import {
   getLearningContextText,
   getLearningEntries,
   isLearningOverlapDuplicate,
-  type LearningType,
   removeLearningEntriesForDemo,
   removeStaleDemoEntries,
 } from "../src/utils/storage";
 import { requireBackupPath } from "./helpers/requireBackupPath";
+import {
+  insertLearningRows as insertLearningRowsInto,
+  insertSessionRows as insertSessionRowsInto,
+  type SeedLearningRow,
+  type SeedSessionInput,
+} from "./helpers/storageSeed";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;
@@ -252,32 +256,8 @@ function writeRawLog(
   );
 }
 
-type SeedLearningRow = {
-  category: string;
-  observation: string;
-  timestamp: number;
-  type?: LearningType;
-  solution?: string;
-  demoId?: string;
-};
-
 function insertLearningRows(rows: SeedLearningRow[]): number[] {
-  return withDatabase((db) => {
-    const insert = db.prepare(
-      "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
-    );
-    return rows.map((row) => {
-      const result = insert.run(
-        row.type ?? "mistake",
-        row.category,
-        row.observation,
-        row.solution ?? null,
-        row.timestamp,
-        row.demoId ?? null,
-      );
-      return Number(result.lastInsertRowid);
-    });
-  });
+  return withDatabase((db) => insertLearningRowsInto(db, rows));
 }
 
 function idAt(ids: number[], index: number): number {
@@ -286,49 +266,16 @@ function idAt(ids: number[], index: number): number {
   return id;
 }
 
-type SeedSessionRow = {
-  id: string;
-  cwd?: string | null;
-  createdAt: string;
-  lastAccessedAt: string;
-  constitutionRules?: string[];
-  interactions?: number;
-};
-
-function insertSessionRows(rows: SeedSessionRow[]): void {
+function insertSessionRows(rows: SeedSessionInput[]): void {
   withDatabase((db) => {
-    const insertSession = db.prepare(
-      "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
+    insertSessionRowsInto(
+      db,
+      rows.map((row, rowIndex) => ({
+        ...row,
+        cwdKey: row.cwdKey ?? `session-prune-${rowIndex}`,
+        cwd: row.cwd === undefined ? `/tmp/${row.id}` : row.cwd,
+      })),
     );
-    const insertRule = db.prepare(
-      "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
-    );
-    const insertInteraction = db.prepare(
-      "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
-    );
-
-    rows.forEach((row, rowIndex) => {
-      insertSession.run(
-        row.id,
-        `session-prune-${rowIndex}`,
-        row.cwd === undefined ? `/tmp/${row.id}` : row.cwd,
-        row.createdAt,
-        row.lastAccessedAt,
-      );
-
-      row.constitutionRules?.forEach((rule, ruleIndex) => {
-        insertRule.run(row.id, rule, ruleIndex, row.createdAt);
-      });
-
-      for (let index = 0; index < (row.interactions ?? 0); index += 1) {
-        insertInteraction.run(
-          row.id,
-          `goal ${row.id} ${index}`,
-          JSON.stringify({ reason: `output ${row.id} ${index}` }),
-          index,
-        );
-      }
-    });
   });
 }
 
@@ -868,7 +815,7 @@ describe("collectStaleSessionPruneCandidates", () => {
 });
 
 describe("executeDestructivePrune", () => {
-  test("reports dry-run candidate sets and deletes selected target rows", () => {
+  test("reports dry-run candidate sets and deletes selected target rows", async () => {
     const now = 200 * DAY_MS;
     const ids = insertLearningRows([
       { category: "old", observation: "old learning", timestamp: 50 * DAY_MS },
@@ -916,7 +863,7 @@ describe("executeDestructivePrune", () => {
       activeSessionId: "active-session",
     });
 
-    const result = executeDestructivePrune({
+    const result = await executeDestructivePrune({
       targets,
       ageDays: 90,
       now,
@@ -948,20 +895,18 @@ describe("executeDestructivePrune", () => {
     });
   });
 
-  test("backs up before deletion and captures WAL-resident rows", () => {
+  test("backs up before deletion and captures WAL-resident rows", async () => {
     const now = 200 * DAY_MS;
     withDatabase(() => undefined);
     const direct = new Database(getDatabasePath(), { create: true });
     try {
       direct.exec("PRAGMA foreign_keys = ON");
       direct.exec("PRAGMA journal_mode = WAL");
-      direct
-        .prepare(
-          "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .run("mistake", "wal", "wal old", null, 50 * DAY_MS, null);
+      insertLearningRowsInto(direct, [
+        { category: "wal", observation: "wal old", timestamp: 50 * DAY_MS },
+      ]);
 
-      const result = executeDestructivePrune({
+      const result = await executeDestructivePrune({
         targets: ["learnings"],
         ageDays: 90,
         now,
@@ -989,7 +934,7 @@ describe("executeDestructivePrune", () => {
     expect(getLearningEntries()["wal"]).toBeUndefined();
   });
 
-  test("aborts deletion and reports backup failure details", () => {
+  test("aborts deletion and reports backup failure details", async () => {
     const now = 200 * DAY_MS;
     insertLearningRows([
       {
@@ -998,15 +943,16 @@ describe("executeDestructivePrune", () => {
         timestamp: 50 * DAY_MS,
       },
     ]);
-    const blockedBackupDirectory = path.join(home.dataRoot, "blocked-backups");
-    fs.mkdirSync(home.dataRoot, { recursive: true });
-    fs.writeFileSync(blockedBackupDirectory, "not a directory", "utf8");
+    fs.writeFileSync(
+      path.join(home.dataRoot, "backups"),
+      "not a directory",
+      "utf8",
+    );
 
-    const result = executeDestructivePrune({
+    const result = await executeDestructivePrune({
       targets: ["learnings"],
       ageDays: 90,
       now,
-      backupDirectory: blockedBackupDirectory,
     });
 
     expect(result.backupPath).toBeNull();
@@ -1031,8 +977,8 @@ describe("executeDestructivePrune", () => {
     ).toEqual(["kept after backup failure"]);
   });
 
-  test("backs up empty destructive runs and reports zero counts", () => {
-    const result = executeDestructivePrune({
+  test("backs up empty destructive runs and reports zero counts", async () => {
+    const result = await executeDestructivePrune({
       targets: ["learnings"],
       ageDays: 90,
       now: 200 * DAY_MS,
@@ -1057,7 +1003,7 @@ describe("executeDestructivePrune", () => {
     expect(result.skippedTargets).toEqual(["duplicates", "demos", "sessions"]);
   });
 
-  test("reports per-target deletion failure after a successful backup", () => {
+  test("reports per-target deletion failure after a successful backup", async () => {
     const now = 200 * DAY_MS;
     insertLearningRows([
       {
@@ -1066,35 +1012,26 @@ describe("executeDestructivePrune", () => {
         timestamp: 50 * DAY_MS,
       },
     ]);
-    const originalCopyFileSync = fs.copyFileSync;
-    fs.copyFileSync = ((...args: Parameters<typeof fs.copyFileSync>) => {
-      originalCopyFileSync(...args);
-      getVibeDatabase().db.exec("DROP TABLE learning_entries");
-    }) as typeof fs.copyFileSync;
+    getVibeDatabase().db.exec(
+      "CREATE TRIGGER block_learning_delete BEFORE DELETE ON learning_entries BEGIN SELECT RAISE(ABORT, 'learning delete blocked'); END",
+    );
 
-    try {
-      const result = executeDestructivePrune({
-        targets: ["learnings"],
-        ageDays: 90,
-        now,
-        backupTimestamp: new Date("2026-01-06T03:04:05.006Z"),
-      });
+    const result = await executeDestructivePrune({
+      targets: ["learnings"],
+      ageDays: 90,
+      now,
+      backupTimestamp: new Date("2026-01-06T03:04:05.006Z"),
+    });
 
-      requireBackupPath(result);
-      expect(result.candidateCounts.learnings).toBe(1);
-      expect(result.deletedCounts.learnings).toBe(0);
-      expect(result.failedTargets).toEqual([
-        {
-          target: "learnings",
-          message: expect.stringContaining("no such table"),
-        },
-      ]);
-    } finally {
-      fs.copyFileSync = originalCopyFileSync;
-    }
+    requireBackupPath(result);
+    expect(result.candidateCounts.learnings).toBe(1);
+    expect(result.deletedCounts.learnings).toBe(0);
+    expect(result.failedTargets).toEqual([
+      { target: "learnings", message: "learning delete blocked" },
+    ]);
   });
 
-  test("deletes stale sessions through cascade behavior", () => {
+  test("deletes stale sessions through cascade behavior", async () => {
     const now = 200 * DAY_MS;
     insertSessionRows([
       {
@@ -1111,7 +1048,7 @@ describe("executeDestructivePrune", () => {
       },
     ]);
 
-    const result = executeDestructivePrune({
+    const result = await executeDestructivePrune({
       targets: ["sessions"],
       ageDays: 90,
       now,
@@ -1385,115 +1322,6 @@ describe("getLearningContextText", () => {
     expect(lines[0]).toContain("first");
     expect(lines[1]).toContain("second");
     expect(lines[2]).toContain("third");
-  });
-});
-
-describe("createPruneDatabaseBackup", () => {
-  test("backs up with default directory when none provided", () => {
-    const now = 200 * DAY_MS;
-    insertLearningRows([
-      {
-        category: "backup-test",
-        observation: "entry to back up",
-        timestamp: now,
-      },
-    ]);
-
-    const result = executeDestructivePrune({
-      targets: ["learnings"],
-      ageDays: 90,
-      now,
-      backupTimestamp: new Date("2026-02-01T03:04:05.006Z"),
-    });
-
-    const backupPath = requireBackupPath(result);
-    expect(backupPath).toContain("backups");
-    expect(backupPath).toContain("vibe-prune-");
-  });
-
-  test("backs up with custom directory", () => {
-    const now = 200 * DAY_MS;
-    const customBackupDir = path.join(home.dataRoot, "custom-backups");
-    insertLearningRows([
-      {
-        category: "backup-custom",
-        observation: "entry for custom backup",
-        timestamp: now,
-      },
-    ]);
-
-    const result = executeDestructivePrune({
-      targets: ["learnings"],
-      ageDays: 90,
-      now,
-      backupTimestamp: new Date("2026-02-02T03:04:05.006Z"),
-      backupDirectory: customBackupDir,
-    });
-
-    const customPath = requireBackupPath(result);
-    expect(customPath).toContain("custom-backups");
-  });
-
-  test("creates backup with readable file at default path", () => {
-    // Seed data so the database file exists.
-    insertLearningRows([
-      {
-        category: "backup-direct",
-        observation: "entry for direct backup",
-        timestamp: Date.now(),
-      },
-    ]);
-
-    const timestamp = new Date("2026-02-03T03:04:05.006Z");
-    const backupPath = createPruneDatabaseBackup({ timestamp });
-
-    expect(backupPath).toContain("backups");
-    expect(backupPath).toContain("vibe-prune-");
-    expect(fs.existsSync(backupPath)).toBe(true);
-
-    try {
-      fs.unlinkSync(backupPath);
-    } catch {
-      /* cleanup */
-    }
-  });
-
-  test("throws when a live WAL reader keeps checkpoint busy", () => {
-    insertLearningRows([
-      {
-        category: "busy-checkpoint",
-        observation: "snapshot row",
-        timestamp: Date.now(),
-      },
-    ]);
-    const reader = new Database(getDatabasePath(), { readonly: true });
-
-    try {
-      reader.exec("BEGIN");
-      expect(
-        reader
-          .query<{ count: number }, []>(
-            "SELECT COUNT(*) AS count FROM learning_entries",
-          )
-          .get()?.count,
-      ).toBe(1);
-      insertLearningRows([
-        {
-          category: "busy-checkpoint",
-          observation: "wal row",
-          timestamp: Date.now(),
-        },
-      ]);
-
-      expect(() =>
-        createPruneDatabaseBackup({
-          timestamp: new Date("2026-02-04T03:04:05.006Z"),
-        }),
-      ).toThrow("database checkpoint could not complete before backup");
-    } finally {
-      reader.exec("ROLLBACK");
-      reader.close();
-    }
   });
 });
 

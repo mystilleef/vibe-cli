@@ -6,7 +6,6 @@ import {
   getLegacyArtifactPath,
   importAllLegacyData,
 } from "./legacyImporter.js";
-import { retryOnTransientSqliteError } from "./sqliteRetry.js";
 
 export const DATABASE_FILENAME = "vibe.db";
 
@@ -42,10 +41,11 @@ export function withDatabase<T>(
   const handle =
     options !== undefined ? openVibeDatabase(options) : getVibeDatabase();
   try {
-    // Concurrent processes sharing this SQLite file (WAL mode) can transiently
-    // contend for locks; retrying is safe because every multi-statement
-    // callback in this codebase runs inside its own db.transaction().
-    return retryOnTransientSqliteError(() => fn(handle.db));
+    // Concurrent processes share this WAL-mode file. Write transactions begin
+    // IMMEDIATE so lock contention waits on busy_timeout; a deferred
+    // read-then-write upgrade skips the busy handler and fails fast with
+    // SQLITE_BUSY or SQLITE_BUSY_SNAPSHOT.
+    return fn(handle.db);
   } finally {
     if (options !== undefined) {
       handle.close();
@@ -59,7 +59,7 @@ let singletonHandle: VibeDatabase | null = null;
 
 /**
  * Returns a process-lifetime database singleton for normal operations.
- * Callers needing independent lifecycle control (e.g., createPruneDatabaseBackup)
+ * Callers needing independent lifecycle control (e.g., prune backups)
  * should use openVibeDatabase() directly.
  */
 export function getVibeDatabase(): VibeDatabase {
@@ -153,6 +153,39 @@ export function getMigrationIds(): string[] {
   return MIGRATIONS.map(({ id }) => id);
 }
 
+/**
+ * SQL for one migration id. Callers materializing historical schema states
+ * execute the migration's exact DDL instead of copying it, so fixtures can
+ * never drift from the schema they claim to reproduce.
+ */
+export function getMigrationSql(id: string): string {
+  const migration = MIGRATIONS.find((entry) => entry.id === id);
+  if (migration === undefined) {
+    throw new Error(`unknown migration id: ${id}`);
+  }
+  return migration.sql;
+}
+
+/** Lock contention waits this long before a write transaction fails busy. */
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
+
+/** Busy-timeout value that makes lock contention fail fast instead of waiting. */
+export const SQLITE_BUSY_TIMEOUT_DISABLED = 0;
+
+/** Apply the connection's `busy_timeout` pragma. */
+export function applyBusyTimeout(db: Database, timeoutMs: number): void {
+  db.exec(`PRAGMA busy_timeout = ${timeoutMs}`);
+}
+
+/**
+ * Enforce the invariants every vibe connection shares: foreign-key
+ * enforcement on, lock contention waiting out busy_timeout.
+ */
+export function configureConnection(db: Database): void {
+  db.exec("PRAGMA foreign_keys = ON");
+  applyBusyTimeout(db, SQLITE_BUSY_TIMEOUT_MS);
+}
+
 export function openVibeDatabase(
   options: VibeDatabaseOptions = {},
 ): VibeDatabase {
@@ -192,7 +225,7 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
       db.transaction(() => {
         db.exec(migration.sql);
         insertMigration.run(migration.id, appliedAt);
-      })();
+      }).immediate();
       pending.push(migration.id);
     } catch (err) {
       // A concurrent process may have applied this migration between our
@@ -239,21 +272,18 @@ function openDatabase(
     };
   }
 
-  return retryOnTransientSqliteError(() =>
-    openDatabaseOnce(databasePath, options, captureReport),
-  );
+  return connectDatabase(databasePath, options, captureReport);
 }
 
-function openDatabaseOnce(
+function connectDatabase(
   databasePath: string,
   options: VibeDatabaseOptions,
   captureReport: boolean,
 ): VibeDatabaseMigrationResult {
   const db = new Database(databasePath, { create: true });
   try {
-    db.exec("PRAGMA busy_timeout = 5000");
-    db.exec("PRAGMA foreign_keys = ON");
-    if (databasePath !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
+    configureConnection(db);
+    if (databasePath !== ":memory:") enableWriteAheadLog(db);
     const ranAt = new Date().toISOString();
     const pending = initializeSchema(db, ranAt);
     const legacyImports = options.legacyImports ?? "all";
@@ -279,6 +309,32 @@ function openDatabaseOnce(
   }
 }
 
+const WAL_ATTEMPTS = 3;
+
+/**
+ * Converting a fresh file to WAL upgrades a read lock to a write lock inside
+ * SQLite, a path that skips the busy handler, so concurrent first opens fail
+ * fast with SQLITE_BUSY. BEGIN IMMEDIATE waits out the competing writer on
+ * busy_timeout; its conversion persists in the file header, so the next
+ * attempt finds WAL already set.
+ */
+function enableWriteAheadLog(db: Database): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (error) {
+      if (attempt === WAL_ATTEMPTS || !isSqliteBusy(error)) throw error;
+      db.exec("BEGIN IMMEDIATE");
+      db.exec("ROLLBACK");
+    }
+  }
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "SQLITE_BUSY";
+}
+
 function createMigrationReport(
   db: Database,
   pending: string[],
@@ -293,9 +349,19 @@ function createMigrationReport(
   };
 }
 
-function readAppliedMigrationIds(db: Database): string[] {
-  const rows = db
-    .query("SELECT id FROM schema_migrations ORDER BY id")
-    .all() as Array<{ id: string }>;
-  return rows.map(({ id }) => id);
+/**
+ * Read applied migration ids in schema order; an unbootstrapped database
+ * without a `schema_migrations` table reports none applied.
+ */
+export function readAppliedMigrationIds(db: Database): string[] {
+  const table = db
+    .query(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+    )
+    .get();
+  if (table === null) return [];
+  return db
+    .query<{ id: string }, []>("SELECT id FROM schema_migrations ORDER BY id")
+    .all()
+    .map((row) => row.id);
 }

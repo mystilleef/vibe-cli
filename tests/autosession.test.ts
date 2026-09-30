@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AUTOSESSION_TTL_MS,
@@ -10,32 +9,17 @@ import {
   resolveAutosession,
 } from "../src/utils/autosession";
 import { openVibeDatabase } from "../src/utils/database";
-import { isTransientSqliteError } from "../src/utils/sqliteRetry";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { runChild } from "./helpers/childProcess";
+import { seedInitialMigration } from "./helpers/migrationSeed";
+import { createTempHarness } from "./helpers/tempHome";
 
-const homes: TempHomeContext[] = [];
-const cwdRoots: string[] = [];
+const harness = createTempHarness();
+const { useTempHome, createCwd } = harness;
 const originalCwd = process.cwd();
 
 afterEach(async () => {
-  process.chdir(originalCwd);
-  await Promise.all(
-    cwdRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  );
-  await Promise.all(homes.splice(0).map((home) => home.cleanup()));
+  await harness.cleanup();
 });
-
-async function useTempHome(): Promise<TempHomeContext> {
-  const home = await createTempHome();
-  homes.push(home);
-  return home;
-}
-
-async function createCwd(name: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), `vibe-cli-${name}-`));
-  cwdRoots.push(dir);
-  return dir;
-}
 
 function updateLastAccessed(cwd: string, lastAccessedAt: string): void {
   const handle = openVibeDatabase();
@@ -114,24 +98,22 @@ const result = ra(cwd);
 console.log(JSON.stringify({ sessionId: result.id }));
 `,
     );
-    const proc = Bun.spawn({
-      cmd: ["bun", "run", scriptPath],
-      env: {
-        ...process.env,
-        HOME: home,
-        VIBE_TEST_CWD: cwd,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 10_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    const { rmSync } = await import("node:fs");
-    rmSync(scriptDir, { recursive: true, force: true });
+    let child: { stdout: string; stderr: string; exitCode: number };
+    try {
+      child = await runChild("bun", ["run", scriptPath], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: home,
+          VIBE_TEST_CWD: cwd,
+        },
+        timeout: 10_000,
+      });
+    } finally {
+      const { rmSync } = await import("node:fs");
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+    const { stdout, stderr, exitCode } = child;
     if (exitCode !== 0) {
       throw new Error(`Child exit ${exitCode}: ${stderr}`);
     }
@@ -255,46 +237,7 @@ console.log(JSON.stringify({ sessionId: result.id }));
     const dbPath = join(home.dataRoot, "vibe.db");
     {
       const seedDb = new Database(dbPath);
-      seedDb.run(`
-        CREATE TABLE schema_migrations (
-          id TEXT PRIMARY KEY,
-          applied_at TEXT NOT NULL
-        );
-        INSERT INTO schema_migrations (id, applied_at)
-          VALUES ('001_initial_schema', '2026-01-01T00:00:00.000Z');
-        CREATE TABLE sessions (
-          id TEXT PRIMARY KEY,
-          cwd_key TEXT NOT NULL UNIQUE,
-          created_at TEXT NOT NULL,
-          last_accessed_at TEXT NOT NULL
-        );
-        CREATE INDEX idx_sessions_last_accessed_at
-          ON sessions(last_accessed_at);
-        CREATE TABLE learning_entries (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
-          category TEXT NOT NULL,
-          mistake TEXT NOT NULL,
-          solution TEXT,
-          timestamp INTEGER NOT NULL,
-          demo_id TEXT
-        );
-        CREATE TABLE constitution_rules (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          rule TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          UNIQUE(session_id, position)
-        );
-        CREATE TABLE interactions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          goal TEXT NOT NULL,
-          output TEXT NOT NULL,
-          timestamp INTEGER NOT NULL
-        );
-      `);
+      seedInitialMigration(seedDb);
       seedDb.close();
     }
 
@@ -383,29 +326,24 @@ console.log(JSON.stringify({ sessionId: result.id }));
     async function spawnList(
       command: string[],
     ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-      const proc = Bun.spawn({
-        cmd: ["bun", "run", join(originalCwd, "src/cli.ts"), ...command],
-        cwd,
-        env: {
-          ...process.env,
-          HOME: home.home,
-          CI: "true",
-          NO_COLOR: "1",
-          TERM: "dumb",
-          PAGER: "cat",
-          DEFAULT_LLM_PROVIDER: undefined,
-          DEFAULT_MODEL: undefined,
+      return runChild(
+        "bun",
+        ["run", join(originalCwd, "src/cli.ts"), ...command],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            HOME: home.home,
+            CI: "true",
+            NO_COLOR: "1",
+            TERM: "dumb",
+            PAGER: "cat",
+            DEFAULT_LLM_PROVIDER: undefined,
+            DEFAULT_MODEL: undefined,
+          },
+          timeout: 10_000,
         },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 10_000,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      return { exitCode, stderr, stdout };
+      );
     }
 
     // Run session + list commands concurrently.
@@ -450,27 +388,7 @@ console.log(JSON.stringify({ sessionId: result.id }));
   }, 15000);
 });
 
-describe("resolveAutosession error classification", () => {
-  function makeError(code: string): Error & { code: string } {
-    const err = new Error(`SQLite: ${code}`) as Error & { code: string };
-    err.code = code;
-    return err;
-  }
-
-  test("isTransientSqliteError classifies BUSY and BUSY_SNAPSHOT as transient", () => {
-    expect(isTransientSqliteError(makeError("SQLITE_BUSY"))).toBe(true);
-    expect(isTransientSqliteError(makeError("SQLITE_BUSY_SNAPSHOT"))).toBe(
-      true,
-    );
-  });
-
-  test("isTransientSqliteError classifies non-busy errors as permanent", () => {
-    expect(isTransientSqliteError(makeError("SQLITE_ERROR"))).toBe(false);
-    expect(isTransientSqliteError(makeError("SQLITE_CONSTRAINT"))).toBe(false);
-    expect(isTransientSqliteError(makeError("SQLITE_IOERR"))).toBe(false);
-    expect(isTransientSqliteError(new Error("plain"))).toBe(false);
-  });
-
+describe("resolveAutosession convergence", () => {
   test("concurrent resolution converges under real transient conflicts", async () => {
     const home = await useTempHome();
     const cwd = await createCwd("real-concurrent");

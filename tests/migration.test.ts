@@ -12,9 +12,11 @@ import {
   type VibeDatabase,
 } from "../src/utils/database";
 import { getLearningEntries } from "../src/utils/storage";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { runChild } from "./helpers/childProcess";
+import { seedInitialMigration } from "./helpers/migrationSeed";
+import { createTempHarness, type TempHomeContext } from "./helpers/tempHome";
 
-const homes: TempHomeContext[] = [];
+const harness = createTempHarness();
 const handles: VibeDatabase[] = [];
 
 const originalCwd = process.cwd();
@@ -22,12 +24,11 @@ const EXPECTED_MIGRATION_IDS = getMigrationIds();
 
 afterEach(async () => {
   for (const handle of handles.splice(0)) handle.close();
-  await Promise.all(homes.splice(0).map((home) => home.cleanup()));
+  await harness.cleanup();
 });
 
 async function useTempHome(): Promise<TempHomeContext> {
-  const home = await createTempHome();
-  homes.push(home);
+  const home = await harness.useTempHome();
   await mkdir(home.dataRoot, { recursive: true });
   return home;
 }
@@ -391,20 +392,17 @@ handle.close();
 console.log(JSON.stringify({ ok: true, count: row.count }));
 `,
     );
-    const proc = Bun.spawn({
-      cmd: ["bun", "run", scriptPath],
-      env: { ...process.env, HOME: home },
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 10_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    rmSync(scriptDir, { recursive: true, force: true });
-    return { exitCode, stderr, stdout };
+    let child: { stdout: string; stderr: string; exitCode: number };
+    try {
+      child = await runChild("bun", ["run", scriptPath], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: home },
+        timeout: 10_000,
+      });
+    } finally {
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+    return child;
   }
 
   test("concurrent database opening from fresh home converges to valid state", async () => {
@@ -444,54 +442,7 @@ console.log(JSON.stringify({ ok: true, count: row.count }));
     // is applied, with its tables materialized. Migrations 002 and 003 are
     // truly pending (not yet executed).
     const db = new Database(join(home.dataRoot, "vibe.db"));
-    db.run(`
-      CREATE TABLE schema_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
-      INSERT INTO schema_migrations (id, applied_at)
-        VALUES ('001_initial_schema', '2026-01-01T00:00:00.000Z');
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        cwd_key TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        last_accessed_at TEXT NOT NULL
-      );
-      CREATE INDEX idx_sessions_last_accessed_at ON sessions(last_accessed_at);
-      CREATE TABLE learning_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
-        category TEXT NOT NULL,
-        mistake TEXT NOT NULL,
-        solution TEXT,
-        timestamp INTEGER NOT NULL,
-        demo_id TEXT
-      );
-      CREATE INDEX idx_learning_entries_category_timestamp
-        ON learning_entries(category, timestamp);
-      CREATE INDEX idx_learning_entries_demo_id
-        ON learning_entries(demo_id)
-        WHERE demo_id IS NOT NULL;
-      CREATE TABLE constitution_rules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        rule TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        UNIQUE(session_id, position)
-      );
-      CREATE INDEX idx_constitution_rules_session_position
-        ON constitution_rules(session_id, position);
-      CREATE TABLE interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        goal TEXT NOT NULL,
-        output TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      );
-      CREATE INDEX idx_interactions_session_timestamp
-        ON interactions(session_id, timestamp);
-    `);
+    seedInitialMigration(db);
     db.close();
 
     const CONCURRENCY = 4;
@@ -520,45 +471,7 @@ console.log(JSON.stringify({ ok: true, count: row.count }));
     // Create a database with only migration 001 applied (missing 002, 003).
     // Also create the tables from 001 so the schema is internally consistent.
     const db = new Database(join(home.dataRoot, "vibe.db"));
-    db.run(`
-      CREATE TABLE schema_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
-      INSERT INTO schema_migrations (id, applied_at)
-        VALUES ('001_initial_schema', '2026-01-01T00:00:00.000Z');
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        cwd_key TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        last_accessed_at TEXT NOT NULL
-      );
-      CREATE INDEX idx_sessions_last_accessed_at ON sessions(last_accessed_at);
-      CREATE TABLE learning_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
-        category TEXT NOT NULL,
-        mistake TEXT NOT NULL,
-        solution TEXT,
-        timestamp INTEGER NOT NULL,
-        demo_id TEXT
-      );
-      CREATE TABLE constitution_rules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        rule TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        UNIQUE(session_id, position)
-      );
-      CREATE TABLE interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        goal TEXT NOT NULL,
-        output TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      );
-    `);
+    seedInitialMigration(db);
     db.close();
 
     // Write settings so provider-dependent list commands can resolve.
@@ -589,28 +502,24 @@ console.log(JSON.stringify({ ok: true, count: row.count }));
     async function spawnCli(
       args: string[],
     ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-      const proc = Bun.spawn({
-        cmd: ["bun", "run", join(originalCwd, "src/cli.ts"), ...args],
-        env: {
-          ...process.env,
-          HOME: home.home,
-          CI: "true",
-          NO_COLOR: "1",
-          TERM: "dumb",
-          PAGER: "cat",
-          DEFAULT_LLM_PROVIDER: undefined,
-          DEFAULT_MODEL: undefined,
+      return runChild(
+        "bun",
+        ["run", join(originalCwd, "src/cli.ts"), ...args],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            HOME: home.home,
+            CI: "true",
+            NO_COLOR: "1",
+            TERM: "dumb",
+            PAGER: "cat",
+            DEFAULT_LLM_PROVIDER: undefined,
+            DEFAULT_MODEL: undefined,
+          },
+          timeout: 10_000,
         },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 10_000,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      return { exitCode, stderr, stdout };
+      );
     }
 
     const results = await Promise.all(
@@ -658,5 +567,3 @@ console.log(JSON.stringify({ ok: true, count: row.count }));
     expect(applied.map((r) => r.id)).toEqual(EXPECTED_MIGRATION_IDS);
   }, 15000);
 });
-
-// isTransientSqliteError coverage lives in tests/utils.database.retry.test.ts.

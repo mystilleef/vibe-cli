@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
+import { existsSync, mkdirSync } from "node:fs";
 import {
   cp,
   mkdir,
@@ -8,7 +16,6 @@ import {
   readdir,
   readFile,
   rm,
-  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -18,11 +25,24 @@ import { pathToFileURL } from "node:url";
 import { isDirectCliEntry, runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
 import { getMigrationIds, initializeSchema } from "../src/utils/database";
-import type { LearningType } from "../src/utils/storage";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { runChild } from "./helpers/childProcess";
+import {
+  seedInitialMigration,
+  seedSchemaMigrations,
+} from "./helpers/migrationSeed";
+import { packAndExtract } from "./helpers/packedPackage.js";
+import { dirExists, fileExists, readDirTree } from "./helpers/skillsTestUtils";
+import {
+  insertInteractionRows,
+  insertSessionRows,
+  openSeedDatabase,
+  type SeedInteractionRow,
+  seedLearningEntries,
+} from "./helpers/storageSeed";
+import { createTempHarness, type TempHomeContext } from "./helpers/tempHome";
 
-const homes: TempHomeContext[] = [];
-const cwdRoots: string[] = [];
+const harness = createTempHarness();
+const { useTempHome } = harness;
 const originalCwd = process.cwd();
 const cli = join(originalCwd, "src", "cli.ts");
 const mockAnthropicFetch = join(
@@ -62,24 +82,10 @@ interface CliResult {
 }
 
 afterEach(async () => {
-  process.chdir(originalCwd);
-  await Promise.all(
-    cwdRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  );
-  await Promise.all(homes.splice(0).map((home) => home.cleanup()));
+  await harness.cleanup();
 });
 
-async function useTempHome(): Promise<TempHomeContext> {
-  const home = await createTempHome();
-  homes.push(home);
-  return home;
-}
-
-async function createCwd(): Promise<string> {
-  const cwd = await mkdtemp(join(tmpdir(), "vibe-cli-surface-"));
-  cwdRoots.push(cwd);
-  return cwd;
-}
+const createCwd = (): Promise<string> => harness.createCwd("surface");
 
 async function writeSettings(
   home: TempHomeContext,
@@ -157,70 +163,14 @@ async function seedSchemaMigrationsOnly(
 ): Promise<void> {
   await mkdir(home.dataRoot, { recursive: true });
   const db = new Database(join(home.dataRoot, "vibe.db"));
-  db.run(`
-    CREATE TABLE schema_migrations (
-      id TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    );
-  `);
-  const insert = db.prepare(
-    "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
-  );
-  for (const id of appliedIds) {
-    insert.run(id, "2026-01-01T00:00:00.000Z");
-  }
+  seedSchemaMigrations(db, appliedIds);
   db.close();
 }
 
 async function seedInitialMigrationOnly(home: TempHomeContext): Promise<void> {
-  await seedSchemaMigrationsOnly(home, ["001_initial_schema"]);
+  await mkdir(home.dataRoot, { recursive: true });
   const db = new Database(join(home.dataRoot, "vibe.db"));
-  // Fully materialize migration 001 so the state is internally consistent:
-  // schema_migrations records the migration as applied and every table/index
-  // it creates actually exists. Migrations 002 and 003 remain truly pending.
-  db.run(`
-    CREATE TABLE sessions (
-      id TEXT PRIMARY KEY,
-      cwd_key TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL,
-      last_accessed_at TEXT NOT NULL
-    );
-    CREATE INDEX idx_sessions_last_accessed_at
-      ON sessions(last_accessed_at);
-    CREATE TABLE learning_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
-      category TEXT NOT NULL,
-      mistake TEXT NOT NULL,
-      solution TEXT,
-      timestamp INTEGER NOT NULL,
-      demo_id TEXT
-    );
-    CREATE INDEX idx_learning_entries_category_timestamp
-      ON learning_entries(category, timestamp);
-    CREATE INDEX idx_learning_entries_demo_id
-      ON learning_entries(demo_id)
-      WHERE demo_id IS NOT NULL;
-    CREATE TABLE constitution_rules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      rule TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(session_id, position)
-    );
-    CREATE INDEX idx_constitution_rules_session_position
-      ON constitution_rules(session_id, position);
-    CREATE TABLE interactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      goal TEXT NOT NULL,
-      output TEXT NOT NULL,
-      timestamp INTEGER NOT NULL
-    );
-    CREATE INDEX idx_interactions_session_timestamp
-      ON interactions(session_id, timestamp);
-  `);
+  seedInitialMigration(db);
   db.close();
 }
 
@@ -293,19 +243,12 @@ async function runCli(
 ): Promise<CliResult> {
   mkdirSync(EMPTY_CLI_HOME, { recursive: true });
   if (options.preload !== undefined) {
-    const result = Bun.spawnSync({
-      cmd: cliSpawnCmd(args, options),
+    const [command = "bun", ...commandArgs] = cliSpawnCmd(args, options);
+    return runChild(command, commandArgs, {
       cwd: options.cwd ?? originalCwd,
       env: buildCliEnv(options),
-      stdout: "pipe",
-      stderr: "pipe",
       timeout: 10_000,
     });
-    return {
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-      exitCode: result.exitCode,
-    };
   }
   const savedCwd = process.cwd();
   process.chdir(options.cwd ?? originalCwd);
@@ -327,20 +270,13 @@ async function runCliBatch(
   const env = buildCliEnv(options);
   return Promise.all(
     commandsList.map(async (args) => {
-      const proc = Bun.spawn({
-        cmd: cliSpawnCmd(args, options),
+      const [command = "bun", ...commandArgs] = cliSpawnCmd(args, options);
+      const result = await runChild(command, commandArgs, {
         cwd: options.cwd ?? originalCwd,
         env,
-        stdout: "pipe",
-        stderr: "pipe",
         timeout: 10_000,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      return { args, result: { stdout, stderr, exitCode } };
+      return { args, result };
     }),
   );
 }
@@ -369,24 +305,14 @@ async function runCliBatchIsolated(
   );
   return Promise.all(
     entries.map(async ({ args, home, cwd }) => {
-      const proc = Bun.spawn({
-        cmd: cliSpawnCmd(args, {
-          ...baseOptions,
-          home: home.home,
-          cwd,
-        }),
+      const options = { ...baseOptions, home: home.home, cwd };
+      const [command = "bun", ...commandArgs] = cliSpawnCmd(args, options);
+      const result = await runChild(command, commandArgs, {
         cwd,
-        env: buildCliEnv({ ...baseOptions, home: home.home, cwd }),
-        stdout: "pipe",
-        stderr: "pipe",
+        env: buildCliEnv(options),
         timeout: 10_000,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      return { args, home, cwd, result: { stdout, stderr, exitCode } };
+      return { args, home, cwd, result };
     }),
   );
 }
@@ -402,77 +328,9 @@ function expectLegacyDotenvWarningOnce(stderr: string): void {
   expect(stderr.trim().split("\n")).toEqual([LEGACY_DOTENV_WARNING]);
 }
 
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 async function scanSkillsCliResidue(): Promise<string[]> {
   const entries = await readdir(originalCwd);
   return entries.filter((e) => e.startsWith(".skills-cli-")).sort();
-}
-
-async function readDirTree(dir: string): Promise<Record<string, string>> {
-  const result: Record<string, string> = {};
-  async function walk(d: string, base: string) {
-    const entries = await readdir(d, { withFileTypes: true });
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      const fullPath = join(d, entry.name);
-      const relPath = join(base, entry.name);
-      if (entry.isDirectory()) {
-        await walk(fullPath, relPath);
-      } else if (entry.isFile()) {
-        result[relPath] = await readFile(fullPath, "utf8");
-      }
-    }
-  }
-  await walk(dir, "");
-  return result;
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-type SeedLearningEntry = {
-  type: LearningType;
-  category: string;
-  observation: string;
-  solution?: string;
-  timestamp: number;
-  demoId?: string;
-};
-
-async function seedLearningEntries(
-  home: TempHomeContext,
-  entries: readonly SeedLearningEntry[],
-): Promise<void> {
-  await mkdir(home.dataRoot, { recursive: true });
-  const db = new Database(join(home.dataRoot, "vibe.db"));
-  initializeSchema(db);
-  const insert = db.prepare(
-    `INSERT INTO learning_entries
-       (type, category, observation, solution, timestamp, demo_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  );
-  for (const entry of entries) {
-    insert.run(
-      entry.type,
-      entry.category,
-      entry.observation,
-      entry.solution ?? null,
-      entry.timestamp,
-      entry.demoId ?? null,
-    );
-  }
-  db.close();
 }
 
 type SeedSessionRow = {
@@ -483,45 +341,26 @@ type SeedSessionRow = {
   lastAccessedAt?: string;
 };
 
-type SeedInteractionRow = {
-  sessionId: string;
-  goal: string;
-  output: string;
-  timestamp: number;
-};
-
 async function seedSessionsAndInteractions(
   home: TempHomeContext,
   sessions: readonly SeedSessionRow[],
   interactions: readonly SeedInteractionRow[],
 ): Promise<void> {
-  await mkdir(home.dataRoot, { recursive: true });
-  const db = new Database(join(home.dataRoot, "vibe.db"));
-  initializeSchema(db);
-  const insertSession = db.prepare(
-    "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
-  );
-  const insertInteraction = db.prepare(
-    "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
-  );
-  for (const session of sessions) {
-    insertSession.run(
-      session.id,
-      session.cwdKey,
-      session.cwd ?? null,
-      session.createdAt ?? "2026-01-01T00:00:00.000Z",
-      session.lastAccessedAt ?? "2026-01-01T00:00:00.000Z",
+  const db = openSeedDatabase(home.dataRoot);
+  try {
+    insertSessionRows(
+      db,
+      sessions.map((session) => ({
+        ...session,
+        cwd: session.cwd ?? null,
+        createdAt: session.createdAt ?? "2026-01-01T00:00:00.000Z",
+        lastAccessedAt: session.lastAccessedAt ?? "2026-01-01T00:00:00.000Z",
+      })),
     );
+    insertInteractionRows(db, interactions);
+  } finally {
+    db.close();
   }
-  for (const interaction of interactions) {
-    insertInteraction.run(
-      interaction.sessionId,
-      interaction.goal,
-      interaction.output,
-      interaction.timestamp,
-    );
-  }
-  db.close();
 }
 
 /** Shared check-runner — reduces boilerplate across max-attempts tests. */
@@ -672,7 +511,7 @@ describe("CLI autosession surface", () => {
   test("list learnings filters, limits, and renders grouped pretty output", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "alpha",
@@ -756,7 +595,7 @@ describe("CLI autosession surface", () => {
   test("list categories reports deterministic counts and recent examples", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "beta",
@@ -1205,7 +1044,7 @@ describe("CLI autosession surface", () => {
     );
     const activeSession = (JSON.parse(set.stdout) as { session: string })
       .session;
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "risk",
@@ -1580,31 +1419,7 @@ describe("CLI autosession surface", () => {
 
     await mkdir(home.dataRoot, { recursive: true });
     const db = new Database(dbPath);
-    db.run(`
-      CREATE TABLE schema_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
-      INSERT INTO schema_migrations (id, applied_at)
-        VALUES ('001_initial_schema', '${createdAt}');
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        cwd_key TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        last_accessed_at TEXT NOT NULL
-      );
-      CREATE INDEX idx_sessions_last_accessed_at
-        ON sessions(last_accessed_at);
-      CREATE TABLE learning_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK (type IN ('mistake', 'preference', 'success')),
-        category TEXT NOT NULL,
-        mistake TEXT NOT NULL,
-        solution TEXT,
-        timestamp INTEGER NOT NULL,
-        demo_id TEXT
-      );
-    `);
+    seedInitialMigration(db, createdAt);
     db.prepare(
       "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
     ).run(sessionId, cwdKey, createdAt, oldTimestamp);
@@ -2108,27 +1923,18 @@ describe("CLI autosession surface", () => {
     expect(payload.response).toContain("questions:mock-verify");
   }, 15000);
 
-  test("learn command emits validation failure JSON without process failure", async () => {
+  test("learn command reports validation failures on stderr with exit code 1", async () => {
     const home = await useTempHome();
 
     const result = await runCli(
       ["learn", "--observation", "Repeated risky plan.", "--category", "risk"],
       { home: home.home },
     );
-    const payload = JSON.parse(result.stdout) as {
-      added: boolean;
-      alreadyKnown: boolean;
-      categoryCount: number;
-      topCategories: unknown[];
-    };
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(payload).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "--solution is required for mistake and success types",
     });
   });
 
@@ -2459,7 +2265,7 @@ describe("CLI autosession surface", () => {
   test("prune destructive requires --yes and emits backup path", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "test",
@@ -2504,7 +2310,7 @@ describe("CLI autosession surface", () => {
   test("prune destructive accepts -y short flag", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "test",
@@ -2533,7 +2339,7 @@ describe("CLI autosession surface", () => {
   test("prune rejects simultaneous --dry-run and --yes", async () => {
     const home = await useTempHome();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedLearningEntries(home, [
+    seedLearningEntries(home.dataRoot, [
       {
         type: "mistake",
         category: "test",
@@ -2746,7 +2552,7 @@ describe("CLI autosession surface", () => {
     });
   });
 
-  test("learn --type success without --solution emits validation failure", async () => {
+  test("learn --type success without --solution reports a validation failure", async () => {
     const home = await useTempHome();
 
     const result = await runCli(
@@ -2761,20 +2567,26 @@ describe("CLI autosession surface", () => {
       ],
       { home: home.home },
     );
-    const payload = JSON.parse(result.stdout) as {
-      added: boolean;
-      alreadyKnown: boolean;
-      categoryCount: number;
-      topCategories: unknown[];
-    };
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(payload).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "--solution is required for mistake and success types",
+    });
+  });
+
+  test("learn rejects a whitespace-only observation", async () => {
+    const home = await useTempHome();
+
+    const result = await runCli(
+      ["learn", "--observation", "   ", "--category", "blank"],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: "--observation is required",
     });
   });
 
@@ -3031,7 +2843,7 @@ describe("CLI autosession surface", () => {
   test("skills list surfaces source validation failures as stderr-only fatal JSON", async () => {
     const home = await useTempHome();
     const packageRoot = await mkdtemp(join(tmpdir(), "vibe-skills-src-"));
-    cwdRoots.push(packageRoot);
+    harness.trackCwd(packageRoot);
     // Missing skills/ directory is a fatal source error.
     await writeFile(join(packageRoot, "package.json"), "{}\n");
 
@@ -3052,7 +2864,7 @@ describe("CLI autosession surface", () => {
   test("skills list emits empty inventory JSON without creating targets", async () => {
     const home = await useTempHome();
     const packageRoot = await mkdtemp(join(tmpdir(), "vibe-skills-empty-"));
-    cwdRoots.push(packageRoot);
+    harness.trackCwd(packageRoot);
     await writeFile(join(packageRoot, "package.json"), "{}\n");
     await mkdir(join(packageRoot, "skills"), { recursive: true });
     const target = join(home.home, "empty-list-target");
@@ -3104,7 +2916,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     // Keep target on the package filesystem so same-device staging remains valid.
     const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-target-"));
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
 
     const result = await runCli(
@@ -3139,7 +2951,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     // Keep target on the package filesystem so same-device staging remains valid.
     const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-target-"));
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
 
     const installed = await runCli(
@@ -3261,11 +3073,11 @@ describe("CLI autosession surface", () => {
     const packageRoot = await mkdtemp(
       join(tmpdir(), "vibe-skills-empty-install-"),
     );
-    cwdRoots.push(packageRoot);
+    harness.trackCwd(packageRoot);
     await writeFile(join(packageRoot, "package.json"), "{}\n");
     await mkdir(join(packageRoot, "skills"), { recursive: true });
     const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-empty-"));
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
 
     const result = await runCli(
@@ -3296,7 +3108,7 @@ describe("CLI autosession surface", () => {
     const packageRoot = await mkdtemp(
       join(tmpdir(), "vibe-skills-empty-parent-"),
     );
-    cwdRoots.push(packageRoot);
+    harness.trackCwd(packageRoot);
     await writeFile(join(packageRoot, "package.json"), "{}\n");
     await mkdir(join(packageRoot, "skills"), { recursive: true });
     const missingParent = join(home.home, "no-parent", "skills");
@@ -3323,7 +3135,7 @@ describe("CLI autosession surface", () => {
     const targetRoot = await mkdtemp(
       join(originalCwd, ".skills-cli-force-dry-"),
     );
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
     const bundledSkills = join(originalCwd, "skills");
 
@@ -3382,7 +3194,7 @@ describe("CLI autosession surface", () => {
     const targetRoot = await mkdtemp(
       join(originalCwd, ".skills-cli-block-dry-"),
     );
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
     const bundledSkills = join(originalCwd, "skills");
 
@@ -3426,7 +3238,7 @@ describe("CLI autosession surface", () => {
   test("skills install retains documented payload for spaced target paths", async () => {
     const home = await useTempHome();
     const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-space-"));
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skill dir", "nested skills");
     await mkdir(join(targetRoot, "skill dir"), { recursive: true });
 
@@ -3522,12 +3334,12 @@ describe("CLI autosession surface", () => {
     const packageRoot = await mkdtemp(
       join(tmpdir(), "vibe-skills-src-install-"),
     );
-    cwdRoots.push(packageRoot);
+    harness.trackCwd(packageRoot);
     await writeFile(join(packageRoot, "package.json"), "{}\n");
     const targetRoot = await mkdtemp(
       join(originalCwd, ".skills-cli-src-install-"),
     );
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
 
     const result = await runCli(
@@ -3708,7 +3520,7 @@ describe("CLI autosession surface", () => {
       const targetRoot = await mkdtemp(
         join(originalCwd, ".skills-cli-output-"),
       );
-      cwdRoots.push(targetRoot);
+      harness.trackCwd(targetRoot);
       const target = join(targetRoot, "skills");
 
       const pretty = await runCli(
@@ -3930,7 +3742,7 @@ describe("CLI autosession surface", () => {
       const targetRoot = await mkdtemp(
         join(originalCwd, ".skills-cli-block-output-"),
       );
-      cwdRoots.push(targetRoot);
+      harness.trackCwd(targetRoot);
       const target = join(targetRoot, "skills");
       const bundledSkills = join(originalCwd, "skills");
 
@@ -3975,7 +3787,7 @@ describe("CLI autosession surface", () => {
       const targetRoot = await mkdtemp(
         join(originalCwd, ".skills-cli-partial-fail-"),
       );
-      cwdRoots.push(targetRoot);
+      harness.trackCwd(targetRoot);
       const target = join(targetRoot, "skills");
       const bundledSkills = join(originalCwd, "skills");
 
@@ -4269,7 +4081,7 @@ describe("CLI autosession surface", () => {
   describe("concurrent local list bootstrap process safety", () => {
     async function seedSharedHome(home: TempHomeContext): Promise<void> {
       const base = Date.parse("2026-01-01T00:00:00.000Z");
-      await seedLearningEntries(home, [
+      seedLearningEntries(home.dataRoot, [
         {
           type: "mistake",
           category: "alpha",
@@ -4462,7 +4274,7 @@ describe("CLI autosession surface", () => {
     // Create and run through a full skills install cycle.
     const home = await useTempHome();
     const targetRoot = await mkdtemp(join(originalCwd, ".skills-cli-hygiene-"));
-    cwdRoots.push(targetRoot);
+    harness.trackCwd(targetRoot);
     const target = join(targetRoot, "skills");
 
     const installed = await runCli(
@@ -4478,8 +4290,7 @@ describe("CLI autosession surface", () => {
 
     // Simulate afterEach: remove only the owned temp root.
     await rm(targetRoot, { recursive: true, force: true });
-    const idx = cwdRoots.indexOf(targetRoot);
-    if (idx !== -1) cwdRoots.splice(idx, 1);
+    harness.untrackCwd(targetRoot);
 
     // Assert no new .skills-cli-* entries remain.
     const after = await scanSkillsCliResidue();
@@ -4818,7 +4629,7 @@ describe("CLI autosession surface", () => {
     expect(() => JSON.parse(laterResult.stdout)).not.toThrow();
   });
 
-  test("console.log outside any runCliInProcess context still reaches real stdout", () => {
+  test("console.log outside any runCliInProcess context still reaches real stdout", async () => {
     // Behavioral, not reference-equality: eager install means console.log
     // permanently equals the AsyncLocalStorage-aware wrapper, so an
     // identity check would produce a false negative by design. A fresh
@@ -4826,14 +4637,13 @@ describe("CLI autosession surface", () => {
     // reaches real stdout — Bun's console writes below the JS-visible
     // process.stdout.write property, so an in-process spy can't observe it.
     const script = `await import(${JSON.stringify(cli)}); console.log("real-stdout-marker");`;
-    const result = Bun.spawnSync({
-      cmd: ["bun", "-e", script],
-      stdout: "pipe",
-      stderr: "pipe",
+    const result = await runChild("bun", ["-e", script], {
+      cwd: originalCwd,
+      env: process.env,
       timeout: 10_000,
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("real-stdout-marker");
+    expect(result.stdout).toContain("real-stdout-marker");
   });
 });
 
@@ -4905,18 +4715,15 @@ describe("CLI entry point edge cases", () => {
       await buildSpecialCliProject(specialProject);
 
       // Execute the CLI from the special path
-      const result = Bun.spawnSync({
-        cmd: ["bun", "run", specialCli, "session"],
+      const result = await runChild("bun", ["run", specialCli, "session"], {
         cwd: specialProject,
         env: { ...process.env, HOME: EMPTY_CLI_HOME },
-        stdout: "pipe",
-        stderr: "pipe",
         timeout: 10_000,
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr.toString()).toBe("");
-      const payload = JSON.parse(result.stdout.toString()) as {
+      expect(result.stderr).toBe("");
+      const payload = JSON.parse(result.stdout) as {
         session: string;
       };
       expect(payload.session).toMatch(/^[0-9a-f-]{36}$/);
@@ -4938,18 +4745,15 @@ console.log("import successful");
       );
 
       // Run the import script
-      const result = Bun.spawnSync({
-        cmd: ["bun", "run", importScript],
+      const result = await runChild("bun", ["run", importScript], {
         cwd: originalCwd,
         env: { ...process.env, HOME: EMPTY_CLI_HOME },
-        stdout: "pipe",
-        stderr: "pipe",
         timeout: 10_000,
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr.toString()).toBe("");
-      expect(result.stdout.toString().trim()).toBe("import successful");
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("import successful");
     } finally {
       await rm(importScript, { force: true });
     }
@@ -4993,17 +4797,6 @@ describe("schema - settings load failure", () => {
     // Both paths set provider to "unresolved".
     expect(schema.config.provider).toBe("unresolved");
     expect(typeof schema.config.model).toBe("string");
-  });
-});
-
-describe("learn - handler catch path", () => {
-  test("learn handler has defensive catch for unexpected vibeLearnTool throws", async () => {
-    // vibeLearnTool catches all its own errors, so the CLI catch block
-    // is unreachable under normal operation. Verify the defensive code exists.
-    const source = await readFile(join(originalCwd, "src/cli.ts"), "utf8");
-    expect(source).toContain("process.stderr.write(`${");
-    expect(source).toContain("added: false");
-    expect(source).toContain("alreadyKnown: false");
   });
 });
 
@@ -5098,5 +4891,156 @@ describe("runCliInProcess - non-Error exception handling", () => {
     // and asserts String(e) serialization in stderr.
     // This placeholder documents the split and prevents coverage drift.
     expect(true).toBe(true);
+  });
+});
+
+describe("bundled CLI safety backup execution", () => {
+  let packFixtureRoot: string | undefined;
+  let extractedRoot: string;
+
+  beforeAll(async () => {
+    const fixture = await packAndExtract("vibe-packed-backup-");
+    packFixtureRoot = fixture.workRoot;
+    extractedRoot = fixture.extractedRoot;
+  });
+
+  afterAll(async () => {
+    if (packFixtureRoot) {
+      await rm(packFixtureRoot, { recursive: true, force: true });
+      packFixtureRoot = undefined;
+    }
+  });
+
+  test("runs doctor safety backup and vacuum from bundled entrypoint in an isolated caller directory", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    try {
+      const dbPath = join(tempHome.dataRoot, "vibe.db");
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      const db = new Database(dbPath, { create: true });
+      initializeSchema(db);
+      const insert = db.prepare(
+        "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
+      );
+      for (let i = 0; i < 50; i++) {
+        insert.run("mistake", "bundled", "x".repeat(800), i);
+      }
+      db.exec("DELETE FROM learning_entries WHERE id > 25");
+      db.close();
+
+      const cli = join(extractedRoot, "dist", "vibe.js");
+      const result = await runChild(
+        "bun",
+        ["run", cli, "doctor", "--yes", "--vacuum"],
+        {
+          cwd: callerCwd,
+          env: {
+            ...process.env,
+            HOME: tempHome.home,
+            CI: "true",
+            NO_COLOR: "1",
+            PAGER: "cat",
+            TERM: "dumb",
+          },
+          timeout: 30_000,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload.dryRun).toBe(false);
+      expect(payload.backupPath).not.toBeNull();
+      expect(payload.appliedCounts.vacuum).toBeGreaterThan(0);
+      expect(payload.failedTargets).toEqual([]);
+
+      expect(existsSync(payload.backupPath)).toBe(true);
+      const backupDb = new Database(payload.backupPath, {
+        readonly: true,
+        create: false,
+      });
+      try {
+        const rows = backupDb.query("SELECT * FROM learning_entries").all();
+        expect(rows).toHaveLength(25);
+        const integrity = backupDb
+          .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+          .get();
+        expect(integrity?.integrity_check).toBe("ok");
+      } finally {
+        backupDb.close();
+      }
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("runs prune safety backup and deletion from bundled entrypoint in an isolated caller directory", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    try {
+      const now = Date.now();
+      const dbPath = join(tempHome.dataRoot, "vibe.db");
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      const db = new Database(dbPath, { create: true });
+      initializeSchema(db);
+      db.prepare(
+        "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
+      ).run(
+        "mistake",
+        "stale",
+        "to be pruned",
+        now - 100 * 24 * 60 * 60 * 1000,
+      );
+      db.close();
+
+      const cli = join(extractedRoot, "dist", "vibe.js");
+      const result = await runChild(
+        "bun",
+        ["run", cli, "prune", "--yes", "--learnings", "--age", "30"],
+        {
+          cwd: callerCwd,
+          env: {
+            ...process.env,
+            HOME: tempHome.home,
+            CI: "true",
+            NO_COLOR: "1",
+            PAGER: "cat",
+            TERM: "dumb",
+          },
+          timeout: 30_000,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload.dryRun).toBe(false);
+      expect(payload.backupPath).not.toBeNull();
+      expect(payload.deletedCounts.learnings).toBe(1);
+
+      const sourceDb = new Database(dbPath, { readonly: true, create: false });
+      try {
+        expect(
+          sourceDb.query("SELECT * FROM learning_entries").all(),
+        ).toHaveLength(0);
+      } finally {
+        sourceDb.close();
+      }
+
+      const backupDb = new Database(payload.backupPath, {
+        readonly: true,
+        create: false,
+      });
+      try {
+        const rows = backupDb.query("SELECT * FROM learning_entries").all();
+        expect(rows).toHaveLength(1);
+        const integrity = backupDb
+          .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+          .get();
+        expect(integrity?.integrity_check).toBe("ok");
+      } finally {
+        backupDb.close();
+      }
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
   });
 });

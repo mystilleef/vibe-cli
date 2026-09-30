@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import type { PathLike } from "node:fs";
+import type { PathLike, Stats } from "node:fs";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import {
   SkillSourceError,
   SkillTargetError,
 } from "../src/utils/skills.js";
+import { runChild } from "./helpers/childProcess.js";
 import {
   cleanupTempDirs,
   createPackageRoot,
@@ -384,6 +385,42 @@ describe("discoverBundledSkills", () => {
     expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
       /symlink/i,
     );
+  });
+
+  test("throws SkillSourceError when SKILL.md vanishes between stat and tree walk", async () => {
+    const root = await createPackageRoot(tempDirs);
+    const skillsDir = join(root, "skills");
+    const skillDir = join(skillsDir, "skill-a");
+    await createSkillDir(skillsDir, "skill-a", {
+      "SKILL.md": "# A",
+      "extra.txt": "extra",
+    });
+
+    // Simulate the race where SKILL.md passes the pre-walk lstat check
+    // but is gone by the time the walk lists the directory contents.
+    const fsModule = await import("node:fs");
+    const originalReaddirSync = fsModule.readdirSync;
+    const spy = spyOn(fsModule, "readdirSync");
+    spy.mockImplementation(((
+      dir: PathLike,
+      options: Parameters<typeof fsModule.readdirSync>[1],
+    ) => {
+      const entries = originalReaddirSync(dir, options);
+      return dir === skillDir
+        ? entries.filter((entry) => String(entry) !== "SKILL.md")
+        : entries;
+    }) as typeof fsModule.readdirSync);
+
+    try {
+      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+        SkillSourceError,
+      );
+      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+        /missing after tree walk/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("hash differs for path-only rename with identical bytes", async () => {
@@ -1256,8 +1293,12 @@ describe("walkSkillDirectory — non-regular file type", () => {
 
     // Create a FIFO (named pipe) — not a regular file, not a directory, not a symlink.
     const fifoPath = join(skillsDir, "skill-a", "fifo-pipe");
-    const { execSync } = await import("node:child_process");
-    execSync(`mkfifo "${fifoPath}"`);
+    const mkfifo = await runChild("mkfifo", [fifoPath], {
+      cwd: root,
+      env: process.env,
+      timeout: 10_000,
+    });
+    expect(mkfifo.exitCode).toBe(0);
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1325,6 +1366,75 @@ describe("walkSkillDirectory — escape detection is defensive", () => {
     expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
       /is a symlink/i,
     );
+  });
+
+  test("rejects a source entry reporting both directory and symlink before traversal", async () => {
+    const root = await createPackageRoot(tempDirs);
+    const skillsDir = join(root, "skills");
+    const skillDir = join(skillsDir, "skill-a");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# A");
+    const hybridDir = join(skillDir, "hybrid-dir");
+    await mkdir(hybridDir, { recursive: true });
+
+    const fsModule = await import("node:fs");
+    const originalLstatSync = fsModule.lstatSync;
+    const spy = spyOn(fsModule, "lstatSync");
+    spy.mockImplementation(((p: PathLike) => {
+      if (String(p) === hybridDir) {
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => true,
+          isFile: () => false,
+        } as unknown as Stats;
+      }
+      return originalLstatSync(p);
+    }) as typeof fsModule.lstatSync);
+
+    try {
+      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+        SkillSourceError,
+      );
+      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+        /is a symlink/i,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("rejects a target entry reporting both directory and symlink before traversal", async () => {
+    const targetRoot = await createTempDir(tempDirs);
+    const skillDir = join(targetRoot, "skill-a");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# A");
+    const hybridDir = join(skillDir, "hybrid-dir");
+    await mkdir(hybridDir, { recursive: true });
+
+    const fsModule = await import("node:fs");
+    const originalLstatSync = fsModule.lstatSync;
+    const spy = spyOn(fsModule, "lstatSync");
+    spy.mockImplementation(((p: PathLike) => {
+      if (String(p) === hybridDir) {
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => true,
+          isFile: () => false,
+        } as unknown as Stats;
+      }
+      return originalLstatSync(p);
+    }) as typeof fsModule.lstatSync);
+
+    try {
+      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+        SkillTargetError,
+      );
+      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+        /is a symlink/i,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 describe("walkSkillDirectory — realpathSync failure", () => {

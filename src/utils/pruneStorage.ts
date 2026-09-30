@@ -1,6 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
-import { openVibeDatabase, withDatabase } from "./database.js";
+import { getDatabasePath, withDatabase } from "./database.js";
+import {
+  createDatabaseBackup,
+  type DatabaseBackupOptions,
+  PRUNE_BACKUP_PREFIX,
+} from "./databaseBackup.js";
 import { extractErrorMessage } from "./errors.js";
 import {
   compareLearningEntryOrder,
@@ -8,6 +11,7 @@ import {
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
   LEARNING_ENTRIES_SELECT,
+  type LearningEntry,
   type LearningEntryStorageRow,
   learningRowToEntry,
 } from "./learningEntryCore.js";
@@ -15,14 +19,8 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────
 
 /** Read-only candidate emitted before any learning prune mutation. */
-export interface LearningPruneCandidate {
+export interface LearningPruneCandidate extends LearningEntry {
   id: number;
-  type: "mistake" | "preference" | "success";
-  category: string;
-  observation: string;
-  solution?: string;
-  timestamp: number;
-  demoId?: string;
 }
 
 export interface StaleLearningPruneOptions {
@@ -89,7 +87,8 @@ export interface PruneCandidateOptions {
 
 export interface DestructivePruneOptions extends PruneCandidateOptions {
   backupTimestamp?: Date;
-  backupDirectory?: string;
+  backupDatabase?: (timestamp?: Date) => Promise<string>;
+  backupOptions?: Partial<DatabaseBackupOptions>;
 }
 
 export interface PruneCandidateSets {
@@ -495,42 +494,25 @@ export function collectPruneCandidates({
   return candidates;
 }
 
-// ── Destructive execution ─────────────────────────────────────────────────
+// ── Prune backup ─────────────────────────────────────────────────────────
 
-/** Creates a timestamped database backup before any destructive prune. */
-export function createPruneDatabaseBackup({
-  timestamp = new Date(),
-  directory,
-}: {
-  timestamp?: Date;
-  directory?: string;
-} = {}): string {
-  const handle = openVibeDatabase();
-  try {
-    if (handle.path === ":memory:") {
-      throw new Error("cannot back up an in-memory database");
-    }
-
-    handle.db.exec("PRAGMA busy_timeout = 0");
-    const checkpoint = handle.db
-      .query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)")
-      .get();
-    handle.db.exec("PRAGMA busy_timeout = 5000");
-    if ((checkpoint?.busy ?? 1) !== 0) {
-      throw new Error("database checkpoint could not complete before backup");
-    }
-
-    const backupDirectory =
-      directory ?? path.join(path.dirname(handle.path), "backups");
-    const label = timestamp.toISOString().replace(/[.:]/g, "-");
-    fs.mkdirSync(backupDirectory, { recursive: true });
-    const backupPath = path.join(backupDirectory, `vibe-prune-${label}.db`);
-    fs.copyFileSync(handle.path, backupPath, fs.constants.COPYFILE_EXCL);
-    return backupPath;
-  } finally {
-    handle.close();
+/** Back up the vibe database before any destructive prune. */
+export async function createPruneBackup(
+  timestamp?: Date,
+  backupOptions?: Partial<DatabaseBackupOptions>,
+): Promise<string> {
+  const sourcePath = getDatabasePath();
+  if (sourcePath === ":memory:") {
+    throw new Error("cannot back up an in-memory database");
   }
+  return await createDatabaseBackup(sourcePath, {
+    prefix: PRUNE_BACKUP_PREFIX,
+    ...(timestamp !== undefined && { timestamp }),
+    ...backupOptions,
+  });
 }
+
+// ── Destructive execution ─────────────────────────────────────────────────
 
 function deleteRowsById<T extends number | string>(
   table: string,
@@ -545,7 +527,7 @@ function deleteRowsById<T extends number | string>(
       (rowIds: readonly T[]) =>
         rowIds.filter((id) => remove.run(id).changes > 0).length,
     );
-    return removeRows(deduped);
+    return removeRows.immediate(deduped);
   });
 }
 
@@ -568,11 +550,12 @@ function deletePruneTarget(
   return deleteRowsById(table, ids);
 }
 
-export function executeDestructivePrune({
+export async function executeDestructivePrune({
   backupTimestamp,
-  backupDirectory,
+  backupDatabase,
+  backupOptions,
   ...candidateOptions
-}: DestructivePruneOptions): DestructivePruneResult {
+}: DestructivePruneOptions): Promise<DestructivePruneResult> {
   const selectedTargets = normalizePruneTargets(candidateOptions.targets);
   const candidates = collectPruneCandidates(candidateOptions);
   const candidateCounts = computePruneTargetCounts(candidates);
@@ -588,10 +571,9 @@ export function executeDestructivePrune({
 
   let backupPath: string;
   try {
-    backupPath = createPruneDatabaseBackup({
-      ...(backupTimestamp !== undefined && { timestamp: backupTimestamp }),
-      ...(backupDirectory !== undefined && { directory: backupDirectory }),
-    });
+    backupPath = backupDatabase
+      ? await backupDatabase(backupTimestamp)
+      : await createPruneBackup(backupTimestamp, backupOptions);
   } catch (error) {
     return {
       backupPath: null,

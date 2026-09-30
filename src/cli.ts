@@ -1,27 +1,16 @@
 #!/usr/bin/env bun
-import { AsyncLocalStorage } from "node:async_hooks";
-import { pathToFileURL } from "node:url";
-import { Command } from "commander";
-import packageJson from "../package.json" with { type: "json" };
-
-/** Invocation-local capture context for runCliInProcess. */
-interface CaptureContext {
-  readonly stdoutChunks: string[];
-  readonly stderrChunks: string[];
-  exitCode: number;
-}
-
-/** AsyncLocalStorage that scopes capture to a single runCliInProcess invocation. */
-const captureStore = new AsyncLocalStorage<CaptureContext>();
-
 /**
  * Register the `vibe` command surface and preserve JSON-only process output.
  *
  * All command handlers emit machine-readable JSON, with operational failures
  * routed through `fatal` so agents can parse errors without scraping text.
  */
+import { pathToFileURL } from "node:url";
+import { Command } from "commander";
+import packageJson from "../package.json" with { type: "json" };
 import { resetConstitution, updateConstitution } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
+import { doctorResultIndicatesFailure, runDoctor } from "./tools/doctor.js";
 import { installGuide } from "./tools/guideInstaller.js";
 import { runPrune } from "./tools/prune.js";
 import { installSettings } from "./tools/settingsInstaller.js";
@@ -29,6 +18,12 @@ import { installSkills } from "./tools/skillsInstaller.js";
 import { vibeGateLoop } from "./tools/vibeGate.js";
 import { vibeLearnTool } from "./tools/vibeLearn.js";
 import { resolveAutosession } from "./utils/autosession.js";
+import {
+  type CliResult,
+  emitTestErrorMarker,
+  runCapturedInvocation,
+  setExitCode,
+} from "./utils/cliCapture.js";
 import {
   JSON_OPTION_DESCRIPTION,
   JSON_OPTION_FLAG,
@@ -43,6 +38,7 @@ import { getDataRoot } from "./utils/db-core.js";
 import { warnLegacyDotenv } from "./utils/dotenv.js";
 import { extractErrorMessage } from "./utils/errors.js";
 import { inspectGuide } from "./utils/guide.js";
+import type { LearningType } from "./utils/learningEntryCore.js";
 import {
   formatListAll,
   formatListCategories,
@@ -80,6 +76,8 @@ import {
   formatSkillsInstall,
   formatSkillsList,
 } from "./utils/skillsGuideFormatters.js";
+
+export { emitTestErrorMarker };
 
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
@@ -307,26 +305,18 @@ program
     "Entry type: mistake | preference | success",
     "mistake",
   )
-  .action(async (opts) => {
-    try {
-      const result = await vibeLearnTool({
-        observation: opts.observation,
-        category: opts.category,
-        solution: opts.solution,
-        type: opts.type as "mistake" | "preference" | "success",
-      });
-      emit(result);
-    } catch (e) {
-      const message = extractErrorMessage(e);
-      process.stderr.write(`${JSON.stringify({ error: message })}\n`);
-      emit({
-        added: false,
-        alreadyKnown: false,
-        categoryCount: 0,
-        topCategories: [],
-      });
-    }
-  });
+  .action(
+    withCliError(async (opts) => {
+      emit(
+        await vibeLearnTool({
+          observation: opts.observation,
+          category: opts.category,
+          solution: opts.solution,
+          type: opts.type as LearningType,
+        }),
+      );
+    }),
+  );
 
 const constitution = program
   .command("constitution")
@@ -437,10 +427,47 @@ program
   .option("--dry-run", "Report candidates without deleting")
   .option("-y, --yes", "Confirm destructive deletion")
   .action(
-    withCliError((opts) => {
+    withCliError(async (opts) => {
       const { params } = buildPruneParams(opts);
-      const result = runPrune(params);
+      const result = await runPrune(params);
       emit(result);
+    }),
+  );
+
+program
+  .command("doctor")
+  .description(
+    "Local-state health and maintenance; provider-free, backup-first",
+  )
+  .option("--vacuum", "Reclaim free pages after the safety backup")
+  .option("--purge-backups", "Delete retired managed backups beyond retention")
+  .option("--purge-legacy", "Delete recorded legacy .bak copies")
+  .option("--keep-backups <n>", "Retain newest managed backups (default: five)")
+  .option("-y, --yes", "Apply explicit targets after one safety backup")
+  .addHelpText(
+    "after",
+    `
+Reports findings and counts as JSON without changing local data.
+Maintenance applies only when explicit targets accompany --yes, after one
+safety backup; findings keep pre-application values while backupPath names
+the new safety backup. With --purge-backups, excessBackups counts that
+pending backup, predicting appliedCounts.purgeBackups; appliedCounts.vacuum
+reports reclaimed free pages. Exit 0 covers healthy reports and applies,
+including harmless no-ops. Exit 1 covers unhealthy diagnostics, backup or
+target failures, and operational errors; failures report {target, message}.`,
+  )
+  .action(
+    withCliError(async (opts: Record<string, string | boolean | undefined>) => {
+      const keepBackups = opts["keepBackups"];
+      const result = await runDoctor({
+        vacuum: opts["vacuum"] === true,
+        purgeBackups: opts["purgeBackups"] === true,
+        purgeLegacy: opts["purgeLegacy"] === true,
+        ...(typeof keepBackups === "string" && { keepBackups }),
+        yes: opts["yes"] === true,
+      });
+      emit(result);
+      if (doctorResultIndicatesFailure(result)) setExitCode(1);
     }),
   );
 
@@ -561,89 +588,6 @@ settings
     }),
   );
 
-interface CliResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-// Baseline handlers — captured once at module load, never replaced per-call.
-const baselineStdoutWrite = process.stdout.write.bind(process.stdout);
-const baselineStderrWrite = process.stderr.write.bind(process.stderr);
-const baselineConsoleError = console.error.bind(console);
-const baselineExit = process.exit.bind(process);
-
-/** Dispatch stdout to active capture context or baseline. */
-function dispatchStdout(chunk: string | Uint8Array): boolean {
-  const ctx = captureStore.getStore();
-  if (ctx) {
-    ctx.stdoutChunks.push(
-      typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
-    );
-    return true;
-  }
-  return baselineStdoutWrite(chunk);
-}
-
-/** Dispatch stderr to active capture context or baseline. */
-function dispatchStderr(chunk: string | Uint8Array): boolean {
-  const ctx = captureStore.getStore();
-  if (ctx) {
-    ctx.stderrChunks.push(
-      typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
-    );
-    return true;
-  }
-  return baselineStderrWrite(chunk);
-}
-
-/** Dispatch console.error to active capture context or baseline. */
-function dispatchConsoleError(...args: unknown[]): void {
-  const ctx = captureStore.getStore();
-  if (ctx) {
-    const msg = args
-      .map((a) => (typeof a === "string" ? a : String(a)))
-      .join(" ");
-    ctx.stderrChunks.push(`${msg}\n`);
-    return;
-  }
-  baselineConsoleError(...args);
-}
-
-/** Dispatch process.exit to active capture context or baseline. */
-function dispatchExit(code?: number): never {
-  const ctx = captureStore.getStore();
-  if (ctx) {
-    ctx.exitCode = typeof code === "number" ? code : 0;
-    return undefined as never;
-  }
-  return baselineExit(code);
-}
-
-/** Install dispatch layer once at module load. */
-let dispatchInstalled = false;
-function installDispatch(): void {
-  if (dispatchInstalled) return;
-  process.stdout.write = dispatchStdout as typeof process.stdout.write;
-  process.stderr.write = dispatchStderr as typeof process.stderr.write;
-  console.error = dispatchConsoleError;
-  process.exit = dispatchExit as typeof process.exit;
-  dispatchInstalled = true;
-}
-
-/**
- * Test seam: emit a marker via console.error when VIBE_TEST_ERROR_MARKER is set.
- * Only used in tests to verify console.error isolation across concurrent captures.
- */
-function emitTestErrorMarker(): void {
-  const marker = process.env["VIBE_TEST_ERROR_MARKER"];
-  if (marker !== undefined) {
-    console.error(marker);
-  }
-}
-
-export { emitTestErrorMarker };
-
 /**
  * Run the CLI in-process, capturing stdout and stderr.
  * Used by tests to avoid spawning a subprocess.
@@ -660,18 +604,10 @@ export async function runCliInProcess(
   testErrorMarker?: string,
   coordinationCallback?: () => Promise<void>,
 ): Promise<CliResult> {
-  installDispatch();
-
-  const ctx: CaptureContext = {
-    stdoutChunks: [],
-    stderrChunks: [],
-    exitCode: 0,
-  };
-
-  return captureStore.run(ctx, async () => {
+  return runCapturedInvocation(async (capture) => {
     // Re-run dotenv warning with intercepted stderr
     warnLegacyDotenv((data: string) => {
-      ctx.stderrChunks.push(data);
+      capture.appendStderr(data);
     });
 
     // Yield if coordination callback provided (test seam for post-await isolation)
@@ -696,21 +632,15 @@ export async function runCliInProcess(
         (err.exitCode === 0 || /^\(output/.test(err.message))
       ) {
         // Help/version output — stdout already captured
-        ctx.exitCode = 0;
+        setExitCode(0);
       } else if (err instanceof Error) {
-        ctx.stderrChunks.push(`${JSON.stringify({ error: err.message })}\n`);
-        ctx.exitCode = 1;
+        capture.appendStderr(`${JSON.stringify({ error: err.message })}\n`);
+        setExitCode(1);
       } else {
-        ctx.stderrChunks.push(`${JSON.stringify({ error: String(e) })}\n`);
-        ctx.exitCode = 1;
+        capture.appendStderr(`${JSON.stringify({ error: String(e) })}\n`);
+        setExitCode(1);
       }
     }
-
-    return {
-      stdout: ctx.stdoutChunks.join(""),
-      stderr: ctx.stderrChunks.join("").trim(),
-      exitCode: ctx.exitCode,
-    };
   });
 }
 

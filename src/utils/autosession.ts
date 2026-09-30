@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { withDatabase } from "./database.js";
-import { retryOnTransientSqliteError } from "./sqliteRetry.js";
 
 /** Duration in milliseconds before an unaccessed session expires (4 hours). */
 export const AUTOSESSION_TTL_MS = 4 * 60 * 60 * 1000;
@@ -73,9 +72,9 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
   const cwdKey = getCwdKey(cwd);
   const now = new Date();
 
-  return retryOnTransientSqliteError(() =>
-    withDatabase((db) => {
-      return db.transaction(() => {
+  return withDatabase((db) => {
+    return db
+      .transaction(() => {
         const existing = db
           .query<SessionRow, [string]>(
             "SELECT id, cwd, created_at, last_accessed_at FROM sessions WHERE cwd_key = ? LIMIT 1",
@@ -106,7 +105,7 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
           record.lastAccessedAt,
         );
         return record;
-      })();
-    }),
-  );
+      })
+      .immediate();
+  });
 }

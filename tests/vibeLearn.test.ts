@@ -65,28 +65,20 @@ describe("vibeLearnTool", () => {
   });
 
   test("rejects mistake and success entries without a solution", async () => {
-    const missingMistakeSolution = await vibeLearnTool({
-      observation: "Missing solution",
-      category: "validation",
-    });
-    const missingSuccessSolution = await vibeLearnTool({
-      observation: "Good outcome",
-      category: "validation",
-      type: "success",
-    });
-
-    expect(missingMistakeSolution).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
-    });
-    expect(missingSuccessSolution).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
-    });
+    const message = "--solution is required for mistake and success types";
+    await expect(
+      vibeLearnTool({
+        observation: "Missing solution",
+        category: "validation",
+      }),
+    ).rejects.toThrow(message);
+    await expect(
+      vibeLearnTool({
+        observation: "Good outcome",
+        category: "validation",
+        type: "success",
+      }),
+    ).rejects.toThrow(message);
     expect(getLearningEntries()).toEqual({});
   });
 
@@ -112,30 +104,16 @@ describe("vibeLearnTool", () => {
     expect(entries[0]?.solution).toBe("Verify before acting.");
   });
 
-  test("rejects input with missing mistake", async () => {
-    const result = await vibeLearnTool({
-      observation: "",
-      category: "validation",
-    });
-    expect(result).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
-    });
+  test("rejects input with missing observation", async () => {
+    await expect(
+      vibeLearnTool({ observation: "", category: "validation" }),
+    ).rejects.toThrow("--observation is required");
   });
 
   test("rejects input with missing category", async () => {
-    const result = await vibeLearnTool({
-      observation: "A mistake",
-      category: "",
-    });
-    expect(result).toEqual({
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
-    });
+    await expect(
+      vibeLearnTool({ observation: "A mistake", category: "" }),
+    ).rejects.toThrow("--category is required");
   });
 
   test("accepts success type entries with a solution", async () => {
@@ -200,19 +178,6 @@ describe("vibeLearnTool", () => {
     }
   });
 
-  test("enforceOneSentence rejects empty string input upstream before processing", async () => {
-    // enforceOneSentence would return "." for empty input, but vibeLearnTool
-    // rejects empty mistake text first via --observation is required validation.
-    const result = await vibeLearnTool({
-      observation: "",
-      category: "edge",
-      solution: "Empty string validation fires first.",
-    });
-
-    expect(result.added).toBe(false);
-    expect(result.categoryCount).toBe(0);
-  });
-
   test("enforceOneSentence adds period to text without punctuation", async () => {
     const result = await vibeLearnTool({
       observation: "hello world",
@@ -226,23 +191,81 @@ describe("vibeLearnTool", () => {
     expect(entries[0]?.observation).toBe("hello world.");
   });
 
-  test("enforceOneSentence rejects whitespace-only input upstream before processing", async () => {
-    // Whitespace-only input is truthy after trim, but enforceOneSentence
-    // trims to empty and returns ".". However, the input.observation check fires
-    // on the raw string "   " which is truthy, so it passes validation.
-    // After enforceOneSentence: "   ".trim() = "", match fails, returns " .".
-    // Wait — trim() on "   " returns "", then cleaned.match(...) on ""
-    // returns null, so it falls to `${cleaned}.` = ""."? No — `${cleaned}.` = ".."
+  test("enforceOneSentence keeps periods inside versions, paths, and identifiers", async () => {
     const result = await vibeLearnTool({
-      observation: "   ",
-      category: "whitespace",
-      solution: "fix",
+      observation:
+        "Bun 1.3.14 broke db.transaction() in src/utils/database.ts. Pin it.",
+      category: "inner-periods",
+      solution: "Use e.g. spyOn over mock.module. Then rerun.",
     });
 
     expect(result.added).toBe(true);
-    const entries = getLearningEntries()["whitespace"] ?? [];
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.observation).toBe(".");
+    const entries = getLearningEntries()["inner-periods"] ?? [];
+    expect(entries[0]?.observation).toBe(
+      "Bun 1.3.14 broke db.transaction() in src/utils/database.ts.",
+    );
+    expect(entries[0]?.solution).toBe("Use e.g. spyOn over mock.module.");
+  });
+
+  test("enforceOneSentence ends at the first exclamation or question mark", async () => {
+    const result = await vibeLearnTool({
+      observation: "Is the lock held? Probe it.",
+      category: "terminators",
+      solution: "Stop! Then check.",
+    });
+
+    expect(result.added).toBe(true);
+    const entries = getLearningEntries()["terminators"] ?? [];
+    expect(entries[0]?.observation).toBe("Is the lock held?");
+    expect(entries[0]?.solution).toBe("Stop!");
+  });
+
+  test("enforceOneSentence keeps closing quotes without appending a period", async () => {
+    const result = await vibeLearnTool({
+      observation: 'The user said "ship it." Then left.',
+      category: "quotes",
+      solution: "Record the quote verbatim.",
+    });
+
+    expect(result.added).toBe(true);
+    const entries = getLearningEntries()["quotes"] ?? [];
+    expect(entries[0]?.observation).toBe('The user said "ship it."');
+  });
+
+  test.each([
+    [
+      "observation",
+      { observation: " \n ", category: "blank", solution: "Fix." },
+    ],
+    [
+      "category",
+      { observation: "Blank category.", category: "\t", solution: "Fix." },
+    ],
+    [
+      "solution",
+      { observation: "Blank solution.", category: "blank", solution: "  " },
+    ],
+  ])(
+    "rejects a whitespace-only %s without storing an entry",
+    async (field, input) => {
+      await expect(vibeLearnTool(input)).rejects.toThrow(
+        `--${field} is required`,
+      );
+      expect(getLearningEntries()).toEqual({});
+    },
+  );
+
+  test("stores no solution when a preference solution is whitespace-only", async () => {
+    const result = await vibeLearnTool({
+      observation: "Prefer terse output.",
+      category: "prefs",
+      solution: "  ",
+      type: "preference",
+    });
+
+    expect(result.added).toBe(true);
+    const entries = getLearningEntries()["prefs"] ?? [];
+    expect(entries[0]?.solution).toBeUndefined();
   });
 
   test("ignores empty legacy mistakes when checking similarity", async () => {
@@ -269,102 +292,53 @@ describe("vibeLearnTool", () => {
   });
 });
 
-describe("vibeLearnTool - catch block (storage faults)", () => {
-  test("returns error payload when addLearningEntry throws", async () => {
+describe("vibeLearnTool - storage faults", () => {
+  test("propagates addLearningEntry failures", async () => {
     const storage = await import("../src/utils/storage.js");
-    const spy = spyOn(storage, "addLearningEntry");
-    spy.mockImplementation(() => {
+    spyOn(storage, "addLearningEntry").mockImplementation(() => {
       throw new Error("DB disk full");
     });
 
-    try {
-      const result = await vibeLearnTool({
+    await expect(
+      vibeLearnTool({
         observation: "This will fail at storage.",
         category: "faulty",
         solution: "Should not be saved.",
-      });
-
-      expect(result).toEqual({
-        added: false,
-        alreadyKnown: false,
-        categoryCount: 0,
-        topCategories: [],
-      });
-    } finally {
-      spy.mockRestore();
-    }
+      }),
+    ).rejects.toThrow("DB disk full");
   });
 
-  test("returns error payload when getLearningEntries throws", async () => {
+  test("propagates getLearningEntries failures before writing", async () => {
     const storage = await import("../src/utils/storage.js");
-    const spy = spyOn(storage, "getLearningEntries");
-    spy.mockImplementation(() => {
+    const addSpy = spyOn(storage, "addLearningEntry");
+    spyOn(storage, "getLearningEntries").mockImplementation(() => {
       throw new Error("DB connection lost");
     });
 
-    try {
-      const result = await vibeLearnTool({
+    await expect(
+      vibeLearnTool({
         observation: "This will fail during duplicate check.",
         category: "faulty",
         solution: "Should not be saved.",
-      });
-
-      expect(result).toEqual({
-        added: false,
-        alreadyKnown: false,
-        categoryCount: 0,
-        topCategories: [],
-      });
-    } finally {
-      spy.mockRestore();
-    }
+      }),
+    ).rejects.toThrow("DB connection lost");
+    expect(addSpy).not.toHaveBeenCalled();
   });
 
-  test("returns error payload when getLearningCategorySummary throws", async () => {
+  test("propagates getLearningCategorySummary failures after the entry is written", async () => {
     const storage = await import("../src/utils/storage.js");
-    const addSpy = spyOn(storage, "addLearningEntry");
-    const summarySpy = spyOn(storage, "getLearningCategorySummary");
-    // Allow the add to succeed, then fail on summary
-    addSpy.mockImplementation(
-      (
-        obs: string,
-        cat: string,
-        sol?: string,
-        _type?: unknown,
-        demoId?: string,
-      ): ReturnType<typeof storage.addLearningEntry> => {
-        // Call through to real implementation for the actual add
-        addSpy.mockRestore();
-        const real = storage.addLearningEntry;
-        const result = real(obs, cat, sol, _type as never, demoId);
-        // Re-mock for subsequent calls
-        addSpy.mockImplementation(() => {
-          throw new Error("should not be called again");
-        });
-        return result;
-      },
-    );
-    summarySpy.mockImplementation(() => {
+    spyOn(storage, "getLearningCategorySummary").mockImplementation(() => {
       throw new Error("Summary query failed");
     });
 
-    try {
-      const result = await vibeLearnTool({
+    await expect(
+      vibeLearnTool({
         observation: "Entry added but summary fails.",
         category: "faulty-summary",
         solution: "The entry was still written.",
-      });
-
-      expect(result).toEqual({
-        added: false,
-        alreadyKnown: false,
-        categoryCount: 0,
-        topCategories: [],
-      });
-    } finally {
-      addSpy.mockRestore();
-      summarySpy.mockRestore();
-    }
+      }),
+    ).rejects.toThrow("Summary query failed");
+    expect(getLearningEntries()["faulty-summary"]).toHaveLength(1);
   });
 
   test("returns error payload when getLearningCategorySummary returns empty array for new category", async () => {

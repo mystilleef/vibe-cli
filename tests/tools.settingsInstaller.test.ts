@@ -31,6 +31,7 @@ let failLstatSync = false;
 let failLstatSyncAfter = -1;
 let failLstatSyncPath: string | null = null;
 let lstatSyncCallCount = 0;
+let disguiseDestSymlinkPath: string | null = null;
 const readFileSyncCalls: string[] = [];
 const writeFileCalls: unknown[][] = [];
 const renameCalls: unknown[][] = [];
@@ -110,6 +111,14 @@ mock.module("node:fs/promises", () => ({
   },
   lstat: async (...args: Parameters<typeof realLstat>) => {
     lstatCallCount++;
+    if (
+      disguiseDestSymlinkPath !== null &&
+      String(args[0]) === disguiseDestSymlinkPath
+    ) {
+      // Follow the link so path validation sees a regular file while the
+      // later metadata-only destination inspection still reports the symlink.
+      return realFsPromises.stat(args[0]);
+    }
     if (failLstat || (failLstatAfter >= 0 && lstatCallCount > failLstatAfter)) {
       const err = new Error("injected lstat failure: EACCES");
       (err as NodeJS.ErrnoException).code = "EACCES";
@@ -153,6 +162,7 @@ afterEach(async () => {
   failLstatSyncAfter = -1;
   failLstatSyncPath = null;
   lstatSyncCallCount = 0;
+  disguiseDestSymlinkPath = null;
   await cleanupTempDirs(tempDirs);
 });
 
@@ -808,6 +818,44 @@ describe("installSettings - symlink failures", () => {
         sourceAnchor: packageRoot,
       }),
     ).rejects.toThrow(SettingsInstallError);
+  });
+
+  test("rejects symlink destination when metadata inspection detects the symlink after validation passes", async () => {
+    const packageRoot = await createSettingsPackageRoot(tempDirs);
+    const targetDir = await createTempDir(tempDirs);
+    const realFileDir = await createTempDir(tempDirs);
+    await writeFile(join(realFileDir, "settings.json"), "{}");
+    const destPath = join(targetDir, "settings.json");
+    await symlink(join(realFileDir, "settings.json"), destPath);
+
+    // Async path validation sees the link target (a regular file), so the
+    // metadata-only destination inspection is what detects the symlink.
+    disguiseDestSymlinkPath = destPath;
+    try {
+      await expect(
+        installSettings(targetDir, {
+          dryRun: false,
+          sourceAnchor: packageRoot,
+        }),
+      ).rejects.toThrow(SettingsInstallError);
+      await expect(
+        installSettings(targetDir, {
+          dryRun: false,
+          sourceAnchor: packageRoot,
+        }),
+      ).rejects.toThrow(/Settings destination is a symlink/);
+      await expect(
+        installSettings(targetDir, {
+          dryRun: true,
+          sourceAnchor: packageRoot,
+        }),
+      ).rejects.toThrow(/Settings destination is a symlink/);
+    } finally {
+      disguiseDestSymlinkPath = null;
+    }
+
+    // The symlink itself is left untouched.
+    expect(await fileExists(destPath)).toBe(true);
   });
 });
 

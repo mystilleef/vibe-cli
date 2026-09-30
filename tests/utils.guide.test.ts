@@ -21,6 +21,26 @@ afterEach(async () => {
   await cleanupTempDirs(tempDirs);
 });
 
+/**
+ * Install a `readFileSync` spy that faults only for `failingPath`, keeping
+ * every other read real so each test drives one isolated fault.
+ */
+async function spyReadFileSyncFailure(failingPath: string) {
+  const fsModule = await import("node:fs");
+  const originalReadFileSync = fsModule.readFileSync;
+  const spy = spyOn(fsModule, "readFileSync");
+  spy.mockImplementation(((
+    p: Parameters<typeof fsModule.readFileSync>[0],
+    options: Parameters<typeof fsModule.readFileSync>[1],
+  ) => {
+    if (p === failingPath) {
+      throw new Error("EACCES: permission denied");
+    }
+    return originalReadFileSync(p, options);
+  }) as typeof fsModule.readFileSync);
+  return spy;
+}
+
 describe("resolveGuideSource", () => {
   test("resolves guide from checkout layout (src/utils anchor)", async () => {
     const root = await createTempDir(tempDirs);
@@ -197,6 +217,29 @@ describe("readGuideSourceBuffer", () => {
 
     const result = readGuideSourceBuffer(srcUtils);
     expect(result).toEqual(rawBytes);
+  });
+
+  test("throws GuideSourceError when the source read fails after resolution", async () => {
+    const root = await createTempDir(tempDirs);
+    await writeFile(join(root, "package.json"), '{"name":"test"}');
+    const docsDir = join(root, "docs");
+    await mkdir(docsDir, { recursive: true });
+    const sourcePath = join(docsDir, "vibe-guide.md");
+    await writeFile(sourcePath, "# Guide\n");
+
+    const srcUtils = join(root, "src", "utils");
+    await mkdir(srcUtils, { recursive: true });
+
+    const spy = await spyReadFileSyncFailure(sourcePath);
+
+    try {
+      expect(() => readGuideSourceBuffer(srcUtils)).toThrow(GuideSourceError);
+      expect(() => readGuideSourceBuffer(srcUtils)).toThrow(
+        /Failed to read guide source/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -388,18 +431,7 @@ describe("inspectGuide", () => {
     const targetDir = await createTempDir(tempDirs);
     await writeFile(join(targetDir, "vibe-guide.md"), "# Target Guide\n");
 
-    const fsModule = await import("node:fs");
-    const originalReadFileSync = fsModule.readFileSync;
-    const spy = spyOn(fsModule, "readFileSync");
-    spy.mockImplementation(((
-      p: Parameters<typeof fsModule.readFileSync>[0],
-      options: Parameters<typeof fsModule.readFileSync>[1],
-    ) => {
-      if (p === sourcePath) {
-        throw new Error("EACCES: permission denied");
-      }
-      return originalReadFileSync(p, options);
-    }) as typeof fsModule.readFileSync);
+    const spy = await spyReadFileSyncFailure(sourcePath);
 
     try {
       expect(() => inspectGuide(targetDir, root)).toThrow(GuideSourceError);
@@ -422,18 +454,7 @@ describe("inspectGuide", () => {
     const destPath = join(targetDir, "vibe-guide.md");
     await writeFile(destPath, "# Target Guide\n");
 
-    const fsModule = await import("node:fs");
-    const originalReadFileSync = fsModule.readFileSync;
-    const spy = spyOn(fsModule, "readFileSync");
-    spy.mockImplementation(((
-      p: Parameters<typeof fsModule.readFileSync>[0],
-      options: Parameters<typeof fsModule.readFileSync>[1],
-    ) => {
-      if (p === destPath) {
-        throw new Error("EACCES: permission denied");
-      }
-      return originalReadFileSync(p, options);
-    }) as typeof fsModule.readFileSync);
+    const spy = await spyReadFileSyncFailure(destPath);
 
     try {
       expect(() => inspectGuide(targetDir, root)).toThrow(GuideTargetError);

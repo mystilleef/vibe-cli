@@ -12,6 +12,13 @@ export function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+/**
+ * Return `true` when `error` carries an `EEXIST` POSIX errno.
+ */
+export function isEexist(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
 /** Create a `NodeJS.ErrnoException` with the given POSIX `code` and message. */
 export function makeErrno(
   code: string,

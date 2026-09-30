@@ -25,9 +25,9 @@ export interface VibeLearnInput {
 
 /** Result of attempting to record a learning pattern. */
 export interface VibeLearnOutput {
-  /** True when a new entry was written; false for duplicates or validation failures. */
+  /** True when a new entry was written; false when an existing entry overlaps. */
   added: boolean;
-  /** Count for the normalized category after the attempt, or zero on failure. */
+  /** Count for the normalized category after the attempt. */
   categoryCount: number;
   /** True when an existing entry overlaps enough to suppress a duplicate write. */
   alreadyKnown?: boolean;
@@ -44,65 +44,61 @@ export interface VibeLearnOutput {
  *
  * Preferences may omit `solution`; mistake and success entries require it. The
  * tool normalizes text to one sentence, canonicalizes known category aliases,
- * suppresses similar entries, and returns JSON-safe status data instead of
- * throwing validation or storage errors.
+ * and suppresses similar entries. Blank required text and storage faults
+ * throw.
  */
 export async function vibeLearnTool(
   input: VibeLearnInput,
 ): Promise<VibeLearnOutput> {
-  try {
-    if (!input.observation) throw new Error("--observation is required");
-    if (!input.category) throw new Error("--category is required");
-
-    const entryType: LearningType = input.type ?? "mistake";
-    if (entryType !== "preference" && !input.solution) {
-      throw new Error("--solution is required for mistake and success types");
-    }
-
-    const observation = enforceOneSentence(input.observation);
-    const solution = input.solution
-      ? enforceOneSentence(input.solution)
-      : undefined;
-    const category = normalizeCategory(input.category);
-
-    const existing = getLearningEntries()[category] || [];
-    const alreadyKnown = existing.some((e) =>
-      isLearningOverlapDuplicate(e.observation, observation),
-    );
-
-    if (!alreadyKnown) {
-      addLearningEntry(
-        observation,
-        category,
-        solution,
-        entryType,
-        input.demoId,
-      );
-    }
-
-    const categorySummary = getLearningCategorySummary();
-    const categoryData = categorySummary.find((m) => m.category === category);
-
-    return {
-      added: !alreadyKnown,
-      alreadyKnown,
-      categoryCount: categoryData?.count ?? 1,
-      topCategories: categorySummary.slice(0, 3),
-    };
-  } catch (_error) {
-    return {
-      added: false,
-      alreadyKnown: false,
-      categoryCount: 0,
-      topCategories: [],
-    };
+  if (!hasText(input.observation)) {
+    throw new Error("--observation is required");
   }
+  if (!hasText(input.category)) throw new Error("--category is required");
+
+  const entryType: LearningType = input.type ?? "mistake";
+  if (entryType !== "preference" && !hasText(input.solution)) {
+    throw new Error("--solution is required for mistake and success types");
+  }
+
+  const observation = enforceOneSentence(input.observation);
+  const solution = hasText(input.solution)
+    ? enforceOneSentence(input.solution)
+    : undefined;
+  const category = normalizeCategory(input.category);
+
+  const existing = getLearningEntries()[category] || [];
+  const alreadyKnown = existing.some((e) =>
+    isLearningOverlapDuplicate(e.observation, observation),
+  );
+
+  if (!alreadyKnown) {
+    addLearningEntry(observation, category, solution, entryType, input.demoId);
+  }
+
+  const categorySummary = getLearningCategorySummary();
+  const categoryData = categorySummary.find((m) => m.category === category);
+
+  return {
+    added: !alreadyKnown,
+    alreadyKnown,
+    categoryCount: categoryData?.count ?? 1,
+    topCategories: categorySummary.slice(0, 3),
+  };
 }
+
+function hasText(value: string | undefined): value is string {
+  return Boolean(value?.trim());
+}
+
+// UAX #29 boundaries keep periods inside versions, paths, and identifiers
+// (`1.3.14`, `database.ts`, `db.transaction`) from ending the sentence.
+const sentenceSegmenter = new Intl.Segmenter("en", { granularity: "sentence" });
 
 function enforceOneSentence(text: string): string {
   const cleaned = text.replace(/\r?\n/g, " ").trim();
-  const match = cleaned.match(/^([^.!?]*[.!?])/);
-  return match?.[1] ?? `${cleaned}.`;
+  const [first] = sentenceSegmenter.segment(cleaned);
+  const sentence = first?.segment.trim() ?? "";
+  return /[.!?]["')\]]*$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 const CATEGORY_ALIASES: Record<string, string[]> = {

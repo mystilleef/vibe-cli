@@ -6,23 +6,11 @@ import {
   expect,
   test,
 } from "bun:test";
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  normalizePackedChild,
-  type PackedChildFailureKind,
-  type PackedChildProcess,
-  requirePackedChild,
-} from "./helpers/packedChildResult.js";
+import { type ChildProcessResult, runChild } from "./helpers/childProcess.js";
+import { packAndExtract } from "./helpers/packedPackage.js";
+import { dirExists, fileExists } from "./helpers/skillsTestUtils.js";
 
 const originalCwd = process.cwd();
 const packageRoot = originalCwd;
@@ -50,31 +38,8 @@ async function createTempRoot(prefix: string): Promise<string> {
   return dir;
 }
 
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Deterministic child-process helper for packed CLI invocation.
- *
- * Uses Node `spawnSync` rather than `Bun.spawnSync` to avoid ~800ms per-call
- * overhead that accumulates across sequential invocations and causes test
- * timeouts. The packed CLI process lifecycle completes deterministically in
- * 150–1200ms through this path depending on operation complexity.
- */
-function runPackedCli(
+/** Run the packed CLI and reject abnormal process states. */
+async function runPackedCli(
   extractedRoot: string,
   args: string[],
   options: {
@@ -82,90 +47,30 @@ function runPackedCli(
     cwd?: string;
     extraEnv?: Record<string, string>;
   },
-): PackedChildProcess {
+): Promise<ChildProcessResult> {
   const cli = join(extractedRoot, "dist", "vibe.js");
-  const env: Record<string, string> = {
-    ...process.env,
-    HOME: options.home,
-    CI: "true",
-    NO_COLOR: "1",
-    PAGER: "cat",
-    TERM: "dumb",
-    ...options.extraEnv,
-  };
-
-  const result = spawnSync("bun", ["run", cli, ...args], {
+  return runChild("bun", ["run", cli, ...args], {
     cwd: options.cwd ?? options.home,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30_000,
-    encoding: "utf-8",
-  });
-
-  // Abnormal process states (timeout, signal, spawn error, null status)
-  // are rejected here — stdout and stderr are never parsed against
-  // ambiguous completion.
-  return requirePackedChild(result, args.join(" "));
-}
-
-async function packAndExtract(): Promise<string> {
-  const workRoot = await mkdtemp(join(packageRoot, ".skills-pack-"));
-  const packDir = join(workRoot, "pack");
-  const extractDir = join(workRoot, "extract");
-  await mkdir(packDir, { recursive: true });
-  await mkdir(extractDir, { recursive: true });
-
-  // Rebuild dist so the packed CLI matches current source contracts.
-  const buildResult = spawnSync("bun", ["run", "build"], {
-    cwd: packageRoot,
     env: {
       ...process.env,
+      HOME: options.home,
       CI: "true",
       NO_COLOR: "1",
       PAGER: "cat",
       TERM: "dumb",
+      ...options.extraEnv,
     },
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
-    encoding: "utf-8",
+    timeout: 30_000,
   });
-  expect(buildResult.status).toBe(0);
+}
 
-  const packResult = spawnSync(
-    "bun",
-    ["pm", "pack", "--destination", packDir, "--ignore-scripts", "--quiet"],
-    {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        CI: "true",
-        NO_COLOR: "1",
-        PAGER: "cat",
-        TERM: "dumb",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
-      encoding: "utf-8",
-    },
-  );
-  expect(packResult.status).toBe(0);
+let extractedRoot: string;
 
-  const packedFiles = (await readdir(packDir)).filter((name) =>
-    name.endsWith(".tgz"),
-  );
-  expect(packedFiles).toHaveLength(1);
-  const tarball = join(packDir, packedFiles[0] as string);
-
-  const extractResult = spawnSync("tar", ["-xzf", tarball, "-C", extractDir], {
-    cwd: packageRoot,
-    env: process.env as Record<string, string>,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 15_000,
-    encoding: "utf-8",
-  });
-  expect(extractResult.status).toBe(0);
-
-  const extractedRoot = join(extractDir, "package");
+/** Pack and extract once; the fixture is reused across tests. */
+beforeAll(async () => {
+  const fixture = await packAndExtract(".skills-pack-");
+  packFixtureRoot = fixture.workRoot;
+  extractedRoot = fixture.extractedRoot;
   expect(await fileExists(join(extractedRoot, "package.json"))).toBe(true);
   expect(await fileExists(join(extractedRoot, "dist", "vibe.js"))).toBe(true);
   expect(
@@ -179,15 +84,6 @@ async function packAndExtract(): Promise<string> {
   expect(
     await fileExists(join(extractedRoot, "skills", "vibe-learn", "SKILL.md")),
   ).toBe(true);
-
-  packFixtureRoot = workRoot;
-  return extractedRoot;
-}
-
-let extractedRoot: string;
-
-beforeAll(async () => {
-  extractedRoot = await packAndExtract();
 }, 90_000);
 
 describe("packed package skills surface", () => {
@@ -196,7 +92,7 @@ describe("packed package skills surface", () => {
     const target = join(home, "agents-skills");
 
     // Default output prints readable Skills section.
-    const listPretty = runPackedCli(
+    const listPretty = await runPackedCli(
       extractedRoot,
       ["skills", "list", "--target", target],
       { home },
@@ -208,7 +104,7 @@ describe("packed package skills surface", () => {
     expect(listPretty.stdout).toContain("missing");
 
     // --json preserves parseable payload.
-    const list = runPackedCli(
+    const list = await runPackedCli(
       extractedRoot,
       ["skills", "list", "--json", "--target", target],
       { home },
@@ -230,7 +126,7 @@ describe("packed package skills surface", () => {
     expect(await dirExists(target)).toBe(false);
 
     // Default output prints readable Skills Install section.
-    const dryPretty = runPackedCli(
+    const dryPretty = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--dry-run", "--target", target],
       { home },
@@ -243,7 +139,7 @@ describe("packed package skills surface", () => {
     expect(await dirExists(target)).toBe(false);
 
     // --json preserves parseable payload.
-    const dryRun = runPackedCli(
+    const dryRun = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--dry-run", "--json", "--target", target],
       { home },
@@ -268,7 +164,7 @@ describe("packed package skills surface", () => {
     const target = join(home, "agents-skills");
 
     // Default output prints readable Skills Install section.
-    const installPretty = runPackedCli(
+    const installPretty = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--target", target],
       { home },
@@ -284,7 +180,7 @@ describe("packed package skills surface", () => {
     expect(await fileExists(join(target, "vibe-learn", "SKILL.md"))).toBe(true);
 
     // --json preserves parseable payload.
-    const install = runPackedCli(
+    const install = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--json", "--target", target],
       { home },
@@ -307,7 +203,7 @@ describe("packed package skills surface", () => {
     );
 
     // Default blocked output prints readable section with error detail.
-    const blockedPretty = runPackedCli(
+    const blockedPretty = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--target", target],
       { home },
@@ -319,7 +215,7 @@ describe("packed package skills surface", () => {
     expect(blockedPretty.stdout).toContain("vibe-learn");
 
     // --json preserves parseable payload with blocked action.
-    const blocked = runPackedCli(
+    const blocked = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--json", "--target", target],
       { home },
@@ -345,7 +241,7 @@ describe("packed package skills surface", () => {
     const home = await createTempRoot(".skills-pack-home-");
     const target = join(home, "agents-skills");
 
-    const install = runPackedCli(
+    const install = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--json", "--target", target],
       { home },
@@ -359,7 +255,7 @@ describe("packed package skills surface", () => {
     );
 
     // Default output prints readable Skills Install section.
-    const forcedPretty = runPackedCli(
+    const forcedPretty = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--force", "--target", target],
       { home },
@@ -371,7 +267,7 @@ describe("packed package skills surface", () => {
     expect(forcedPretty.stdout).toContain("replaced");
 
     // --json preserves parseable payload.
-    const forced = runPackedCli(
+    const forced = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--force", "--json", "--target", target],
       { home },
@@ -423,7 +319,7 @@ describe("packed package skills surface", () => {
   test("extracted package reports schema skills contracts and help text", async () => {
     const home = await createTempRoot(".skills-pack-home-");
 
-    const schema = runPackedCli(extractedRoot, ["schema"], { home });
+    const schema = await runPackedCli(extractedRoot, ["schema"], { home });
     expect(schema.exitCode).toBe(0);
     expect(schema.stderr).toBe("");
     const payload = JSON.parse(schema.stdout) as {
@@ -432,9 +328,13 @@ describe("packed package skills surface", () => {
     expect(payload.commands["skills list"]).toBeDefined();
     expect(payload.commands["skills install"]).toBeDefined();
 
-    const help = runPackedCli(extractedRoot, ["skills", "install", "--help"], {
-      home,
-    });
+    const help = await runPackedCli(
+      extractedRoot,
+      ["skills", "install", "--help"],
+      {
+        home,
+      },
+    );
     expect(help.exitCode).toBe(0);
     expect(help.stderr).toBe("");
     expect(help.stdout).toContain("--target");
@@ -442,9 +342,13 @@ describe("packed package skills surface", () => {
     expect(help.stdout).toContain("--force");
     expect(help.stdout).toContain("--json");
 
-    const listHelp = runPackedCli(extractedRoot, ["skills", "list", "--help"], {
-      home,
-    });
+    const listHelp = await runPackedCli(
+      extractedRoot,
+      ["skills", "list", "--help"],
+      {
+        home,
+      },
+    );
     expect(listHelp.exitCode).toBe(0);
     expect(listHelp.stdout).toContain("--json");
   }, 60_000);
@@ -453,7 +357,7 @@ describe("packed package skills surface", () => {
     const home = await createTempRoot(".skills-pack-home-");
     const missingParent = join(home, "no-parent", "skills");
 
-    const result = runPackedCli(
+    const result = await runPackedCli(
       extractedRoot,
       ["skills", "install", "--target", missingParent],
       { home },
@@ -464,118 +368,4 @@ describe("packed package skills surface", () => {
     const payload = JSON.parse(result.stderr) as { error: string };
     expect(payload.error).toContain("Target parent");
   }, 60_000);
-});
-
-describe("packed child-result validation", () => {
-  const JSON_STDOUT = '{"ok":true}\n';
-
-  function fakeChildResult(
-    overrides: Partial<SpawnSyncReturns<string>>,
-  ): SpawnSyncReturns<string> {
-    return {
-      pid: 1234,
-      output: [null, "", ""],
-      stdout: "",
-      stderr: "",
-      status: 0,
-      signal: null,
-      ...overrides,
-    } as SpawnSyncReturns<string>;
-  }
-
-  // Deterministic synthetic results — process-state validation without
-  // relying on platform timing. Abnormal cases carry valid-looking JSON
-  // stdout to prove output assertions are blocked by the guard.
-  const abnormalCases: Array<{
-    name: string;
-    result: SpawnSyncReturns<string>;
-    kind: PackedChildFailureKind;
-  }> = [
-    {
-      name: "timeout",
-      result: fakeChildResult({
-        error: Object.assign(new Error("spawnSync bun ETIMEDOUT"), {
-          code: "ETIMEDOUT",
-        }),
-        status: null,
-        signal: "SIGTERM",
-        stdout: JSON_STDOUT,
-      }),
-      kind: "timeout",
-    },
-    {
-      name: "spawn error",
-      result: fakeChildResult({
-        error: Object.assign(new Error("spawnSync bun ENOENT"), {
-          code: "ENOENT",
-        }),
-        status: null,
-        signal: null,
-        stdout: JSON_STDOUT,
-      }),
-      kind: "spawn-error",
-    },
-    {
-      name: "signal termination",
-      result: fakeChildResult({
-        status: null,
-        signal: "SIGKILL",
-        stdout: JSON_STDOUT,
-      }),
-      kind: "signal",
-    },
-    {
-      name: "null status",
-      result: fakeChildResult({
-        status: null,
-        signal: null,
-        stdout: JSON_STDOUT,
-      }),
-      kind: "null-status",
-    },
-  ];
-
-  for (const { name, result, kind } of abnormalCases) {
-    test(`rejects ${name} before stdout or stderr parsing`, () => {
-      const normalized = normalizePackedChild(result);
-      expect(normalized.ok).toBe(false);
-      if (!normalized.ok) {
-        expect(normalized.failure.kind).toBe(kind);
-        expect(normalized.failure.detail.length).toBeGreaterThan(0);
-      }
-      expect(() => requirePackedChild(result, "synthetic")).toThrow(
-        new RegExp(kind),
-      );
-    });
-  }
-
-  test("accepts a successful child result for JSON assertions", () => {
-    const result = fakeChildResult({
-      status: 0,
-      stdout: JSON_STDOUT,
-      stderr: "",
-    });
-    const normalized = normalizePackedChild(result);
-    expect(normalized.ok).toBe(true);
-    const child = requirePackedChild(result, "synthetic");
-    expect(child.exitCode).toBe(0);
-    expect(child.stderr).toBe("");
-    expect((JSON.parse(child.stdout) as { ok: boolean }).ok).toBe(true);
-  });
-
-  test("accepts an expected command failure with a concrete nonzero code", () => {
-    const stderrPayload = '{"error":"expected failure"}\n';
-    const result = fakeChildResult({
-      status: 2,
-      stdout: "",
-      stderr: stderrPayload,
-    });
-    const normalized = normalizePackedChild(result);
-    expect(normalized.ok).toBe(true);
-    const child = requirePackedChild(result, "synthetic");
-    expect(child.exitCode).toBe(2);
-    expect((JSON.parse(child.stderr) as { error: string }).error).toBe(
-      "expected failure",
-    );
-  });
 });

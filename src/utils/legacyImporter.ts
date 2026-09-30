@@ -1,6 +1,7 @@
 import type Database from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { LEARNING_TYPES } from "./learningEntryCore.js";
 import {
   backupLegacyPath,
   getLegacyArtifactPath,
@@ -10,6 +11,7 @@ import {
   LEGACY_LEARNING_LOG,
   readLegacyJson,
 } from "./legacyMigration.js";
+import { ensureSessionRow } from "./sessionRows.js";
 
 export { getLegacyArtifactPath } from "./legacyMigration.js";
 
@@ -56,6 +58,34 @@ export function importAllLegacyData(db: Database): void {
   importLegacyInteractions(db);
 }
 
+interface LegacyArtifactImport<T> {
+  filePath: string;
+  artifact: string;
+  /** Parses raw JSON into the artifact shape; `null` skips the artifact. */
+  parse: (value: unknown) => T | null;
+  /** Transaction body applying one validated artifact. */
+  apply: (data: T) => void;
+}
+
+/**
+ * Import one artifact idempotently. Recorded artifacts and unparsable
+ * sources skip untouched; a successful apply commits in one immediate
+ * transaction and records the renamed backup. Failures never abort later
+ * artifacts and leave no completion record, so a later run can retry.
+ */
+function importLegacyArtifact<T>(
+  db: Database,
+  spec: LegacyArtifactImport<T>,
+): void {
+  if (isImportComplete(db, spec.artifact)) return;
+  const parsed = spec.parse(readLegacyJson(spec.filePath));
+  if (parsed === null) return;
+  try {
+    db.transaction(() => spec.apply(parsed)).immediate();
+    markImportComplete(db, spec.artifact, backupLegacyPath(spec.filePath));
+  } catch {}
+}
+
 function importLegacySessions(db: Database): void {
   const dir = getLegacyAutosessionDir();
   if (!fs.existsSync(dir)) return;
@@ -68,33 +98,31 @@ function importLegacySessions(db: Database): void {
 
   for (const entry of entries) {
     const filePath = path.join(dir, entry);
-    const artifact = `sessions/${entry}`;
-    if (isImportComplete(db, artifact)) continue;
-    const parsed = readLegacyJson(filePath);
-    if (!isLegacySessionRecord(parsed)) continue;
     const cwdKey = path.basename(entry, ".json");
-
-    try {
-      db.transaction(() => {
-        db.prepare(
-          "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
-        ).run(parsed.id, cwdKey, parsed.createdAt, parsed.lastAccessedAt);
-      })();
-      markImportComplete(db, artifact, backupLegacyPath(filePath));
-    } catch {}
+    importLegacyArtifact(db, {
+      filePath,
+      artifact: `sessions/${entry}`,
+      parse: parseLegacySessionRecord,
+      apply: (session) => {
+        ensureSessionRow(db, {
+          id: session.id,
+          cwdKey,
+          createdAt: session.createdAt,
+          lastAccessedAt: session.lastAccessedAt,
+        });
+      },
+    });
   }
 }
 
 function importLegacyLearningEntries(db: Database): void {
   const filePath = getLegacyArtifactPath(LEGACY_LEARNING_LOG);
-  const artifact = LEGACY_LEARNING_LOG;
-  if (!fs.existsSync(filePath) || isImportComplete(db, artifact)) return;
-  const parsed = readLegacyJson(filePath);
-  const entries = extractLearningEntries(parsed);
-  if (!entries) return;
-
-  try {
-    db.transaction(() => {
+  if (!fs.existsSync(filePath)) return;
+  importLegacyArtifact(db, {
+    filePath,
+    artifact: LEGACY_LEARNING_LOG,
+    parse: extractLearningEntries,
+    apply: (entries) => {
       const insert = db.prepare(
         "INSERT OR IGNORE INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       );
@@ -108,56 +136,56 @@ function importLegacyLearningEntries(db: Database): void {
           entry.demoId ?? null,
         );
       }
-    })();
-    markImportComplete(db, artifact, backupLegacyPath(filePath));
-  } catch {}
+    },
+  });
 }
 
 function importLegacyConstitutionRules(db: Database): void {
   const filePath = getLegacyArtifactPath(LEGACY_CONSTITUTION);
-  const artifact = LEGACY_CONSTITUTION;
-  if (!fs.existsSync(filePath) || isImportComplete(db, artifact)) return;
-  const parsed = readLegacyJson(filePath);
-  if (!isStringArrayRecord(parsed)) return;
-
-  try {
-    db.transaction(() => {
+  if (!fs.existsSync(filePath)) return;
+  importLegacyArtifact(db, {
+    filePath,
+    artifact: LEGACY_CONSTITUTION,
+    parse: parseStringArrayRecord,
+    apply: (rulesBySession) => {
       const now = new Date().toISOString();
-      const ensureSession = db.prepare(
-        "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
-      );
       const insertRule = db.prepare(
         "INSERT OR IGNORE INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
       );
-      for (const [sessionId, rules] of Object.entries(parsed)) {
-        ensureSession.run(sessionId, `legacy:${sessionId}`, now, now);
+      for (const [sessionId, rules] of Object.entries(rulesBySession)) {
+        ensureSessionRow(db, {
+          id: sessionId,
+          cwdKey: legacySessionCwdKey(sessionId),
+          createdAt: now,
+        });
         rules.forEach((rule, position) => {
           insertRule.run(sessionId, rule, position, now);
         });
       }
-    })();
-    markImportComplete(db, artifact, backupLegacyPath(filePath));
-  } catch {}
+    },
+  });
 }
 
 function importLegacyInteractions(db: Database): void {
   const filePath = getLegacyArtifactPath(LEGACY_HISTORY);
-  const artifact = LEGACY_HISTORY;
-  if (!fs.existsSync(filePath) || isImportComplete(db, artifact)) return;
-  const parsed = readLegacyJson(filePath);
-  if (!isInteractionRecord(parsed)) return;
-
-  try {
-    db.transaction(() => {
+  if (!fs.existsSync(filePath)) return;
+  importLegacyArtifact(db, {
+    filePath,
+    artifact: LEGACY_HISTORY,
+    parse: parseInteractionRecord,
+    apply: (interactionsBySession) => {
       const now = new Date().toISOString();
-      const ensureSession = db.prepare(
-        "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
-      );
       const insertInteraction = db.prepare(
         "INSERT OR IGNORE INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
       );
-      for (const [sessionId, interactions] of Object.entries(parsed)) {
-        ensureSession.run(sessionId, `legacy:${sessionId}`, now, now);
+      for (const [sessionId, interactions] of Object.entries(
+        interactionsBySession,
+      )) {
+        ensureSessionRow(db, {
+          id: sessionId,
+          cwdKey: legacySessionCwdKey(sessionId),
+          createdAt: now,
+        });
         for (const interaction of interactions) {
           insertInteraction.run(
             sessionId,
@@ -167,9 +195,13 @@ function importLegacyInteractions(db: Database): void {
           );
         }
       }
-    })();
-    markImportComplete(db, artifact, backupLegacyPath(filePath));
-  } catch {}
+    },
+  });
+}
+
+/** Session key namespace for rows anchored by legacy imports. */
+function legacySessionCwdKey(sessionId: string): string {
+  return `legacy:${sessionId}`;
 }
 
 function isImportComplete(db: Database, artifact: string): boolean {
@@ -190,17 +222,20 @@ function markImportComplete(
   ).run(artifact, new Date().toISOString(), backupPath);
 }
 
-function isLegacySessionRecord(value: unknown): value is LegacySessionRecord {
-  if (!value || typeof value !== "object") return false;
+function parseLegacySessionRecord(value: unknown): LegacySessionRecord | null {
+  if (!value || typeof value !== "object") return null;
   const record = value as Partial<LegacySessionRecord>;
-  return (
-    typeof record.id === "string" &&
-    record.id.length > 0 &&
-    typeof record.createdAt === "string" &&
-    !Number.isNaN(Date.parse(record.createdAt)) &&
-    typeof record.lastAccessedAt === "string" &&
-    !Number.isNaN(Date.parse(record.lastAccessedAt))
-  );
+  if (
+    typeof record.id !== "string" ||
+    record.id.length === 0 ||
+    typeof record.createdAt !== "string" ||
+    Number.isNaN(Date.parse(record.createdAt)) ||
+    typeof record.lastAccessedAt !== "string" ||
+    Number.isNaN(Date.parse(record.lastAccessedAt))
+  ) {
+    return null;
+  }
+  return record as LegacySessionRecord;
 }
 
 export function validateLegacyLearningEntry(
@@ -212,7 +247,7 @@ export function validateLegacyLearningEntry(
     typeof e.mistake !== "string" ||
     typeof e.timestamp !== "number" ||
     (e.type !== undefined &&
-      !["mistake", "preference", "success"].includes(e.type)) ||
+      !LEARNING_TYPES.some((candidate) => candidate === e.type)) ||
     (e.solution !== undefined && typeof e.solution !== "string") ||
     (e.demoId !== undefined && typeof e.demoId !== "string")
   ) {
@@ -266,30 +301,34 @@ export function extractLearningEntries(
   return entries;
 }
 
-function isStringArrayRecord(
+function parseStringArrayRecord(
   value: unknown,
-): value is Record<string, string[]> {
-  if (!value || typeof value !== "object") return false;
-  return Object.values(value).every(
+): Record<string, string[]> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, string[]>;
+  const valid = Object.values(record).every(
     (rules) =>
       Array.isArray(rules) && rules.every((rule) => typeof rule === "string"),
   );
+  return valid ? record : null;
 }
 
-function isInteractionRecord(
+function parseInteractionRecord(
   value: unknown,
-): value is Record<string, LegacyInteraction[]> {
-  if (!value || typeof value !== "object") return false;
-  return Object.values(value).every(
+): Record<string, LegacyInteraction[]> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, LegacyInteraction[]>;
+  const valid = Object.values(record).every(
     (interactions) =>
       Array.isArray(interactions) &&
       interactions.every(
         (interaction) =>
           interaction &&
           typeof interaction === "object" &&
-          typeof (interaction as LegacyInteraction).input?.goal === "string" &&
-          typeof (interaction as LegacyInteraction).output === "string" &&
-          typeof (interaction as LegacyInteraction).timestamp === "number",
+          typeof interaction.input?.goal === "string" &&
+          typeof interaction.output === "string" &&
+          typeof interaction.timestamp === "number",
       ),
   );
+  return valid ? record : null;
 }

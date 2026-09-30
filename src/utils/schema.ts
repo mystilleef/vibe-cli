@@ -143,6 +143,33 @@ export function buildSchema() {
         },
         exit: { "0": "success", "1": "error" },
       },
+      doctor: {
+        when: "diagnose and reclaim unreachable local state; provider-free and offline; apply only when explicit targets accompany --yes",
+        req: {},
+        opt: {
+          "--vacuum": "reclaim free pages after the safety backup",
+          "--purge-backups": "delete retired managed backups beyond retention",
+          "--purge-legacy": "delete recorded legacy .bak copies",
+          "--keep-backups":
+            "int=5 newest managed backups retained (default: five)",
+          "-y, --yes": "apply explicit targets after one safety backup",
+        },
+        out: {
+          dryRun: "bool",
+          targets: "[str] explicit selections in canonical order",
+          findings:
+            "{integrityCheck,foreignKeyCheck,freelistCount,excessBackups,latestBackupPath,legacyBackups,strandedOriginals} pre-application values; excessBackups counts the pending safety backup under --purge-backups",
+          backupPath: "str|null one safety backup path created before apply",
+          appliedCounts:
+            "{vacuum:int reclaimed pages,purgeBackups:int files,purgeLegacy:int files}",
+          skippedTargets: "[str]",
+          failedTargets: "[{target:str,message:str}]",
+        },
+        exit: {
+          "0": "healthy report or apply, including harmless no-ops",
+          "1": "unhealthy diagnostics, backup/target failure, or operational error",
+        },
+      },
       "skills list": {
         when: "inspect bundled-skill drift against a harness skills directory without mutation",
         req: {},

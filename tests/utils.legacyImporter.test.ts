@@ -1,10 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { initializeSchema } from "../src/utils/database.js";
 import {
   extractCategoryEntries,
   extractLearningEntries,
+  importAllLegacyData,
   mapLegacyEntry,
   validateLegacyLearningEntry,
 } from "../src/utils/legacyImporter.js";
+import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 describe("validateLegacyLearningEntry", () => {
   test("returns null for non-object input", () => {
@@ -340,5 +346,108 @@ describe("extractLearningEntries", () => {
       timestamp: 1000,
       demoId: "demo",
     });
+  });
+});
+
+// ── importAllLegacyData: session record validation ───────────────────────
+
+let home: TempHomeContext;
+
+beforeEach(async () => {
+  home = await createTempHome();
+});
+
+afterEach(async () => {
+  await home.cleanup();
+});
+
+function openSeededDatabase(): Database {
+  const db = new Database(":memory:");
+  initializeSchema(db);
+  return db;
+}
+
+function seedLegacySession(fileName: string, record: unknown): string {
+  const sessionsDir = join(home.dataRoot, "sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+  const filePath = join(sessionsDir, fileName);
+  writeFileSync(filePath, JSON.stringify(record));
+  return filePath;
+}
+
+describe("importAllLegacyData session record validation", () => {
+  test("skips a legacy session record whose lastAccessedAt is not a date", () => {
+    const filePath = seedLegacySession("abc123.json", {
+      id: "legacy-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastAccessedAt: "not-a-date",
+    });
+    const db = openSeededDatabase();
+
+    try {
+      importAllLegacyData(db);
+
+      expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({
+        c: 0,
+      });
+      expect(
+        db.query("SELECT COUNT(*) AS c FROM legacy_imports").get(),
+      ).toEqual({ c: 0 });
+    } finally {
+      db.close();
+    }
+    // Unparsable artifacts are skipped untouched, never renamed to a backup.
+    expect(existsSync(filePath)).toBe(true);
+  });
+
+  test("skips a legacy session record with a non-string lastAccessedAt", () => {
+    const filePath = seedLegacySession("def456.json", {
+      id: "legacy-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastAccessedAt: 1234567890,
+    });
+    const db = openSeededDatabase();
+
+    try {
+      importAllLegacyData(db);
+
+      expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({
+        c: 0,
+      });
+      expect(
+        db.query("SELECT COUNT(*) AS c FROM legacy_imports").get(),
+      ).toEqual({ c: 0 });
+    } finally {
+      db.close();
+    }
+    expect(existsSync(filePath)).toBe(true);
+  });
+
+  test("skips one invalid session record while importing a valid one", () => {
+    seedLegacySession("valid.json", {
+      id: "valid-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastAccessedAt: "2026-01-02T00:00:00.000Z",
+    });
+    seedLegacySession("invalid.json", {
+      id: "invalid-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastAccessedAt: "not-a-date",
+    });
+    const db = openSeededDatabase();
+
+    try {
+      importAllLegacyData(db);
+
+      const sessions = db
+        .query<{ id: string }, []>("SELECT id FROM sessions ORDER BY id")
+        .all();
+      expect(sessions).toEqual([{ id: "valid-session" }]);
+      expect(
+        db.query("SELECT COUNT(*) AS c FROM legacy_imports").get(),
+      ).toEqual({ c: 1 });
+    } finally {
+      db.close();
+    }
   });
 });

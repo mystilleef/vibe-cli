@@ -1,6 +1,7 @@
 import {
   collectPruneCandidates,
   computePruneTargetCounts,
+  type DestructivePruneOptions,
   type DestructivePruneResult,
   executeDestructivePrune,
   PRUNE_TARGET_ORDER,
@@ -120,7 +121,20 @@ function extractRepresentativeDetails(
   };
 }
 
-export function runPrune(input: PruneInput): PruneSuccessPayload {
+/**
+ * Narrow failure-injection seam for destructive runs: only backup lifecycle
+ * controls, never candidate-policy overrides. Target selection, age, category,
+ * overlap, and session identity always derive from the validated `PruneInput`.
+ */
+export type PruneRunOptions = Pick<
+  DestructivePruneOptions,
+  "backupTimestamp" | "backupDatabase" | "backupOptions"
+>;
+
+export async function runPrune(
+  input: PruneInput,
+  options?: PruneRunOptions,
+): Promise<PruneSuccessPayload> {
   const explicitTargets = PRUNE_TARGET_ORDER.filter((t) => input[t]);
   if (input.dryRun === true && input.yes === true) {
     throw new Error("--dry-run cannot be combined with --yes");
@@ -159,9 +173,15 @@ export function runPrune(input: PruneInput): PruneSuccessPayload {
     };
   }
 
-  const result: DestructivePruneResult = executeDestructivePrune({
+  const result: DestructivePruneResult = await executeDestructivePrune({
     ...candidateOptions,
-    backupTimestamp: new Date(),
+    backupTimestamp: options?.backupTimestamp ?? new Date(),
+    ...(options?.backupDatabase !== undefined && {
+      backupDatabase: options.backupDatabase,
+    }),
+    ...(options?.backupOptions !== undefined && {
+      backupOptions: options.backupOptions,
+    }),
   });
 
   return {

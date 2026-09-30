@@ -30,18 +30,20 @@ function getSessionRules(sessionId: string): string[] {
 
 function replaceSessionRules(sessionId: string, rules: string[]): void {
   withDatabase((db) =>
-    db.transaction(() => {
-      db.prepare("DELETE FROM constitution_rules WHERE session_id = ?").run(
-        sessionId,
-      );
-      const insert = db.prepare(
-        "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
-      );
-      const timestamp = new Date().toISOString();
-      rules.slice(0, MAX_RULES).forEach((rule, position) => {
-        insert.run(sessionId, rule, position, timestamp);
-      });
-    })(),
+    db
+      .transaction(() => {
+        db.prepare("DELETE FROM constitution_rules WHERE session_id = ?").run(
+          sessionId,
+        );
+        const insert = db.prepare(
+          "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
+        );
+        const timestamp = new Date().toISOString();
+        rules.slice(0, MAX_RULES).forEach((rule, position) => {
+          insert.run(sessionId, rule, position, timestamp);
+        });
+      })
+      .immediate(),
   );
 }
 

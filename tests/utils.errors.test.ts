@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   extractErrorMessage,
+  isEexist,
   isEnoent,
   makeErrno,
 } from "../src/utils/errors.js";
@@ -83,6 +84,47 @@ describe("isEnoent", () => {
 
   test("throws TypeError for undefined input", () => {
     expect(() => isEnoent(undefined)).toThrow(TypeError);
+  });
+});
+
+describe("isEexist", () => {
+  test("returns true for EEXIST ErrnoException", () => {
+    const err = new Error("file already exists") as NodeJS.ErrnoException;
+    err.code = "EEXIST";
+    expect(isEexist(err)).toBe(true);
+  });
+
+  test("returns false for non-EEXIST code", () => {
+    const err = new Error("permission denied") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    expect(isEexist(err)).toBe(false);
+  });
+
+  test("returns false for Error without code", () => {
+    expect(isEexist(new Error("generic"))).toBe(false);
+  });
+
+  test("returns false for non-Error values that have a code property", () => {
+    expect(isEexist("EEXIST")).toBe(false);
+    expect(isEexist(42)).toBe(false);
+  });
+
+  test("returns true for any object with code 'EEXIST' (cast is compile-time only)", () => {
+    // The `as NodeJS.ErrnoException` cast is compile-time only; at runtime
+    // any object with a `.code` of "EEXIST" passes.
+    expect(isEexist({ code: "EEXIST" })).toBe(true);
+  });
+
+  test("returns false for plain object with different code", () => {
+    expect(isEexist({ code: "EACCES" })).toBe(false);
+  });
+
+  test("throws TypeError for null input", () => {
+    expect(() => isEexist(null)).toThrow(TypeError);
+  });
+
+  test("throws TypeError for undefined input", () => {
+    expect(() => isEexist(undefined)).toThrow(TypeError);
   });
 });
 
