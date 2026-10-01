@@ -60,6 +60,17 @@ describe("openVibeDatabase WAL conversion", () => {
     }
   });
 
+  test("keeps retrying a busy conversion until a later attempt clears", async () => {
+    failWalConversion("SQLITE_BUSY", 2);
+    const handle = openVibeDatabase({ path: await tempPath("busy-twice") });
+    try {
+      const row = handle.db.query("PRAGMA journal_mode").get();
+      expect(row).toEqual({ journal_mode: "wal" });
+    } finally {
+      handle.close();
+    }
+  });
+
   test("rethrows SQLITE_BUSY and closes the connection when every attempt fails", async () => {
     failWalConversion("SQLITE_BUSY", Number.POSITIVE_INFINITY);
     const path = await tempPath("busy-always");
