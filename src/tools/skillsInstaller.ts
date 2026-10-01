@@ -3,12 +3,9 @@
 // doesn't apply to a single-user home-directory install.
 
 import type { Stats } from "node:fs";
-import { access, constants, cp, lstat, rm } from "node:fs/promises";
+import { cp, lstat, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import {
-  extractErrorMessage as errorMessage,
-  isEnoent,
-} from "../utils/errors.js";
+import { extractErrorMessage, isEnoent } from "../utils/errors.js";
 import { findPackageRoot } from "../utils/packageRoot.js";
 import {
   computeSkillsInventory,
@@ -19,6 +16,7 @@ import {
 import {
   ensureTargetDirectory,
   InstallerError,
+  requireWritableTargetRoot,
   resolveInstallerAction,
   validateDirectory,
 } from "../utils/validation.js";
@@ -154,7 +152,7 @@ async function computeInventory(
       }
       throw new InstallError(`Target error: ${message}`);
     }
-    throw new InstallError(`Inventory failed: ${errorMessage(error)}`);
+    throw new InstallError(`Inventory failed: ${extractErrorMessage(error)}`);
   }
 }
 
@@ -174,7 +172,7 @@ async function validateTargetRootDirectory(targetRoot: string): Promise<void> {
       return;
     }
     throw new InstallValidationError(
-      `Failed to inspect target root '${targetRoot}': ${errorMessage(error)}`,
+      `Failed to inspect target root '${targetRoot}': ${extractErrorMessage(error)}`,
     );
   }
 
@@ -183,19 +181,11 @@ async function validateTargetRootDirectory(targetRoot: string): Promise<void> {
     return;
   }
 
-  if (!targetStat.isDirectory()) {
-    throw new InstallValidationError(
-      `Target root '${targetRoot}' is not a directory`,
-    );
-  }
-
-  try {
-    await access(targetRoot, constants.W_OK);
-  } catch {
-    throw new InstallValidationError(
-      `No write access to target root '${targetRoot}'`,
-    );
-  }
+  await requireWritableTargetRoot(
+    targetRoot,
+    targetStat,
+    InstallValidationError,
+  );
 }
 
 /**
@@ -266,7 +256,7 @@ export async function installSkills(
       await cp(source.sourcePath, destPath, { recursive: true });
     } catch (error) {
       entry.action = "failed";
-      entry.error = errorMessage(error);
+      entry.error = extractErrorMessage(error);
       ok = false;
     }
   }

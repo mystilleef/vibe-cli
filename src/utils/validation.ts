@@ -17,7 +17,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { extractErrorMessage as errorMessage, isEnoent } from "./errors.js";
+import { extractErrorMessage, isEnoent } from "./errors.js";
 import {
   getPathAncestorsAndSelf,
   rejectSymlinkPathComponents,
@@ -72,7 +72,7 @@ export async function validateDirectory(
       throw new errorClass(`Target parent directory '${path}' does not exist`);
     }
     throw new baseErrorClass(
-      `Failed to inspect target parent '${path}': ${errorMessage(error)}`,
+      `Failed to inspect target parent '${path}': ${extractErrorMessage(error)}`,
     );
   }
 
@@ -122,6 +122,27 @@ export function resolveInstallerAction<T extends PerformedInstallerAction>(
 
 // ── Target validation ─────────────────────────────────────────────────────
 
+/**
+ * Require an existing target root to be a writable directory. Callers resolve
+ * absent-root and symlink policy first; the directory and write-access
+ * contract and its messages stay identical across installers.
+ */
+export async function requireWritableTargetRoot(
+  targetRoot: string,
+  targetStats: Stats,
+  errorClass: new (message: string) => Error,
+): Promise<void> {
+  if (!targetStats.isDirectory()) {
+    throw new errorClass(`Target root '${targetRoot}' is not a directory`);
+  }
+
+  try {
+    await access(targetRoot, constants.W_OK);
+  } catch {
+    throw new errorClass(`No write access to target root '${targetRoot}'`);
+  }
+}
+
 /** Options for validateInstallerTarget. */
 export interface ValidateInstallerTargetOptions {
   /** Error class for validation errors (symlink, not-directory, unwritable). */
@@ -161,12 +182,12 @@ export async function validateInstallerTarget(
     errorClass: validationErrorClass,
     formatError: (component, root, error) => {
       if (component === root) {
-        return `Failed to inspect target directory '${root}': ${errorMessage(error)}`;
+        return `Failed to inspect target directory '${root}': ${extractErrorMessage(error)}`;
       }
       if (component === destPath) {
-        return `Failed to inspect destination '${destPath}': ${errorMessage(error)}`;
+        return `Failed to inspect destination '${destPath}': ${extractErrorMessage(error)}`;
       }
-      return `Failed to inspect target path '${component}': ${errorMessage(error)}`;
+      return `Failed to inspect target path '${component}': ${extractErrorMessage(error)}`;
     },
   });
 
@@ -183,25 +204,17 @@ export async function validateInstallerTarget(
       // A path component is not a directory — defer to parent validation
     } else {
       throw new validationErrorClass(
-        `Failed to inspect target root '${targetRoot}': ${errorMessage(error)}`,
+        `Failed to inspect target root '${targetRoot}': ${extractErrorMessage(error)}`,
       );
     }
   }
 
   if (targetExists && targetStat) {
-    if (!targetStat.isDirectory()) {
-      throw new validationErrorClass(
-        `Target root '${targetRoot}' is not a directory`,
-      );
-    }
-
-    try {
-      await access(targetRoot, constants.W_OK);
-    } catch {
-      throw new validationErrorClass(
-        `No write access to target root '${targetRoot}'`,
-      );
-    }
+    await requireWritableTargetRoot(
+      targetRoot,
+      targetStat,
+      validationErrorClass,
+    );
   }
 
   // Validate immediate parent when target root doesn't exist yet
@@ -276,7 +289,7 @@ export async function ensureTargetDirectory(
     await mkdir(targetRoot, { recursive: true });
   } catch (error) {
     throw new errorClass(
-      `Failed to create target '${targetRoot}': ${errorMessage(error)}`,
+      `Failed to create target '${targetRoot}': ${extractErrorMessage(error)}`,
     );
   }
 }
@@ -316,7 +329,7 @@ export async function atomicFileWrite(
       // Ignore cleanup failure
     }
     throw new errorClass(
-      `Failed to install to '${destPath}': ${errorMessage(error)}`,
+      `Failed to install to '${destPath}': ${extractErrorMessage(error)}`,
     );
   }
 }

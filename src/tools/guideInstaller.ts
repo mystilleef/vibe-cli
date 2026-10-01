@@ -5,7 +5,7 @@
  */
 
 import { join } from "node:path";
-import { extractErrorMessage as errorMessage } from "../utils/errors.js";
+import { extractErrorMessage } from "../utils/errors.js";
 import {
   compareGuideHash,
   GUIDE_FILENAME,
@@ -70,7 +70,7 @@ function wrapGuideError<T>(operation: () => T, context: string): T {
     if (error instanceof GuideTargetError) {
       throw new GuideInstallError(`Target error: ${error.message}`);
     }
-    throw new GuideInstallError(`${context}: ${errorMessage(error)}`);
+    throw new GuideInstallError(`${context}: ${extractErrorMessage(error)}`);
   }
 }
 

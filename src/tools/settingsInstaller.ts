@@ -6,7 +6,7 @@
 
 import { lstatSync, readFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
-import { extractErrorMessage as errorMessage } from "../utils/errors.js";
+import { extractErrorMessage } from "../utils/errors.js";
 import { findPackageRoot } from "../utils/packageRoot.js";
 import { resolveTargetPath } from "../utils/paths.js";
 import { validateProviderSettings } from "../utils/settings.js";
@@ -142,7 +142,7 @@ function readAndValidateSource(anchorDir: string): Buffer {
       );
     }
     throw new SettingsInstallError(
-      `Failed to parse settings source: ${errorMessage(error)}`,
+      `Failed to parse settings source: ${extractErrorMessage(error)}`,
     );
   }
 
@@ -151,7 +151,7 @@ function readAndValidateSource(anchorDir: string): Buffer {
     validateProviderSettings(parsed);
   } catch (error) {
     throw new SettingsInstallError(
-      `Settings source validation failed: ${errorMessage(error)}`,
+      `Settings source validation failed: ${extractErrorMessage(error)}`,
     );
   }
 
