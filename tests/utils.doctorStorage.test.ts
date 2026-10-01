@@ -2788,9 +2788,11 @@ async function seedFreePages(): Promise<void> {
     const insert = db.prepare(
       "INSERT INTO learning_entries (type, category, observation, timestamp, demo_id) VALUES (?, ?, ?, ?, ?)",
     );
-    for (let index = 0; index < 100; index += 1) {
-      insert.run("mistake", "vacuum", "x".repeat(800), index, null);
-    }
+    db.transaction(() => {
+      for (let index = 0; index < 100; index += 1) {
+        insert.run("mistake", "vacuum", "x".repeat(800), index, null);
+      }
+    })();
     db.run("DELETE FROM learning_entries WHERE id > 50");
   });
 }

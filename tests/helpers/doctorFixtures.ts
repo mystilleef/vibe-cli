@@ -94,25 +94,28 @@ export function createDoctorFixtures(
         const insertRule = db.prepare(
           "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
         );
-        for (let index = 0; index < ruleCount; index += 1) {
-          insertRule.run(
-            "ghost",
-            `orphan ${index}`,
-            index,
-            "2026-01-01T00:00:00.000Z",
-          );
-        }
         const insertInteraction = db.prepare(
           "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
         );
-        for (let index = 0; index < interactionCount; index += 1) {
-          insertInteraction.run(
-            "ghost",
-            `orphan ${index}`,
-            `orphan ${index}`,
-            1,
-          );
-        }
+        // One commit: per-row autocommit fsyncs block the test worker on disk.
+        db.transaction(() => {
+          for (let index = 0; index < ruleCount; index += 1) {
+            insertRule.run(
+              "ghost",
+              `orphan ${index}`,
+              index,
+              "2026-01-01T00:00:00.000Z",
+            );
+          }
+          for (let index = 0; index < interactionCount; index += 1) {
+            insertInteraction.run(
+              "ghost",
+              `orphan ${index}`,
+              `orphan ${index}`,
+              1,
+            );
+          }
+        })();
       } finally {
         db.close();
       }

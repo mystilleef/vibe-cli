@@ -63,7 +63,7 @@ function runDoctorProcess(
   return runChild("bun", ["run", cliEntry, "doctor", ...args], {
     cwd: repoRoot,
     env: { ...process.env, HOME: home.home },
-    timeout: 30_000,
+    timeout: 10_000,
   });
 }
 
@@ -103,9 +103,11 @@ async function seedMaintenanceFixture(): Promise<void> {
     const insert = db.prepare(
       "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
     );
-    for (let index = 0; index < 100; index += 1) {
-      insert.run("mistake", "maintenance", "x".repeat(800), index);
-    }
+    db.transaction(() => {
+      for (let index = 0; index < 100; index += 1) {
+        insert.run("mistake", "maintenance", "x".repeat(800), index);
+      }
+    })();
     db.run("DELETE FROM learning_entries WHERE id > 50");
     insertLegacyRecord(db, "vibe-log.json", "vibe-log.json.bak");
   });
@@ -607,5 +609,5 @@ describe("doctor process boundary", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout.length).toBeGreaterThan(65_536);
     expect(parsePayload(result).findings.foreignKeyCheck).toHaveLength(2500);
-  });
+  }, 15_000);
 });

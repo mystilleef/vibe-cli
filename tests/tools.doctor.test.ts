@@ -875,9 +875,11 @@ describe("runDoctor — safety backup and target execution", () => {
       const insert = db.prepare(
         "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
       );
-      for (let index = 0; index < 100; index += 1) {
-        insert.run("mistake", "vacuum", "x".repeat(800), index);
-      }
+      db.transaction(() => {
+        for (let index = 0; index < 100; index += 1) {
+          insert.run("mistake", "vacuum", "x".repeat(800), index);
+        }
+      })();
       db.run("DELETE FROM learning_entries WHERE id > 50");
     });
     seedLegacyRecord("vibe-log.json", "vibe-log.json.bak");
