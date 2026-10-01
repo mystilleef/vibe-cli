@@ -80,14 +80,47 @@ async function ensureGemini(apiKey: string) {
   }
 }
 
-interface GeminiEndpointOptions {
+interface GeminiCallOptions {
   apiKey: string;
   model: string;
   systemPrompt: string;
   userContent: string;
-  temperature: number | undefined;
-  baseUrl: string;
+  temperature?: number | undefined;
+  baseUrl?: string | undefined;
   thinking?: ThinkingLevel | undefined;
+}
+
+/** Custom-endpoint calls require an explicit base URL. */
+interface GeminiEndpointOptions extends GeminiCallOptions {
+  baseUrl: string;
+}
+
+/** Text-part request payload shared by both Gemini transports. */
+interface GeminiPromptPayload {
+  contents: Array<{ role: "user"; parts: Array<{ text: string }> }>;
+  systemInstruction: { parts: Array<{ text: string }> };
+}
+
+/** Build the request payload shared by both Gemini transports. */
+function buildGeminiRequestPayload(
+  systemPrompt: string,
+  userContent: string,
+): GeminiPromptPayload {
+  return {
+    contents: [{ role: "user", parts: [{ text: userContent }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+  };
+}
+
+/** Build the sampling config shared by both Gemini transports. */
+function buildGeminiSamplingConfig(
+  temperature: number | undefined,
+  thinking: ThinkingLevel | undefined,
+): Record<string, unknown> {
+  return {
+    ...(temperature !== undefined && { temperature }),
+    ...buildGeminiThinkingConfig(thinking),
+  };
 }
 
 async function callGeminiCustomEndpoint({
@@ -100,13 +133,9 @@ async function callGeminiCustomEndpoint({
   thinking,
 }: GeminiEndpointOptions): Promise<string> {
   const url = `${normalizeBaseUrl(baseUrl)}/models/${model}:generateContent`;
-  const genConfig: Record<string, unknown> = {
-    ...(temperature !== undefined && { temperature }),
-    ...buildGeminiThinkingConfig(thinking),
-  };
+  const genConfig = buildGeminiSamplingConfig(temperature, thinking);
   const body = {
-    contents: [{ role: "user", parts: [{ text: userContent }] }],
-    systemInstruction: { parts: [{ text: systemPrompt }] },
+    ...buildGeminiRequestPayload(systemPrompt, userContent),
     ...(Object.keys(genConfig).length > 0 && { generationConfig: genConfig }),
   };
   const response = await fetch(url, {
@@ -130,38 +159,34 @@ async function callGeminiCustomEndpoint({
   return text;
 }
 
-async function callGemini(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  userContent: string,
-  temperature?: number,
-  baseUrl?: string,
-  thinking?: ThinkingLevel,
-): Promise<string> {
+async function callGemini(options: GeminiCallOptions): Promise<string> {
+  const {
+    apiKey,
+    model,
+    systemPrompt,
+    userContent,
+    temperature,
+    baseUrl,
+    thinking,
+  } = options;
   // Custom endpoints (e.g. opencode.ai) use /v1/models/{model}:generateContent,
   // not the /v1beta/ path hardcoded in @google/genai.
   if (baseUrl !== undefined) {
-    return callGeminiCustomEndpoint({
-      apiKey,
-      model,
-      systemPrompt,
-      userContent,
-      temperature,
-      baseUrl,
-      thinking,
-    });
+    return callGeminiCustomEndpoint({ ...options, baseUrl });
   }
   await ensureGemini(apiKey);
   if (!genAI) throw new Error("Gemini client unavailable.");
+  const { contents, systemInstruction } = buildGeminiRequestPayload(
+    systemPrompt,
+    userContent,
+  );
   const config: Record<string, unknown> = {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    ...(temperature !== undefined && { temperature }),
-    ...buildGeminiThinkingConfig(thinking),
+    systemInstruction,
+    ...buildGeminiSamplingConfig(temperature, thinking),
   };
   const response = await genAI.models.generateContent({
     model,
-    contents: [{ role: "user", parts: [{ text: userContent }] }],
+    contents,
     config,
   });
   return response.text ?? "";
@@ -292,15 +317,15 @@ export async function callProvider(
   }
 
   if (spec === "gemini") {
-    return callGemini(
-      requireApiKey(credentials),
+    return callGemini({
+      apiKey: requireApiKey(credentials),
       model,
       systemPrompt,
       userContent,
-      resolvedTemp,
-      provider.baseUrl,
-      provider.thinking,
-    );
+      temperature: resolvedTemp,
+      baseUrl: provider.baseUrl,
+      thinking: provider.thinking,
+    });
   }
 
   throw new Error(
