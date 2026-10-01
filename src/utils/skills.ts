@@ -135,6 +135,63 @@ function assertEntryType(
   return stats;
 }
 
+/** List directory entries in lexical order; fail-closed on read errors. */
+function readSortedEntries(dir: string, ErrorType: TreeErrorCtor): string[] {
+  try {
+    return readdirSync(dir).sort();
+  } catch (error) {
+    throw new ErrorType(`Failed to read directory ${dir}: ${error}`);
+  }
+}
+
+/** Reject symlinked directories and mount escapes outside the skill root. */
+function assertSkillDirectory(
+  fullPath: string,
+  stats: Stats,
+  rootReal: string,
+  entryLabel: string,
+  ErrorType: TreeErrorCtor,
+): void {
+  if (stats.isSymbolicLink()) {
+    throw new ErrorType(`${entryLabel} is a symlink`);
+  }
+  // Ensure the directory stays inside the skill root (no mount escapes).
+  let dirReal: string;
+  try {
+    dirReal = realpathSync(fullPath);
+  } catch (error) {
+    throw new ErrorType(`Failed to resolve ${fullPath}: ${error}`);
+  }
+  const relToRoot = relative(rootReal, dirReal);
+  if (
+    relToRoot === ".." ||
+    relToRoot.startsWith(`..${sep}`) ||
+    join(rootReal, relToRoot) !== dirReal
+  ) {
+    throw new ErrorType(`${entryLabel} escapes skill root`);
+  }
+}
+
+/** Hash one regular file into its inventory entry. */
+function readSkillFileEntry(
+  skillPath: string,
+  fullPath: string,
+  stats: Stats,
+  ErrorType: TreeErrorCtor,
+): SkillFile {
+  let hash: string;
+  try {
+    hash = hashFile(fullPath);
+  } catch (error) {
+    throw new ErrorType(`Failed to read file ${fullPath}: ${error}`);
+  }
+  return {
+    relativePath: relative(skillPath, fullPath),
+    hash,
+    size: stats.size,
+  };
+}
+
 /**
  * Walk a skill directory and collect all regular files in lexical order.
  * Rejects nested symlinks and non-regular entries (fail-closed).
@@ -145,14 +202,7 @@ function walkSkillDirectory(skillPath: string, isSource: boolean): SkillFile[] {
   const rootReal = realpathSync(skillPath);
 
   function walk(dir: string): void {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir).sort();
-    } catch (error) {
-      throw new ErrorType(`Failed to read directory ${dir}: ${error}`);
-    }
-
-    for (const entry of entries) {
+    for (const entry of readSortedEntries(dir, ErrorType)) {
       const fullPath = join(dir, entry);
       let stats: Stats;
       try {
@@ -164,24 +214,7 @@ function walkSkillDirectory(skillPath: string, isSource: boolean): SkillFile[] {
       const entryLabel = `${isSource ? "Source" : "Target"} skill entry: ${relative(skillPath, fullPath) || entry}`;
 
       if (stats.isDirectory()) {
-        if (stats.isSymbolicLink()) {
-          throw new ErrorType(`${entryLabel} is a symlink`);
-        }
-        // Ensure the directory stays inside the skill root (no mount escapes).
-        let dirReal: string;
-        try {
-          dirReal = realpathSync(fullPath);
-        } catch (error) {
-          throw new ErrorType(`Failed to resolve ${fullPath}: ${error}`);
-        }
-        const relToRoot = relative(rootReal, dirReal);
-        if (
-          relToRoot === ".." ||
-          relToRoot.startsWith(`..${sep}`) ||
-          join(rootReal, relToRoot) !== dirReal
-        ) {
-          throw new ErrorType(`${entryLabel} escapes skill root`);
-        }
+        assertSkillDirectory(fullPath, stats, rootReal, entryLabel, ErrorType);
         walk(fullPath);
         continue;
       }
@@ -193,19 +226,7 @@ function walkSkillDirectory(skillPath: string, isSource: boolean): SkillFile[] {
         throw new ErrorType(`${entryLabel} is not a regular file`);
       }
 
-      let hash: string;
-      try {
-        hash = hashFile(fullPath);
-      } catch (error) {
-        throw new ErrorType(`Failed to read file ${fullPath}: ${error}`);
-      }
-
-      const relPath = relative(skillPath, fullPath);
-      files.push({
-        relativePath: relPath,
-        hash,
-        size: stats.size,
-      });
+      files.push(readSkillFileEntry(skillPath, fullPath, stats, ErrorType));
     }
   }
 
