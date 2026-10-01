@@ -7,7 +7,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,13 +16,12 @@ import {
   vibeGateTool,
 } from "../src/tools/vibeGate";
 import { FALLBACK_FEEDBACK } from "../src/utils/llm";
+import {
+  type AnthropicBody,
+  configureAnthropicEnv,
+  writeAnthropicSettings,
+} from "./helpers/anthropicFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
-
-interface AnthropicBody {
-  model?: string;
-  messages?: Array<{ role?: string; content?: string }>;
-  system?: string;
-}
 
 let home: TempHomeContext | undefined;
 let cwd: string | undefined;
@@ -30,32 +29,6 @@ let originalFetch: typeof fetch;
 let savedEnv: Partial<Record<string, string | undefined>>;
 const requests: AnthropicBody[] = [];
 const responseQueue: Array<string | { status: number; text: string }> = [];
-
-function configureAnthropicEnv(): void {
-  process.env["ANTHROPIC_API_KEY"] = "test-key";
-  process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
-  process.env["DEFAULT_MODEL"] = "";
-}
-
-async function writeAnthropicSettings(): Promise<void> {
-  if (home === undefined) throw new Error("temp home not initialized");
-  await mkdir(home.dataRoot, { recursive: true });
-  await writeFile(
-    join(home.dataRoot, "settings.json"),
-    JSON.stringify({
-      provider: "anthropic",
-      useLearningHistory: false,
-      providers: [
-        {
-          name: "anthropic",
-          spec: "anthropic",
-          envVar: "ANTHROPIC_API_KEY",
-          defaultModel: "claude-test-default",
-        },
-      ],
-    }),
-  );
-}
 
 function installAnthropicFetch(): void {
   globalThis.fetch = (async (_input, init) => {
@@ -95,13 +68,13 @@ beforeEach(async () => {
     DEFAULT_MODEL: process.env["DEFAULT_MODEL"],
   };
   home = await createTempHome();
-  await writeAnthropicSettings();
+  await writeAnthropicSettings(home, "claude-test-default");
   cwd = await mkdtemp(join(tmpdir(), "vibe-gate-tool-"));
   process.chdir(cwd);
   requests.length = 0;
   responseQueue.length = 0;
   spyOn(console, "error").mockImplementation(() => {});
-  configureAnthropicEnv();
+  configureAnthropicEnv("");
   installAnthropicFetch();
 });
 

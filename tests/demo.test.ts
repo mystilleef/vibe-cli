@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConstitution, resetConstitution } from "../src/tools/constitution";
@@ -9,12 +9,12 @@ import {
   getLearningCategorySummary,
   getLearningEntries,
 } from "../src/utils/storage";
+import {
+  type AnthropicBody,
+  configureAnthropicEnv,
+  writeAnthropicSettings,
+} from "./helpers/anthropicFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
-
-interface AnthropicBody {
-  model?: string;
-  messages?: Array<{ role?: string; content?: string }>;
-}
 
 const PROVIDER_ENV = [
   "ANTHROPIC_API_KEY",
@@ -33,32 +33,6 @@ const requests: AnthropicBody[] = [];
 const responseQueue: string[] = [];
 let onFetchRequest: ((requestCount: number) => void) | undefined;
 let stdout = "";
-
-function configureAnthropicEnv(): void {
-  process.env["ANTHROPIC_API_KEY"] = "test-key";
-  process.env["DEFAULT_LLM_PROVIDER"] = "anthropic";
-  process.env["DEFAULT_MODEL"] = "default-demo-model";
-}
-
-async function writeAnthropicSettings(): Promise<void> {
-  if (home === undefined) throw new Error("temp home not initialized");
-  await mkdir(home.dataRoot, { recursive: true });
-  await writeFile(
-    join(home.dataRoot, "settings.json"),
-    JSON.stringify({
-      provider: "anthropic",
-      useLearningHistory: false,
-      providers: [
-        {
-          name: "anthropic",
-          spec: "anthropic",
-          envVar: "ANTHROPIC_API_KEY",
-          defaultModel: "default-demo-model",
-        },
-      ],
-    }),
-  );
-}
 
 function gateDecision(proceed: boolean, confidence: number, reason: string) {
   return JSON.stringify({ proceed, confidence, reason });
@@ -106,14 +80,14 @@ beforeEach(async () => {
   savedEnv = {};
   for (const key of PROVIDER_ENV) savedEnv[key] = process.env[key];
   home = await createTempHome();
-  await writeAnthropicSettings();
+  await writeAnthropicSettings(home, "default-demo-model");
   cwd = await mkdtemp(join(tmpdir(), "vibe-demo-tool-"));
   process.chdir(cwd);
   requests.length = 0;
   responseQueue.length = 0;
   onFetchRequest = undefined;
   stdout = "";
-  configureAnthropicEnv();
+  configureAnthropicEnv("default-demo-model");
   installAnthropicFetch();
   captureStdout();
 });
