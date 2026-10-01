@@ -238,6 +238,49 @@ function formatGenerationValue(value: unknown): string {
     : rendered;
 }
 
+/** First field mismatch across paired rows, or `null` when all rows match. */
+function findFirstRowMismatch<
+  FoundRow extends object,
+  ExpectedRow extends object,
+>(
+  found: readonly FoundRow[],
+  expected: readonly ExpectedRow[],
+  fields: (row: ExpectedRow) => readonly (keyof FoundRow & keyof ExpectedRow)[],
+): {
+  index: number;
+  expectedRow: ExpectedRow;
+  field: string;
+  expected: unknown;
+  found: unknown;
+} | null {
+  for (let index = 0; index < found.length; index += 1) {
+    const foundRow = found[index];
+    const expectedRow = expected[index];
+    if (foundRow === undefined || expectedRow === undefined) continue;
+    for (const field of fields(expectedRow)) {
+      const expectedValue: unknown = expectedRow[field];
+      const foundValue: unknown = foundRow[field];
+      if (foundValue !== expectedValue) {
+        return {
+          index,
+          expectedRow,
+          field: String(field),
+          expected: expectedValue,
+          found: foundValue,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function formatRowMismatch(mismatch: {
+  expected: unknown;
+  found: unknown;
+}): string {
+  return `expected ${formatGenerationValue(mismatch.expected)}, found ${formatGenerationValue(mismatch.found)}`;
+}
+
 function findLearningMismatch(
   found: readonly LearningRow[],
   expected: readonly ExpectedLearningRow[],
@@ -245,17 +288,14 @@ function findLearningMismatch(
   if (found.length !== expected.length) {
     return `found ${found.length} learning rows, expected ${expected.length}`;
   }
-  for (let i = 0; i < found.length; i += 1) {
-    const foundRow = found[i];
-    const expectedRow = expected[i];
-    if (foundRow === undefined || expectedRow === undefined) continue;
-    for (const field of LEARNING_ROW_FIELDS) {
-      if (foundRow[field] !== expectedRow[field]) {
-        return `row ${expectedRow.id} field ${field}: expected ${formatGenerationValue(expectedRow[field])}, found ${formatGenerationValue(foundRow[field])}`;
-      }
-    }
-  }
-  return null;
+  const mismatch = findFirstRowMismatch(
+    found,
+    expected,
+    () => LEARNING_ROW_FIELDS,
+  );
+  return mismatch === null
+    ? null
+    : `row ${mismatch.expectedRow.id} field ${mismatch.field}: ${formatRowMismatch(mismatch)}`;
 }
 
 function requireExactRows(
@@ -268,17 +308,13 @@ function requireExactRows(
       `mixed generation detected: ${label} has ${found.length} rows, expected ${expected.length}`,
     );
   }
-  for (let i = 0; i < found.length; i += 1) {
-    const foundRow = found[i];
-    const expectedRow = expected[i];
-    if (foundRow === undefined || expectedRow === undefined) continue;
-    for (const field of Object.keys(expectedRow)) {
-      if (foundRow[field] !== expectedRow[field]) {
-        throw new Error(
-          `mixed generation detected in ${label}[${i}].${field}: expected ${formatGenerationValue(expectedRow[field])}, found ${formatGenerationValue(foundRow[field])}`,
-        );
-      }
-    }
+  const mismatch = findFirstRowMismatch(found, expected, (row) =>
+    Object.keys(row),
+  );
+  if (mismatch !== null) {
+    throw new Error(
+      `mixed generation detected in ${label}[${mismatch.index}].${mismatch.field}: ${formatRowMismatch(mismatch)}`,
+    );
   }
 }
 
