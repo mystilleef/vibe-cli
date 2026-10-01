@@ -214,6 +214,207 @@ function raceSnapshotSettlement<T>(
 }
 
 /**
+ * Dispatch one validated child frame to its matching observer callback.
+ */
+async function invokeSnapshotObserver(
+  frame: SnapshotProtocolFrame,
+  observer: DatabaseSnapshotObserver | undefined,
+  control: DatabaseSnapshotControl,
+): Promise<void> {
+  if (frame.type === "ready" && observer?.onReady) {
+    await observer.onReady(control);
+  } else if (frame.type === "sql-start" && observer?.onSqlStart) {
+    await observer.onSqlStart({
+      timestamp: frame.timestamp,
+      hrtime: frame.hrtime,
+    });
+  } else if (frame.type === "sql-end" && observer?.onSqlEnd) {
+    await observer.onSqlEnd({
+      timestamp: frame.timestamp,
+      hrtime: frame.hrtime,
+    });
+  }
+}
+
+/**
+ * Validate one child frame against the ordered protocol and the gated
+ * authorization contract. Returns the protocol violation, or `null` when the
+ * frame may be counted and dispatched.
+ */
+function checkSnapshotProtocolOrder(
+  frame: SnapshotProtocolFrame,
+  protocolIndex: number,
+  gated: boolean,
+  authorized: boolean,
+): Error | null {
+  const expected = SNAPSHOT_PROTOCOL_SEQUENCE[protocolIndex];
+  if (expected === undefined) {
+    return new Error(
+      `snapshot protocol violation: unexpected "${frame.type}" after completion`,
+    );
+  }
+  if (frame.type !== expected) {
+    return new Error(
+      `snapshot protocol violation: received "${frame.type}" while expecting "${expected}"`,
+    );
+  }
+  if (frame.type === "sql-start" && gated && !authorized) {
+    return new Error(
+      "snapshot protocol violation: child started SQL before authorization",
+    );
+  }
+  return null;
+}
+
+/** One awaited stdout read: a chunk, or end-of-stream. */
+type SnapshotReadResult =
+  | { done: false; value: Uint8Array }
+  | { done: true; value: Uint8Array | undefined };
+
+/** stdout reader surface the protocol loop consumes. */
+interface SnapshotStreamReader {
+  read(): Promise<SnapshotReadResult>;
+}
+
+/** Outcome of consuming the child's stdout protocol stream. */
+interface SnapshotProtocolRun {
+  /** First failure encountered, or `null` when consumption ran clean. */
+  readonly failureError: unknown;
+  /** Count of lifecycle frames accepted in order. */
+  readonly protocolIndex: number;
+  /** Whether the child closed its stdout stream. */
+  readonly stdoutEnded: boolean;
+}
+
+/**
+ * Consume the child's stdout protocol stream: parse frames, enforce the
+ * ordered lifecycle and gated-authorization contract, and dispatch every
+ * accepted frame to the observer. Each read and callback stays bounded by
+ * `deadline`; a bound or failure ends consumption without disturbing the
+ * child, whose settlement the caller owns.
+ */
+async function runSnapshotProtocolLoop(params: {
+  reader: SnapshotStreamReader;
+  deadline: Promise<void>;
+  observer: DatabaseSnapshotObserver | undefined;
+  control: DatabaseSnapshotControl;
+  gated: boolean;
+  isAuthorized: () => boolean;
+  hasTimedOut: () => boolean;
+}): Promise<SnapshotProtocolRun> {
+  const {
+    reader,
+    deadline,
+    observer,
+    control,
+    gated,
+    isAuthorized,
+    hasTimedOut,
+  } = params;
+  let failureError: unknown = null;
+  let stdoutEnded = false;
+  let protocolIndex = 0;
+  let stdoutBuffer = "";
+
+  readLoop: while (failureError === null && !hasTimedOut()) {
+    const readOutcome = await raceSnapshotSettlement(deadline, reader.read());
+    if (readOutcome.kind === "bound") break;
+    if (readOutcome.kind === "error") {
+      failureError = readOutcome.error;
+      break;
+    }
+    const { value, done } = readOutcome.value;
+    if (done) {
+      stdoutEnded = true;
+      break;
+    }
+    stdoutBuffer += new TextDecoder().decode(value);
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let frame: SnapshotProtocolFrame;
+      try {
+        frame = parseSnapshotProtocolFrame(line);
+      } catch (error) {
+        failureError = error;
+        break readLoop;
+      }
+      const violation = checkSnapshotProtocolOrder(
+        frame,
+        protocolIndex,
+        gated,
+        isAuthorized(),
+      );
+      if (violation !== null) {
+        failureError = violation;
+        break readLoop;
+      }
+      protocolIndex += 1;
+      const dispatchOutcome = await raceSnapshotSettlement(
+        deadline,
+        invokeSnapshotObserver(frame, observer, control),
+      );
+      if (dispatchOutcome.kind === "error") {
+        failureError = dispatchOutcome.error;
+        break readLoop;
+      }
+      if (dispatchOutcome.kind === "bound") break readLoop;
+    }
+  }
+
+  return { failureError, protocolIndex, stdoutEnded };
+}
+
+/** Terminal state of one snapshot execution, evaluated in precedence order. */
+interface SnapshotOutcome {
+  readonly failureError: unknown;
+  readonly timedOut: boolean;
+  readonly signal: NodeJS.Signals | null;
+  readonly exitCode: number | null;
+  readonly protocolIndex: number;
+  readonly stderr: string;
+  readonly timeout: number;
+}
+
+/**
+ * Throw unless the snapshot completed cleanly. Precedence: captured failure,
+ * timeout, child signal, child exit status, then protocol completeness.
+ */
+function throwOnSnapshotOutcome(outcome: SnapshotOutcome): void {
+  const {
+    failureError,
+    timedOut,
+    signal,
+    exitCode,
+    protocolIndex,
+    stderr,
+    timeout,
+  } = outcome;
+  if (failureError !== null) {
+    throw failureError;
+  }
+  if (timedOut) {
+    throw new Error(`snapshot process timed out after ${timeout}ms`);
+  }
+  if (signal !== null) {
+    throw new Error(`snapshot process terminated by signal ${signal}`);
+  }
+  if (exitCode !== 0) {
+    const detail = stderr.trim() || `exit code ${exitCode}`;
+    throw new Error(`snapshot execution failed: ${detail}`);
+  }
+  if (protocolIndex !== SNAPSHOT_PROTOCOL_SEQUENCE.length) {
+    const missing = SNAPSHOT_PROTOCOL_SEQUENCE.slice(protocolIndex)
+      .map((type) => `"${type}"`)
+      .join(", ");
+    throw new Error(
+      `snapshot protocol incomplete: child exited successfully without ${missing}`,
+    );
+  }
+}
+
+/**
  * Execute a SQLite snapshot from `sourcePath` to `destinationPath` in an
  * isolated Bun subprocess.
  *
@@ -361,6 +562,8 @@ export async function executeDatabaseSnapshot(
     }
   };
 
+  const control: DatabaseSnapshotControl = { authorizeStart };
+
   const reader = stdout.getReader();
   const stderrPromise = new Response(stderrStream).text();
   const childExit = proc.exited.then(
@@ -368,84 +571,16 @@ export async function executeDatabaseSnapshot(
     () => undefined,
   );
 
-  const invokeObserver = async (
-    frame: SnapshotProtocolFrame,
-  ): Promise<void> => {
-    if (frame.type === "ready" && observer?.onReady) {
-      await observer.onReady({ authorizeStart });
-    } else if (frame.type === "sql-start" && observer?.onSqlStart) {
-      await observer.onSqlStart({
-        timestamp: frame.timestamp,
-        hrtime: frame.hrtime,
-      });
-    } else if (frame.type === "sql-end" && observer?.onSqlEnd) {
-      await observer.onSqlEnd({
-        timestamp: frame.timestamp,
-        hrtime: frame.hrtime,
-      });
-    }
-  };
-
-  let failureError: unknown = null;
-  let stdoutEnded = false;
-  let protocolIndex = 0;
-  let stdoutBuffer = "";
-
-  readLoop: while (failureError === null && !timedOut) {
-    const readOutcome = await raceSnapshotSettlement(deadline, reader.read());
-    if (readOutcome.kind === "bound") break;
-    if (readOutcome.kind === "error") {
-      failureError = readOutcome.error;
-      break;
-    }
-    const { value, done } = readOutcome.value;
-    if (done) {
-      stdoutEnded = true;
-      break;
-    }
-    stdoutBuffer += new TextDecoder().decode(value);
-    const lines = stdoutBuffer.split("\n");
-    stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let frame: SnapshotProtocolFrame;
-      try {
-        frame = parseSnapshotProtocolFrame(line);
-      } catch (error) {
-        failureError = error;
-        break readLoop;
-      }
-      const expected = SNAPSHOT_PROTOCOL_SEQUENCE[protocolIndex];
-      if (expected === undefined) {
-        failureError = new Error(
-          `snapshot protocol violation: unexpected "${frame.type}" after completion`,
-        );
-        break readLoop;
-      }
-      if (frame.type !== expected) {
-        failureError = new Error(
-          `snapshot protocol violation: received "${frame.type}" while expecting "${expected}"`,
-        );
-        break readLoop;
-      }
-      if (frame.type === "sql-start" && gated && !authorized) {
-        failureError = new Error(
-          "snapshot protocol violation: child started SQL before authorization",
-        );
-        break readLoop;
-      }
-      protocolIndex += 1;
-      const dispatchOutcome = await raceSnapshotSettlement(
-        deadline,
-        invokeObserver(frame),
-      );
-      if (dispatchOutcome.kind === "error") {
-        failureError = dispatchOutcome.error;
-        break readLoop;
-      }
-      if (dispatchOutcome.kind === "bound") break readLoop;
-    }
-  }
+  let { failureError, protocolIndex, stdoutEnded } =
+    await runSnapshotProtocolLoop({
+      reader,
+      deadline,
+      observer,
+      control,
+      gated,
+      isAuthorized: () => authorized,
+      hasTimedOut: () => timedOut,
+    });
 
   let stderr = "";
 
@@ -527,25 +662,13 @@ export async function executeDatabaseSnapshot(
     // A read the grace window could not settle still owns the lock.
   }
 
-  if (failureError !== null) {
-    throw failureError;
-  }
-  if (timedOut) {
-    throw new Error(`snapshot process timed out after ${timeout}ms`);
-  }
-  if (signal !== null) {
-    throw new Error(`snapshot process terminated by signal ${signal}`);
-  }
-  if (exitCode !== 0) {
-    const detail = stderr.trim() || `exit code ${exitCode}`;
-    throw new Error(`snapshot execution failed: ${detail}`);
-  }
-  if (protocolIndex !== SNAPSHOT_PROTOCOL_SEQUENCE.length) {
-    const missing = SNAPSHOT_PROTOCOL_SEQUENCE.slice(protocolIndex)
-      .map((type) => `"${type}"`)
-      .join(", ");
-    throw new Error(
-      `snapshot protocol incomplete: child exited successfully without ${missing}`,
-    );
-  }
+  throwOnSnapshotOutcome({
+    failureError,
+    timedOut,
+    signal,
+    exitCode,
+    protocolIndex,
+    stderr,
+    timeout,
+  });
 }
