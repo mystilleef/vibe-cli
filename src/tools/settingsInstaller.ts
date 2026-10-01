@@ -5,7 +5,6 @@
  */
 
 import { lstatSync, readFileSync, type Stats } from "node:fs";
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { extractErrorMessage as errorMessage } from "../utils/errors.js";
 import { findPackageRoot } from "../utils/packageRoot.js";
@@ -13,8 +12,11 @@ import { resolveTargetPath } from "../utils/paths.js";
 import { validateProviderSettings } from "../utils/settings.js";
 import {
   atomicFileWrite,
+  ensureTargetDirectory,
   type InstallerAction,
   InstallerError,
+  resolveInstallerAction,
+  statRegularFileDestination,
   validateInstallerTarget,
 } from "../utils/validation.js";
 
@@ -156,22 +158,6 @@ function readAndValidateSource(anchorDir: string): Buffer {
   return content;
 }
 
-// ── Target validation ──────────────────────────────────────────────────────
-
-/**
- * Validate the target path and its existing ancestor directory.
- * Delegates to shared validateInstallerTarget from validation.ts.
- */
-async function validateTarget(
-  targetRoot: string,
-  settingsFilename: string,
-): Promise<void> {
-  await validateInstallerTarget(targetRoot, settingsFilename, {
-    validationErrorClass: SettingsInstallValidationError,
-    baseErrorClass: SettingsInstallError,
-  });
-}
-
 // ── Destination inspection ─────────────────────────────────────────────────
 
 /**
@@ -188,32 +174,13 @@ async function validateTarget(
  *   regular file.
  */
 function inspectDestination(destPath: string): InstallSettingsStatus {
-  let destStats: Stats;
-  try {
-    destStats = lstatSync(destPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return "missing";
-    }
-    throw new SettingsInstallError(
-      `Failed to stat settings destination: ${destPath}`,
-    );
-  }
-
-  if (destStats.isSymbolicLink()) {
-    throw new SettingsInstallError(
-      `Settings destination is a symlink: ${destPath}`,
-    );
-  }
-
-  if (!destStats.isFile()) {
-    throw new SettingsInstallError(
-      `Settings destination is not a regular file: ${destPath}`,
-    );
-  }
-
-  return "present";
+  return statRegularFileDestination(
+    destPath,
+    "settings",
+    SettingsInstallError,
+  ) === undefined
+    ? "missing"
+    : "present";
 }
 
 // ── Target resolution ──────────────────────────────────────────────────────
@@ -240,12 +207,12 @@ function determineAction(
   dryRun: boolean,
 ): InstallSettingsAction {
   if (status === "missing") {
-    return dryRun ? "would-install" : "installed";
+    return resolveInstallerAction("installed", dryRun);
   }
   if (force) {
-    return dryRun ? "would-replace" : "replaced";
+    return resolveInstallerAction("replaced", dryRun);
   }
-  return dryRun ? "would-skip" : "skipped";
+  return resolveInstallerAction("skipped", dryRun);
 }
 
 // ── Main installer ─────────────────────────────────────────────────────────
@@ -272,48 +239,32 @@ export async function installSettings(
   const sourceContent = readAndValidateSource(sourceAnchor);
 
   // Validate target path
-  await validateTarget(absoluteTargetRoot, DESTINATION_FILENAME);
+  await validateInstallerTarget(absoluteTargetRoot, DESTINATION_FILENAME, {
+    validationErrorClass: SettingsInstallValidationError,
+    baseErrorClass: SettingsInstallError,
+  });
 
   const destPath = join(absoluteTargetRoot, DESTINATION_FILENAME);
   const status = inspectDestination(destPath);
-  const action = determineAction(
+  const force = options.force ?? false;
+  const action = determineAction(status, force, options.dryRun);
+
+  const result: InstallSettingsResult = {
+    destination: destPath,
+    dryRun: options.dryRun,
+    force,
+    ok: true,
     status,
-    options.force ?? false,
-    options.dryRun,
-  );
+    action,
+  };
 
-  // Dry-run: return without mutating filesystem
-  if (options.dryRun) {
-    return {
-      destination: destPath,
-      dryRun: true,
-      force: options.force ?? false,
-      ok: true,
-      status,
-      action,
-    };
+  // Dry-run and untouched present destinations return without
+  // mutating the filesystem.
+  if (options.dryRun || (status === "present" && !force)) {
+    return result;
   }
 
-  // Skip present destinations unless forced
-  if (status === "present" && !options.force) {
-    return {
-      destination: destPath,
-      dryRun: false,
-      force: options.force ?? false,
-      ok: true,
-      status,
-      action,
-    };
-  }
-
-  // Create target root if needed
-  try {
-    await mkdir(absoluteTargetRoot, { recursive: true });
-  } catch (error) {
-    throw new SettingsInstallError(
-      `Failed to create target '${absoluteTargetRoot}': ${errorMessage(error)}`,
-    );
-  }
+  await ensureTargetDirectory(absoluteTargetRoot, SettingsInstallError);
 
   await atomicFileWrite(
     destPath,
@@ -322,12 +273,5 @@ export async function installSettings(
     SettingsInstallError,
   );
 
-  return {
-    destination: destPath,
-    dryRun: false,
-    force: options.force ?? false,
-    ok: true,
-    status,
-    action,
-  };
+  return result;
 }

@@ -7,12 +7,7 @@ import {
   rejectSymlinkPathComponentsSync,
 } from "./pathValidation.js";
 import { hashContent } from "./skills.js";
-
-export {
-  getPathAncestorsAndSelf,
-  rejectSymlinkPathComponents,
-  rejectSymlinkPathComponentsSync,
-} from "./pathValidation.js";
+import { statRegularFileDestination } from "./validation.js";
 
 export const GUIDE_FILENAME = "vibe-guide.md";
 const GUIDE_DOCS_DIR = "docs";
@@ -116,7 +111,7 @@ export interface GuideInspection {
  * Compare pre-read source bytes against whatever exists at `destPath`.
  *
  * Callers that already validated `destPath`'s ancestor chain for symlink
- * safety (e.g. `installGuide`'s `validateTarget`) can call this directly
+ * safety (e.g. `installGuide`'s `validateInstallerTarget` call) can call this directly
  * without repeating that walk or re-reading the source file.
  *
  * @param sourceContent - Already-read bytes of the canonical guide.
@@ -128,25 +123,11 @@ export function compareGuideHash(
   sourceContent: Buffer,
   destPath: string,
 ): GuideStatus {
-  let destStats: Stats;
-  try {
-    destStats = lstatSync(destPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return "missing";
-    }
-    throw new GuideTargetError(`Failed to stat guide destination: ${destPath}`);
-  }
-
-  if (destStats.isSymbolicLink()) {
-    throw new GuideTargetError(`Guide destination is a symlink: ${destPath}`);
-  }
-
-  if (!destStats.isFile()) {
-    throw new GuideTargetError(
-      `Guide destination is not a regular file: ${destPath}`,
-    );
+  if (
+    statRegularFileDestination(destPath, "guide", GuideTargetError) ===
+    undefined
+  ) {
+    return "missing";
   }
 
   let destContent: Buffer;

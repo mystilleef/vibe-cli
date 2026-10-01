@@ -4,7 +4,6 @@
  * Follows the same patterns as skillsInstaller.ts but for a single file.
  */
 
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { extractErrorMessage as errorMessage } from "../utils/errors.js";
 import {
@@ -18,8 +17,11 @@ import {
 } from "../utils/guide.js";
 import {
   atomicFileWrite,
+  ensureTargetDirectory,
   type InstallerAction,
   InstallerError,
+  type PerformedInstallerAction,
+  resolveInstallerAction,
   validateInstallerTarget,
 } from "../utils/validation.js";
 
@@ -56,20 +58,6 @@ export class GuideInstallValidationError extends GuideInstallError {
 }
 
 /**
- * Validate the target path and its existing ancestor directory.
- * Delegates to shared validateInstallerTarget from validation.ts.
- */
-async function validateTarget(
-  targetRoot: string,
-  guideFilename: string,
-): Promise<void> {
-  await validateInstallerTarget(targetRoot, guideFilename, {
-    validationErrorClass: GuideInstallValidationError,
-    baseErrorClass: GuideInstallError,
-  });
-}
-
-/**
  * Wrap a guide operation, converting guide-specific errors to GuideInstallError.
  */
 function wrapGuideError<T>(operation: () => T, context: string): T {
@@ -102,7 +90,10 @@ export async function installGuide(
   const absoluteTargetRoot = resolveGuideTarget(targetRoot);
   const anchorDir = options.anchorDir ?? import.meta.dir;
 
-  await validateTarget(absoluteTargetRoot, GUIDE_FILENAME);
+  await validateInstallerTarget(absoluteTargetRoot, GUIDE_FILENAME, {
+    validationErrorClass: GuideInstallValidationError,
+    baseErrorClass: GuideInstallError,
+  });
 
   const sourceContent = wrapGuideError(
     () => readGuideSourceBuffer(anchorDir),
@@ -115,42 +106,29 @@ export async function installGuide(
     "Inspection failed",
   );
 
-  let action: InstallGuideAction;
+  let performed: PerformedInstallerAction;
   if (status === "identical") {
-    action = options.dryRun ? "would-skip" : "skipped";
+    performed = "skipped";
   } else if (status === "missing") {
-    action = options.dryRun ? "would-install" : "installed";
+    performed = "installed";
   } else {
-    action = options.dryRun ? "would-replace" : "replaced";
+    performed = "replaced";
+  }
+  const action = resolveInstallerAction(performed, options.dryRun);
+
+  const result: InstallGuideResult = {
+    target: absoluteTargetRoot,
+    dryRun: options.dryRun,
+    ok: true,
+    status,
+    action,
+  };
+
+  if (options.dryRun || status === "identical") {
+    return result;
   }
 
-  if (options.dryRun) {
-    return {
-      target: absoluteTargetRoot,
-      dryRun: true,
-      ok: true,
-      status,
-      action,
-    };
-  }
-
-  if (status === "identical") {
-    return {
-      target: absoluteTargetRoot,
-      dryRun: false,
-      ok: true,
-      status,
-      action: "skipped",
-    };
-  }
-
-  try {
-    await mkdir(absoluteTargetRoot, { recursive: true });
-  } catch (error) {
-    throw new GuideInstallError(
-      `Failed to create target '${absoluteTargetRoot}': ${errorMessage(error)}`,
-    );
-  }
+  await ensureTargetDirectory(absoluteTargetRoot, GuideInstallError);
 
   await atomicFileWrite(
     destPath,
@@ -159,11 +137,5 @@ export async function installGuide(
     GuideInstallError,
   );
 
-  return {
-    target: absoluteTargetRoot,
-    dryRun: false,
-    ok: true,
-    status,
-    action,
-  };
+  return result;
 }

@@ -5,11 +5,12 @@
  * settingsInstaller.ts, and skillsInstaller.ts to eliminate DRY violations.
  */
 
-import type { Stats } from "node:fs";
+import { lstatSync, type Stats } from "node:fs";
 import {
   access,
   constants,
   lstat,
+  mkdir,
   rename,
   rm,
   stat,
@@ -98,6 +99,26 @@ export type InstallerAction =
   | "installed"
   | "replaced"
   | "skipped";
+
+/** Installer outcomes outside dry-run mode. */
+export type PerformedInstallerAction = "installed" | "replaced" | "skipped";
+
+const DRY_RUN_ACTIONS = {
+  installed: "would-install",
+  replaced: "would-replace",
+  skipped: "would-skip",
+} as const satisfies Record<PerformedInstallerAction, InstallerAction>;
+
+/**
+ * Resolve the reported installer action for a performed outcome under
+ * dry-run mode. Preserves the caller's outcome subset.
+ */
+export function resolveInstallerAction<T extends PerformedInstallerAction>(
+  performed: T,
+  dryRun: boolean,
+): T | (typeof DRY_RUN_ACTIONS)[T] {
+  return dryRun ? DRY_RUN_ACTIONS[performed] : performed;
+}
 
 // ── Target validation ─────────────────────────────────────────────────────
 
@@ -191,6 +212,72 @@ export async function validateInstallerTarget(
       errorClass: validationErrorClass,
       baseErrorClass,
     });
+  }
+}
+
+// ── Destination inspection ────────────────────────────────────────────────
+
+/**
+ * Stat an installer destination file under the regular-file contract.
+ *
+ * Returns `undefined` when the destination is absent. Rejects symlinks and
+ * non-regular files. `label` names the installer in diagnostics.
+ *
+ * @param destPath - Absolute path to the destination file.
+ * @param label - Lowercase installer name for error messages.
+ * @param errorClass - Error constructor for contract and inspection failures.
+ * @throws When the destination is a symlink, not a regular file, or uninspectable.
+ */
+export function statRegularFileDestination(
+  destPath: string,
+  label: string,
+  errorClass: new (message: string) => Error,
+): Stats | undefined {
+  let destStats: Stats;
+  try {
+    destStats = lstatSync(destPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return undefined;
+    }
+    throw new errorClass(`Failed to stat ${label} destination: ${destPath}`);
+  }
+
+  const capitalizedLabel = `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+  if (destStats.isSymbolicLink()) {
+    throw new errorClass(
+      `${capitalizedLabel} destination is a symlink: ${destPath}`,
+    );
+  }
+  if (!destStats.isFile()) {
+    throw new errorClass(
+      `${capitalizedLabel} destination is not a regular file: ${destPath}`,
+    );
+  }
+  return destStats;
+}
+
+// ── Target directory creation ─────────────────────────────────────────────
+
+/**
+ * Create `targetRoot` and any absent parents before an installer's apply
+ * phase. Shared tail of every installer; wraps mkdir failures in the
+ * caller's installer error class with a uniform message.
+ *
+ * @param targetRoot - Absolute target root directory to create.
+ * @param errorClass - Error constructor for the wrapped failure.
+ */
+export async function ensureTargetDirectory(
+  targetRoot: string,
+  errorClass: new (message: string) => Error,
+): Promise<void> {
+  try {
+    await mkdir(targetRoot, { recursive: true });
+  } catch (error) {
+    throw new errorClass(
+      `Failed to create target '${targetRoot}': ${errorMessage(error)}`,
+    );
   }
 }
 

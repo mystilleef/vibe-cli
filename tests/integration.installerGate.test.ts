@@ -2,7 +2,7 @@
  * Integration coverage for the plain-copy skill installer: exercises
  * installSkills() end-to-end against a real filesystem (both fabricated
  * fixtures and the project's real bundled skills/), plus one CLI-level
- * exit-code check. See proposals/simplify-skill-installation.md.
+ * exit-code check.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

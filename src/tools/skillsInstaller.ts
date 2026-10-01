@@ -1,10 +1,9 @@
 // Plain recursive copy — no locking/staging/rollback. Previous
 // transactional machinery modeled a hostile-multi-tenant threat that
-// doesn't apply to a single-user home-directory install. See
-// proposals/simplify-skill-installation.md.
+// doesn't apply to a single-user home-directory install.
 
 import type { Stats } from "node:fs";
-import { access, constants, cp, lstat, mkdir, rm } from "node:fs/promises";
+import { access, constants, cp, lstat, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   extractErrorMessage as errorMessage,
@@ -17,7 +16,12 @@ import {
   type SkillsInventory,
   SkillTargetError,
 } from "../utils/skills.js";
-import { InstallerError, validateDirectory } from "../utils/validation.js";
+import {
+  ensureTargetDirectory,
+  InstallerError,
+  resolveInstallerAction,
+  validateDirectory,
+} from "../utils/validation.js";
 
 export interface InstallOptions {
   dryRun: boolean;
@@ -107,13 +111,10 @@ function planInstall(
       continue;
     }
     // missing, or up-to-date/modified with --force
-    const action = options.dryRun
-      ? skill.status === "missing"
-        ? "would-install"
-        : "would-replace"
-      : skill.status === "missing"
-        ? "installed"
-        : "replaced";
+    const action = resolveInstallerAction(
+      skill.status === "missing" ? "installed" : "replaced",
+      options.dryRun,
+    );
     actions.push({ name: skill.name, status: skill.status, action });
   }
 
@@ -215,15 +216,17 @@ export async function installSkills(
   const inventory = await computeInventory(absoluteTargetRoot, packageRoot);
   const actions = planInstall(inventory, options);
 
+  const makeResult = (ok: boolean): InstallResult => ({
+    target: absoluteTargetRoot,
+    dryRun: options.dryRun,
+    force: options.force,
+    ok,
+    skills: actions,
+  });
+
   // Block entire request when any modified target lacks force (including dry-run).
   if (actions.some((a) => a.action === "blocked")) {
-    return {
-      target: absoluteTargetRoot,
-      dryRun: options.dryRun,
-      force: options.force,
-      ok: false,
-      skills: actions,
-    };
+    return makeResult(false);
   }
 
   // Always preflight the target parent — including dry-run, empty
@@ -232,13 +235,7 @@ export async function installSkills(
 
   // If dry-run, return plan without executing.
   if (options.dryRun) {
-    return {
-      target: absoluteTargetRoot,
-      dryRun: true,
-      force: options.force,
-      ok: true,
-      skills: actions,
-    };
+    return makeResult(true);
   }
 
   const sourceByName = new Map(
@@ -249,22 +246,10 @@ export async function installSkills(
   );
 
   if (toInstall.length === 0) {
-    return {
-      target: absoluteTargetRoot,
-      dryRun: false,
-      force: options.force,
-      ok: true,
-      skills: actions,
-    };
+    return makeResult(true);
   }
 
-  try {
-    await mkdir(absoluteTargetRoot, { recursive: true });
-  } catch (error) {
-    throw new InstallError(
-      `Failed to create target '${absoluteTargetRoot}': ${errorMessage(error)}`,
-    );
-  }
+  await ensureTargetDirectory(absoluteTargetRoot, InstallError);
 
   let ok = true;
   for (const entry of toInstall) {
@@ -286,11 +271,5 @@ export async function installSkills(
     }
   }
 
-  return {
-    target: absoluteTargetRoot,
-    dryRun: false,
-    force: options.force,
-    ok,
-    skills: actions,
-  };
+  return makeResult(ok);
 }
