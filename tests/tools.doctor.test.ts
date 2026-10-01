@@ -247,6 +247,36 @@ describe("runDoctor — retention", () => {
     expect(payload.findings.excessBackups).toBe(2);
   });
 
+  test("counts the pending safety backup under bare confirmation but not bare reports", async () => {
+    await seedDatabase();
+    await seedManagedBackups(6);
+
+    const bareReport = await runDoctor(
+      {},
+      { executor: createFakeExecutor([]) },
+    );
+    const bareApply = await runDoctor(
+      { yes: true },
+      { executor: createFakeExecutor([]) },
+    );
+
+    expect(bareReport.findings.excessBackups).toBe(1);
+    expect(bareApply.findings.excessBackups).toBe(2);
+  });
+
+  test("predicts appliedCounts.purgeBackups with excessBackups under bare confirmation", async () => {
+    await seedDatabase();
+    await seedManagedBackups(7);
+
+    const payload = await runDoctor(
+      { yes: true },
+      { timestamp: FIXED_TIMESTAMP },
+    );
+
+    expect(payload.findings.excessBackups).toBe(3);
+    expect(payload.appliedCounts.purgeBackups).toBe(3);
+  });
+
   test("rejects invalid retention before touching storage", async () => {
     const events: string[] = [];
 
@@ -282,7 +312,9 @@ describe("runDoctor — target selection and confirmation gating", () => {
       await seedDatabase();
       const events: string[] = [];
       const fake = createFakeExecutor(events);
-      const applied = input.yes === true && selected.length > 0;
+      const applied = input.yes === true;
+      const expectedTargets =
+        selected.length > 0 || !applied ? selected : [...DOCTOR_TARGET_ORDER];
 
       const payload = await runDoctor(input, {
         executor: fake,
@@ -290,9 +322,11 @@ describe("runDoctor — target selection and confirmation gating", () => {
       });
 
       expect(payload.dryRun).toBe(!applied);
-      expect(payload.targets).toEqual(selected);
+      expect(payload.targets).toEqual(expectedTargets);
       expect(payload.skippedTargets).toEqual(
-        DOCTOR_TARGET_ORDER.filter((target) => !selected.includes(target)),
+        DOCTOR_TARGET_ORDER.filter(
+          (target) => !expectedTargets.includes(target),
+        ),
       );
       expect(payload.backupPath).toBe(applied ? fake.backupResult : null);
       expect(payload.appliedCounts).toEqual(NO_APPLIED);

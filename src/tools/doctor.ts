@@ -87,26 +87,35 @@ export function resolveDoctorKeepBackups(supplied: string | undefined): number {
 }
 
 /**
- * Report all findings and, when explicit targets accompany confirmation,
- * apply them after one safety backup. Throws only when validation or open
- * errors make a usable report impossible; later failures are reported in
- * the returned payload alongside every available finding.
+ * Report all findings and, with confirmation (explicit selections or all
+ * targets under bare confirmation), apply them after one safety backup.
+ * Whenever resolved targets contain `purgeBackups` (including report-only
+ * selection), `excessBackups` counts the pending safety backup. Throws only
+ * when validation or open errors make a usable report impossible; later
+ * failures are reported in the returned payload alongside every available
+ * finding.
  */
 export async function runDoctor(
   input: DoctorInput,
   options: DoctorRunOptions = {},
 ): Promise<DoctorSuccessPayload> {
   const retention = resolveDoctorKeepBackups(input.keepBackups);
-  const targets = DOCTOR_TARGET_ORDER.filter((target) => input[target]);
+  const explicitTargets = DOCTOR_TARGET_ORDER.filter((target) => input[target]);
+  const targets =
+    explicitTargets.length > 0
+      ? explicitTargets
+      : input.yes === true
+        ? [...DOCTOR_TARGET_ORDER]
+        : [];
   const skippedTargets = DOCTOR_TARGET_ORDER.filter(
     (target) => !targets.includes(target),
   );
-  const dryRun = !(input.yes === true && targets.length > 0);
+  const dryRun = input.yes !== true;
 
   const executor = options.executor ?? doctorSqlExecutor;
   const diagnostics = await collectDoctorDiagnostics({
     retention,
-    countPendingBackup: input.purgeBackups === true,
+    countPendingBackup: targets.includes("purgeBackups"),
     executor,
   });
   let appliedCounts = zeroAppliedCounts();

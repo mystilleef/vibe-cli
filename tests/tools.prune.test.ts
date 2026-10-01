@@ -396,6 +396,27 @@ describe("runPrune — validateCategory (internal)", () => {
       "--category is only allowed with --learnings or --duplicates",
     );
   });
+
+  test("rejects bare confirmed category input before destructive work", async () => {
+    const now = Date.now();
+    seedLearningEntries(home.dataRoot, [
+      {
+        category: "scope",
+        observation: "survives bare category rejection",
+        timestamp: now - 120 * DAY_MS,
+      },
+    ]);
+
+    await expect(runPrune({ yes: true, category: "scope" })).rejects.toThrow(
+      "--category is only allowed with --learnings or --duplicates",
+    );
+
+    // Implicit all-target fallback never satisfies the guard: nothing ran.
+    expect(existsSync(join(home.dataRoot, "backups"))).toBe(false);
+    expect(readLearningObservations("scope")).toEqual([
+      "survives bare category rejection",
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1214,5 +1235,76 @@ describe("runPrune — multi-target combinations", () => {
     expect(result.backupPath).not.toBeNull();
     expect(result.failedTargets).toEqual([]);
     expect(result.skippedTargets).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPrune — bare confirmation fallback
+// ---------------------------------------------------------------------------
+describe("runPrune — bare confirmation fallback", () => {
+  test("applies every target under bare confirmation", async () => {
+    const now = Date.now();
+    seedLearningEntries(home.dataRoot, [
+      {
+        category: "stale",
+        observation: "Stale entry.",
+        timestamp: now - 120 * DAY_MS,
+      },
+      {
+        category: "dup",
+        observation: "Repeated insight.",
+        timestamp: now - 5 * DAY_MS,
+      },
+      {
+        category: "dup",
+        observation: "Repeated insight.",
+        timestamp: now - 2 * DAY_MS,
+      },
+      {
+        category: "demo",
+        demoId: "demo-1",
+        observation: "Demo entry.",
+        timestamp: now - 3 * DAY_MS,
+      },
+      {
+        category: "recent",
+        observation: "Recent entry.",
+        timestamp: now - DAY_MS,
+      },
+    ]);
+    seedSessionRows(home.dataRoot, [
+      {
+        id: "session-expired",
+        createdAt: new Date(now - 200 * DAY_MS).toISOString(),
+        lastAccessedAt: new Date(now - 120 * DAY_MS).toISOString(),
+      },
+      {
+        id: "session-fresh",
+        createdAt: new Date(now - 2 * DAY_MS).toISOString(),
+        lastAccessedAt: new Date(now - DAY_MS).toISOString(),
+      },
+    ]);
+
+    const result = await runPrune({ age: 90, yes: true });
+
+    expect(result.dryRun).toBe(false);
+    expect(result.targets).toEqual([
+      "learnings",
+      "duplicates",
+      "demos",
+      "sessions",
+    ]);
+    expect(result.skippedTargets).toEqual([]);
+    expect(result.deletedCounts).toEqual({
+      learnings: 1,
+      duplicates: 1,
+      demos: 1,
+      sessions: 1,
+    });
+    expect(result.failedTargets).toEqual([]);
+    requireBackupPath(result);
+    expect(readLearningObservations("dup")).toEqual(["Repeated insight."]);
+    expect(readLearningObservations("recent")).toEqual(["Recent entry."]);
+    expect(readSessionIds()).toEqual(["session-fresh"]);
   });
 });

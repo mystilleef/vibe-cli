@@ -425,7 +425,10 @@ program
     "Duplicate overlap threshold (0..1, default: 0.6)",
   )
   .option("--dry-run", "Report candidates without deleting")
-  .option("-y, --yes", "Confirm destructive deletion")
+  .option(
+    "-y, --yes",
+    "Confirm deletion; without target flags, delete every target",
+  )
   .action(
     withCliError(async (opts) => {
       const { params } = buildPruneParams(opts);
@@ -443,18 +446,22 @@ program
   .option("--purge-backups", "Delete retired managed backups beyond retention")
   .option("--purge-legacy", "Delete recorded legacy .bak copies")
   .option("--keep-backups <n>", "Retain newest managed backups (default: five)")
-  .option("-y, --yes", "Apply explicit targets after one safety backup")
+  .option(
+    "-y, --yes",
+    "Apply selected targets (all without target flags) after one safety backup",
+  )
   .addHelpText(
     "after",
     `
 Reports findings and counts as JSON without changing local data.
-Maintenance applies only when explicit targets accompany --yes, after one
-safety backup; findings keep pre-application values while backupPath names
-the new safety backup. With --purge-backups, excessBackups counts that
-pending backup, predicting appliedCounts.purgeBackups; appliedCounts.vacuum
-reports reclaimed free pages. Exit 0 covers healthy reports and applies,
-including harmless no-ops. Exit 1 covers unhealthy diagnostics, backup or
-target failures, and operational errors; failures report {target, message}.`,
+Maintenance applies only with --yes (bare --yes applies every target), after
+one safety backup; findings keep pre-application values while backupPath
+names the new safety backup. When targets include purgeBackups, excessBackups
+counts that pending backup, predicting appliedCounts.purgeBackups;
+appliedCounts.vacuum reports reclaimed free pages.
+Exit 0 covers healthy reports and applies, including harmless no-ops. Exit 1
+covers unhealthy diagnostics, backup or target failures, and operational
+errors; failures report {target, message}.`,
   )
   .action(
     withCliError(async (opts: Record<string, string | boolean | undefined>) => {

@@ -1976,6 +1976,9 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toContain("--overlap <float>");
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("-y, --yes");
+    expect(result.stdout.replace(/\s+/g, " ")).toContain(
+      "Confirm deletion; without target flags, delete every target",
+    );
   });
 
   test("prune dry-run mode works without providers", async () => {
@@ -2335,6 +2338,31 @@ describe("CLI autosession surface", () => {
     expect(payload.backupPath).not.toBeNull();
     expect(payload.deletedCounts.learnings).toBeGreaterThanOrEqual(1);
   });
+
+  test("prune bare confirmation aliases apply every target", async () => {
+    for (const alias of ["--yes", "-y"]) {
+      const home = await useTempHome();
+
+      const result = await runCli(["prune", alias], { home: home.home });
+      const payload = JSON.parse(result.stdout) as {
+        dryRun: boolean;
+        targets: string[];
+        backupPath: string | null;
+        skippedTargets: string[];
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(payload.dryRun).toBe(false);
+      expect(payload.targets).toEqual([
+        "learnings",
+        "duplicates",
+        "demos",
+        "sessions",
+      ]);
+      expect(payload.skippedTargets).toEqual([]);
+      expect(payload.backupPath).not.toBeNull();
+    }
+  }, 15000);
 
   test("prune rejects simultaneous --dry-run and --yes", async () => {
     const home = await useTempHome();

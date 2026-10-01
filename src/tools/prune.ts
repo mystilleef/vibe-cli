@@ -143,8 +143,7 @@ export async function runPrune(
   const overlapThreshold = validateOverlap(input.overlap);
   const category = validateCategory(input.category, explicitTargets);
 
-  const isDryRun =
-    input.dryRun === true || explicitTargets.length === 0 || input.yes !== true;
+  const isDryRun = input.dryRun === true || input.yes !== true;
 
   const targets =
     explicitTargets.length > 0 ? explicitTargets : [...PRUNE_TARGET_ORDER];

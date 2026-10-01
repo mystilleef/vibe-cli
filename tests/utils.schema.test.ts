@@ -262,7 +262,7 @@ describe("buildSchema", () => {
     const doctor = schema.commands.doctor;
 
     expect(doctor).toMatchObject({
-      when: expect.stringContaining("provider-free"),
+      when: "diagnose and reclaim unreachable local state; provider-free and offline; apply only with --yes; bare --yes applies every target",
       req: {},
       opt: {
         "--vacuum": "reclaim free pages after the safety backup",
@@ -270,13 +270,15 @@ describe("buildSchema", () => {
         "--purge-legacy": "delete recorded legacy .bak copies",
         "--keep-backups":
           "int=5 newest managed backups retained (default: five)",
-        "-y, --yes": "apply explicit targets after one safety backup",
+        "-y, --yes":
+          "apply selected targets (all without target flags) after one safety backup",
       },
       out: {
         dryRun: "bool",
-        targets: "[str] explicit selections in canonical order",
+        targets:
+          "[str] selected targets in canonical order, all under bare --yes",
         findings:
-          "{integrityCheck,foreignKeyCheck,freelistCount,excessBackups,latestBackupPath,legacyBackups,strandedOriginals} pre-application values; excessBackups counts the pending safety backup under --purge-backups",
+          "{integrityCheck,foreignKeyCheck,freelistCount,excessBackups,latestBackupPath,legacyBackups,strandedOriginals} pre-application values; excessBackups counts the pending safety backup when targets include purgeBackups",
         backupPath: "str|null one safety backup path created before apply",
         appliedCounts:
           "{vacuum:int reclaimed pages,purgeBackups:int files,purgeLegacy:int files}",
@@ -300,6 +302,27 @@ describe("buildSchema", () => {
     expect(doctor.out.failedTargets).toContain("message");
     expect(doctor.out.findings).toContain("pre-application");
     expect(doctor.out.backupPath).toContain("safety backup");
+  });
+
+  test("prune command documents bare confirmation and report-first guidance", async () => {
+    await writeSettings(validSettings());
+
+    const prune = buildSchema().commands.prune;
+
+    expect(prune.when).toBe(
+      "clean up stale or duplicate local data; always report candidates before deleting",
+    );
+    expect(prune.opt["-y, --yes"]).toBe(
+      "confirm deletion; without target flags, delete every target",
+    );
+  });
+
+  test("prune command describes failedTargets with the emitted message field", async () => {
+    await writeSettings(validSettings());
+
+    const prune = buildSchema().commands.prune;
+
+    expect(prune.out.failedTargets).toBe("[{target:str,message:str}]");
   });
 
   test("check command schema defines expected output fields", async () => {

@@ -167,6 +167,22 @@ describe("doctor CLI surface", () => {
     expect(help.stdout).not.toContain("--dry-run");
   });
 
+  test("documents bare confirmation fallback and pending accounting in help", async () => {
+    const help = await runDoctor("--help");
+    const normalizedHelp = help.stdout.replace(/\s+/g, " ");
+
+    expect(help.exitCode).toBe(0);
+    expect(normalizedHelp).toContain(
+      "Apply selected targets (all without target flags) after one safety backup",
+    );
+    expect(normalizedHelp).toContain(
+      "Maintenance applies only with --yes (bare --yes applies every target)",
+    );
+    expect(normalizedHelp).toContain(
+      "When targets include purgeBackups, excessBackups counts that pending backup",
+    );
+  });
+
   test.each([
     { args: ["--keep-backups"], error: /argument missing/ },
     { args: ["--keep-backups=0"], error: /positive safely representable/ },
@@ -341,6 +357,29 @@ describe("doctor apply", () => {
       "unknown file",
     );
   });
+
+  test.each(["-y", "--yes"])(
+    "applies every target under bare %s",
+    async (alias) => {
+      await seedMaintenanceFixture();
+
+      const result = await runDoctor(alias);
+
+      expect(result.exitCode).toBe(0);
+      const payload = parsePayload(result);
+      expect(payload.dryRun).toBe(false);
+      expect(payload.targets).toEqual([
+        "vacuum",
+        "purgeBackups",
+        "purgeLegacy",
+      ]);
+      expect(payload.skippedTargets).toEqual([]);
+      expect(payload.failedTargets).toEqual([]);
+      expect(payload.appliedCounts.vacuum).toBeGreaterThan(0);
+      expect(payload.appliedCounts.purgeBackups).toBe(3);
+      expect(payload.appliedCounts.purgeLegacy).toBe(1);
+    },
+  );
 
   test("applies the supplied --keep-backups retention", async () => {
     await seedMaintenanceFixture();
