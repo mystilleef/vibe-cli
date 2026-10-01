@@ -1625,6 +1625,7 @@ describe("CLI autosession surface", () => {
       "--overlap",
       "--dry-run",
       "-y, --yes",
+      "--json",
     ]);
     expect(schema.commands["prune"]).toMatchObject({
       when: expect.any(String),
@@ -1639,6 +1640,7 @@ describe("CLI autosession surface", () => {
         "--overlap": expect.any(String),
         "--dry-run": expect.any(String),
         "-y, --yes": expect.any(String),
+        "--json": expect.any(String),
       }),
       out: expect.objectContaining({
         dryRun: expect.any(String),
@@ -1976,7 +1978,9 @@ describe("CLI autosession surface", () => {
     expect(result.stdout).toContain("--overlap <float>");
     expect(result.stdout).toContain("--dry-run");
     expect(result.stdout).toContain("-y, --yes");
-    expect(result.stdout.replace(/\s+/g, " ")).toContain(
+    expect(result.stdout).toContain("--json");
+    const normalizedHelp = result.stdout.replace(/\s+/g, " ");
+    expect(normalizedHelp).toContain(
       "Confirm deletion; without target flags, delete every target",
     );
   });
@@ -1992,6 +1996,7 @@ describe("CLI autosession surface", () => {
         "--demos",
         "--sessions",
         "--dry-run",
+        "--json",
       ],
       {
         home: home.home,
@@ -2029,10 +2034,136 @@ describe("CLI autosession surface", () => {
     expect(payload.failedTargets).toEqual([]);
   }, 15000);
 
+  test("prune defaults to readable dry-run text without flags", async () => {
+    const home = await useTempHome();
+
+    const result = await runCli(["prune", "--learnings", "--dry-run"], {
+      home: home.home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(
+      result.stdout.startsWith("Prune: dry run (delete with --yes)\n"),
+    ).toBe(true);
+    expect(result.stdout).toContain("Targets\n-------");
+    expect(result.stdout).toMatch(/^learnings\s+0\s*$/m);
+    expect(result.stdout).toBe(`${result.stdout.trimEnd()}\n`);
+    expect(result.stdout).not.toContain('"dryRun"');
+  });
+
+  test("prune renders applied text with backup path and counts after --yes", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    seedLearningEntries(home.dataRoot, [
+      {
+        type: "mistake",
+        category: "test",
+        observation: "Old entry.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const result = await runCli(
+      ["prune", "--learnings", "--age", "90", "--yes"],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.startsWith("Prune: applied\n")).toBe(true);
+    expect(result.stdout).toContain("Backup\n------");
+    expect(result.stdout).toContain(join(home.dataRoot, "backups"));
+    expect(result.stdout).toMatch(/^learnings\s+1\s+1\s*$/m);
+    expect(result.stdout).toMatch(/#\d+ \[test\]/);
+    expect(result.stdout).not.toContain('"backupPath"');
+  });
+
+  test("prune emits exact minified JSON bytes with trailing newline under --json", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    seedLearningEntries(home.dataRoot, [
+      {
+        type: "mistake",
+        category: "test",
+        observation: "Old entry.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+
+    const result = await runCli(
+      ["prune", "--learnings", "--age", "90", "--dry-run", "--json"],
+      { home: home.home },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(
+      `${JSON.stringify(JSON.parse(result.stdout))}\n`,
+    );
+    const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(Object.keys(payload)).toEqual([
+      "dryRun",
+      "targets",
+      "candidateCounts",
+      "representativeDetails",
+      "backupPath",
+      "deletedCounts",
+      "skippedTargets",
+      "failedTargets",
+    ]);
+    expect(result.stdout).toContain('"backupPath":null');
+    expect(result.stdout).not.toContain("Prune:");
+    expect(result.stdout).not.toContain("Targets\n");
+  });
+
+  test("prune reports returned backup failures with matching exit codes in both output modes", async () => {
+    const home = await useTempHome();
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    seedLearningEntries(home.dataRoot, [
+      {
+        type: "mistake",
+        category: "test",
+        observation: "Kept after backup failure.",
+        solution: "Fix it.",
+        timestamp: base - 100 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+    await writeFile(join(home.dataRoot, "backups"), "not a directory");
+
+    const text = await runCli(
+      ["prune", "--learnings", "--age", "90", "--yes"],
+      { home: home.home },
+    );
+
+    expect(text.stderr).toBe("");
+    expect(text.stdout).toContain("Failures\n--------");
+    expect(text.stdout).toContain("backup: ");
+    expect(text.stdout).toMatch(/^learnings\s+1\s+0\s*$/m);
+
+    const json = await runCli(
+      ["prune", "--learnings", "--age", "90", "--yes", "--json"],
+      { home: home.home },
+    );
+
+    expect(json.exitCode).toBe(text.exitCode);
+    expect(json.stderr).toBe("");
+    const payload = JSON.parse(json.stdout) as {
+      backupPath: string | null;
+      failedTargets: { target: string; message: string }[];
+    };
+    expect(payload.backupPath).toBeNull();
+    expect(payload.failedTargets).toEqual([
+      { target: "backup", message: expect.any(String) },
+    ]);
+  });
+
   test("prune with no targets defaults to dry-run summary", async () => {
     const home = await useTempHome();
 
-    const result = await runCli(["prune"], { home: home.home });
+    const result = await runCli(["prune", "--json"], { home: home.home });
     const payload = JSON.parse(result.stdout) as {
       dryRun: boolean;
       targets: string[];
@@ -2131,6 +2262,7 @@ describe("CLI autosession surface", () => {
           "--category",
           "test-category",
           "--dry-run",
+          "--json",
         ],
         expectedTargets: ["learnings", "demos"],
       },
@@ -2142,6 +2274,7 @@ describe("CLI autosession surface", () => {
           "--category",
           "test-category",
           "--dry-run",
+          "--json",
         ],
         expectedTargets: ["duplicates", "sessions"],
       },
@@ -2187,11 +2320,11 @@ describe("CLI autosession surface", () => {
       DEFAULT_LLM_PROVIDER: "anthropic",
     };
     const commands = [
-      ["prune"],
-      ["prune", "--learnings", "--dry-run"],
-      ["prune", "--duplicates", "--dry-run"],
-      ["prune", "--demos", "--dry-run"],
-      ["prune", "--sessions", "--dry-run"],
+      ["prune", "--json"],
+      ["prune", "--learnings", "--dry-run", "--json"],
+      ["prune", "--duplicates", "--dry-run", "--json"],
+      ["prune", "--demos", "--dry-run", "--json"],
+      ["prune", "--sessions", "--dry-run", "--json"],
       [
         "prune",
         "--learnings",
@@ -2199,6 +2332,7 @@ describe("CLI autosession surface", () => {
         "--demos",
         "--sessions",
         "--dry-run",
+        "--json",
       ],
     ];
 
@@ -2228,9 +2362,9 @@ describe("CLI autosession surface", () => {
       DEFAULT_LLM_PROVIDER: "anthropic",
     };
     const commands = [
-      ["prune", "--learnings", "--dry-run"],
-      ["prune", "--duplicates", "--dry-run"],
-      ["prune", "--sessions", "--dry-run"],
+      ["prune", "--learnings", "--dry-run", "--json"],
+      ["prune", "--duplicates", "--dry-run", "--json"],
+      ["prune", "--sessions", "--dry-run", "--json"],
     ];
 
     const results = await runCliBatchIsolated(commands, {
@@ -2279,7 +2413,7 @@ describe("CLI autosession surface", () => {
     ]);
 
     const dryRun = await runCli(
-      ["prune", "--learnings", "--age", "90", "--dry-run"],
+      ["prune", "--learnings", "--age", "90", "--dry-run", "--json"],
       { home: home.home },
     );
     const dryPayload = JSON.parse(dryRun.stdout) as {
@@ -2291,7 +2425,7 @@ describe("CLI autosession surface", () => {
     expect(dryPayload.candidateCounts.learnings).toBeGreaterThanOrEqual(1);
 
     const destructive = await runCli(
-      ["prune", "--learnings", "--age", "90", "--yes"],
+      ["prune", "--learnings", "--age", "90", "--yes", "--json"],
       { home: home.home },
     );
     const destructivePayload = JSON.parse(destructive.stdout) as {
@@ -2323,9 +2457,12 @@ describe("CLI autosession surface", () => {
       },
     ]);
 
-    const result = await runCli(["prune", "--learnings", "--age", "90", "-y"], {
-      home: home.home,
-    });
+    const result = await runCli(
+      ["prune", "--learnings", "--age", "90", "-y", "--json"],
+      {
+        home: home.home,
+      },
+    );
     const payload = JSON.parse(result.stdout) as {
       dryRun: boolean;
       backupPath: string | null;
@@ -2343,7 +2480,9 @@ describe("CLI autosession surface", () => {
     for (const alias of ["--yes", "-y"]) {
       const home = await useTempHome();
 
-      const result = await runCli(["prune", alias], { home: home.home });
+      const result = await runCli(["prune", alias, "--json"], {
+        home: home.home,
+      });
       const payload = JSON.parse(result.stdout) as {
         dryRun: boolean;
         targets: string[];
@@ -2388,7 +2527,7 @@ describe("CLI autosession surface", () => {
     expect(payload.error).toContain("--dry-run cannot be combined with --yes");
 
     const dryRun = await runCli(
-      ["prune", "--learnings", "--age", "90", "--dry-run"],
+      ["prune", "--learnings", "--age", "90", "--dry-run", "--json"],
       { home: home.home },
     );
     const dryPayload = JSON.parse(dryRun.stdout) as {
@@ -2401,7 +2540,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = await runCli(["prune"], {
+    const result = await runCli(["prune", "--json"], {
       home: home.home,
       preload: capturePruneInput,
       env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2465,7 +2604,7 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = await runCli(["prune", "--learnings"], {
+    const result = await runCli(["prune", "--learnings", "--json"], {
       home: home.home,
       preload: capturePruneInput,
       env: { VIBE_PRUNE_CAPTURE: capturePath },
@@ -2494,11 +2633,14 @@ describe("CLI autosession surface", () => {
     const home = await useTempHome();
     const capturePath = join(home.home, "prune-input.json");
 
-    const result = await runCli(["prune", "--duplicates", "--demos"], {
-      home: home.home,
-      preload: capturePruneInput,
-      env: { VIBE_PRUNE_CAPTURE: capturePath },
-    });
+    const result = await runCli(
+      ["prune", "--duplicates", "--demos", "--json"],
+      {
+        home: home.home,
+        preload: capturePruneInput,
+        env: { VIBE_PRUNE_CAPTURE: capturePath },
+      },
+    );
     const payload = JSON.parse(result.stdout) as {
       dryRun: boolean;
       targets: string[];
@@ -4953,13 +5095,13 @@ describe("bundled CLI safety backup execution", () => {
       for (let i = 0; i < 50; i++) {
         insert.run("mistake", "bundled", "x".repeat(800), i);
       }
-      db.exec("DELETE FROM learning_entries WHERE id > 25");
+      db.run("DELETE FROM learning_entries WHERE id > 25");
       db.close();
 
       const cli = join(extractedRoot, "dist", "vibe.js");
       const result = await runChild(
         "bun",
-        ["run", cli, "doctor", "--yes", "--vacuum"],
+        ["run", cli, "doctor", "--yes", "--vacuum", "--json"],
         {
           cwd: callerCwd,
           env: {
@@ -5001,6 +5143,44 @@ describe("bundled CLI safety backup execution", () => {
     }
   });
 
+  test("renders readable doctor report text without flags from bundled entrypoint", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    try {
+      const dbPath = join(tempHome.dataRoot, "vibe.db");
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      const db = new Database(dbPath, { create: true });
+      initializeSchema(db);
+      db.prepare(
+        "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("mistake", "bundled", "readable report", 0);
+      db.close();
+
+      const cli = join(extractedRoot, "dist", "vibe.js");
+      const result = await runChild("bun", ["run", cli, "doctor"], {
+        cwd: callerCwd,
+        env: {
+          ...process.env,
+          HOME: tempHome.home,
+          CI: "true",
+          NO_COLOR: "1",
+          PAGER: "cat",
+          TERM: "dumb",
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(
+        result.stdout.startsWith("Doctor: report only (apply with --yes)\n"),
+      ).toBe(true);
+      expect(result.stdout.trimEnd().endsWith("Status: healthy")).toBe(true);
+      expect(result.stdout).not.toContain('"dryRun"');
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
   test("runs prune safety backup and deletion from bundled entrypoint in an isolated caller directory", async () => {
     const tempHome = await harness.useTempHome();
     const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
@@ -5023,7 +5203,7 @@ describe("bundled CLI safety backup execution", () => {
       const cli = join(extractedRoot, "dist", "vibe.js");
       const result = await runChild(
         "bun",
-        ["run", cli, "prune", "--yes", "--learnings", "--age", "30"],
+        ["run", cli, "prune", "--yes", "--learnings", "--age", "30", "--json"],
         {
           cwd: callerCwd,
           env: {
@@ -5067,6 +5247,45 @@ describe("bundled CLI safety backup execution", () => {
       } finally {
         backupDb.close();
       }
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("renders readable prune dry-run text without flags from bundled entrypoint", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    try {
+      const dbPath = join(tempHome.dataRoot, "vibe.db");
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      const db = new Database(dbPath, { create: true });
+      initializeSchema(db);
+      db.prepare(
+        "INSERT INTO learning_entries (type, category, observation, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("mistake", "stale", "to be pruned", 0);
+      db.close();
+
+      const cli = join(extractedRoot, "dist", "vibe.js");
+      const result = await runChild("bun", ["run", cli, "prune"], {
+        cwd: callerCwd,
+        env: {
+          ...process.env,
+          HOME: tempHome.home,
+          CI: "true",
+          NO_COLOR: "1",
+          PAGER: "cat",
+          TERM: "dumb",
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(
+        result.stdout.startsWith("Prune: dry run (delete with --yes)\n"),
+      ).toBe(true);
+      expect(result.stdout).toContain("Targets\n-------");
+      expect(result.stdout).toBe(`${result.stdout.trimEnd()}\n`);
+      expect(result.stdout).not.toContain('"dryRun"');
     } finally {
       await rm(callerCwd, { recursive: true, force: true });
     }

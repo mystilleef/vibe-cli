@@ -272,6 +272,7 @@ describe("buildSchema", () => {
           "int=5 newest managed backups retained (default: five)",
         "-y, --yes":
           "apply selected targets (all without target flags) after one safety backup",
+        "--json": "Emit machine-readable JSON instead of pretty text",
       },
       out: {
         dryRun: "bool",
@@ -297,6 +298,7 @@ describe("buildSchema", () => {
         "--purge-legacy",
         "--keep-backups",
         "-y, --yes",
+        "--json",
       ].sort(),
     );
     expect(doctor.out.failedTargets).toContain("message");
@@ -314,6 +316,23 @@ describe("buildSchema", () => {
     );
     expect(prune.opt["-y, --yes"]).toBe(
       "confirm deletion; without target flags, delete every target",
+    );
+    expect(prune.opt["--json"]).toBe(
+      "Emit machine-readable JSON instead of pretty text",
+    );
+    expect(Object.keys(prune.opt).sort()).toEqual(
+      [
+        "--learnings",
+        "--duplicates",
+        "--demos",
+        "--sessions",
+        "--age",
+        "--category",
+        "--overlap",
+        "--dry-run",
+        "-y, --yes",
+        "--json",
+      ].sort(),
     );
   });
 

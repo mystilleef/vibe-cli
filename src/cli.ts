@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Register the `vibe` command surface and preserve JSON-only process output.
+ * Register the `vibe` command surface with mixed text/JSON process output.
  *
- * All command handlers emit machine-readable JSON, with operational failures
- * routed through `fatal` so agents can parse errors without scraping text.
+ * Human-facing commands (`list`, `skills`, `guide`, `settings install`,
+ * `prune`, `doctor`) print readable text by default and emit JSON under
+ * `--json`; agent-loop commands always emit JSON. Operational failures route
+ * through `fatal` as one stderr JSON error line so agents can parse errors
+ * without scraping text.
  */
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
@@ -25,8 +28,14 @@ import {
   setExitCode,
 } from "./utils/cliCapture.js";
 import {
+  CWD_TARGET_DESCRIPTION,
+  DRY_RUN_DESCRIPTION,
   JSON_OPTION_DESCRIPTION,
   JSON_OPTION_FLAG,
+  PROVIDER_OPTION_DESCRIPTION,
+  SETTINGS_FORCE_DESCRIPTION,
+  SKILLS_FORCE_DESCRIPTION,
+  SKILLS_TARGET_DESCRIPTION,
 } from "./utils/cliConstants.js";
 import {
   buildCheckParams,
@@ -35,6 +44,10 @@ import {
 } from "./utils/cliHelpers.js";
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
 import { getDataRoot } from "./utils/db-core.js";
+import {
+  formatDoctorReport,
+  formatPruneReport,
+} from "./utils/doctorPruneFormatters.js";
 import { warnLegacyDotenv } from "./utils/dotenv.js";
 import { extractErrorMessage } from "./utils/errors.js";
 import { inspectGuide } from "./utils/guide.js";
@@ -77,8 +90,6 @@ import {
   formatSkillsList,
 } from "./utils/skillsGuideFormatters.js";
 
-export { emitTestErrorMarker };
-
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
   process.stdout.write(`${JSON.stringify(data)}\n`);
@@ -109,9 +120,12 @@ function withCliError<A extends unknown[]>(
 
 function addModelOptions(cmd: Command) {
   return cmd
-    .option("--provider <name>", "settings provider entry name")
+    .option("--provider <name>", PROVIDER_OPTION_DESCRIPTION)
     .option("--model <name>", "Model name override");
 }
+
+/** Parsed Commander option bag passed to list actions. */
+type CliOptions = Record<string, string | undefined>;
 
 function emitListResult<T>(command: Command, data: T, pretty: string): void {
   if (command.optsWithGlobals()["json"]) {
@@ -133,7 +147,7 @@ function registerListCommand(
   description: string,
   extraOptions: readonly { flags: string; description: string }[] = [],
   action: (
-    opts: Record<string, string | undefined>,
+    opts: CliOptions,
     command: Command,
   ) => { data: unknown; pretty: string },
 ): Command {
@@ -142,7 +156,7 @@ function registerListCommand(
     cmd.option(opt.flags, opt.description);
   }
   cmd.option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION);
-  cmd.action((opts: Record<string, string | undefined>, command: Command) => {
+  cmd.action((opts: CliOptions, command: Command) => {
     const { data, pretty } = action(opts, command);
     emitListResult(command, data, pretty);
   });
@@ -160,10 +174,10 @@ function registerListCommand(
 function buildListAction<T, P = void>(
   readFn: (params?: P) => T,
   formatFn: (data: T) => string,
-  parseOpts?: (opts: Record<string, string | undefined>) => P,
+  parseOpts?: (opts: CliOptions) => P,
   transformFn?: (data: T) => unknown,
 ) {
-  return (opts: Record<string, string | undefined>) => {
+  return (opts: CliOptions) => {
     const params = parseOpts?.(opts);
     const data = readFn(params);
     return {
@@ -429,11 +443,21 @@ program
     "-y, --yes",
     "Confirm deletion; without target flags, delete every target",
   )
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
+  .addHelpText(
+    "after",
+    `
+Reports candidates and outcomes as readable text without deleting; pass --json
+for the machine-readable payload fields instead.
+Deletion applies only with --yes (bare --yes deletes every target) after one
+safety backup. Under --json, backupPath names that safety backup and
+failedTargets lists {target, message}.`,
+  )
   .action(
-    withCliError(async (opts) => {
+    withCliError(async (opts: Record<string, unknown>, command: Command) => {
       const { params } = buildPruneParams(opts);
       const result = await runPrune(params);
-      emit(result);
+      emitListResult(command, result, formatPruneReport(result));
     }),
   );
 
@@ -450,32 +474,40 @@ program
     "-y, --yes",
     "Apply selected targets (all without target flags) after one safety backup",
   )
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .addHelpText(
     "after",
     `
-Reports findings and counts as JSON without changing local data.
+Reports findings as readable text without changing local data; pass --json
+for the machine-readable payload fields instead.
 Maintenance applies only with --yes (bare --yes applies every target), after
-one safety backup; findings keep pre-application values while backupPath
-names the new safety backup. When targets include purgeBackups, excessBackups
-counts that pending backup, predicting appliedCounts.purgeBackups;
+one safety backup. Under --json, findings keep pre-application values while
+backupPath names the new safety backup. When targets include purgeBackups,
+excessBackups counts that pending backup, predicting appliedCounts.purgeBackups;
 appliedCounts.vacuum reports reclaimed free pages.
 Exit 0 covers healthy reports and applies, including harmless no-ops. Exit 1
 covers unhealthy diagnostics, backup or target failures, and operational
 errors; failures report {target, message}.`,
   )
   .action(
-    withCliError(async (opts: Record<string, string | boolean | undefined>) => {
-      const keepBackups = opts["keepBackups"];
-      const result = await runDoctor({
-        vacuum: opts["vacuum"] === true,
-        purgeBackups: opts["purgeBackups"] === true,
-        purgeLegacy: opts["purgeLegacy"] === true,
-        ...(typeof keepBackups === "string" && { keepBackups }),
-        yes: opts["yes"] === true,
-      });
-      emit(result);
-      if (doctorResultIndicatesFailure(result)) setExitCode(1);
-    }),
+    withCliError(
+      async (
+        opts: Record<string, string | boolean | undefined>,
+        command: Command,
+      ) => {
+        const keepBackups = opts["keepBackups"];
+        const result = await runDoctor({
+          vacuum: opts["vacuum"] === true,
+          purgeBackups: opts["purgeBackups"] === true,
+          purgeLegacy: opts["purgeLegacy"] === true,
+          ...(typeof keepBackups === "string" && { keepBackups }),
+          yes: opts["yes"] === true,
+        });
+        const healthy = !doctorResultIndicatesFailure(result);
+        emitListResult(command, result, formatDoctorReport(result, healthy));
+        if (!healthy) setExitCode(1);
+      },
+    ),
   );
 
 program
@@ -494,7 +526,7 @@ skills
   .description(
     "Inspect bundled-skill drift against a harness skills directory without mutation",
   )
-  .option("--target <path>", "path (default: ~/.agents/skills)")
+  .option("--target <path>", SKILLS_TARGET_DESCRIPTION)
   .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
     withCliError((opts, command: Command) => {
@@ -514,12 +546,9 @@ skills
 skills
   .command("install")
   .description("Opt-in copy of bundled skills into a harness skills directory")
-  .option("--target <path>", "path (default: ~/.agents/skills)")
-  .option("--dry-run", "plan without writing target files")
-  .option(
-    "--force",
-    "replace every existing bundled target, including hash matches",
-  )
+  .option("--target <path>", SKILLS_TARGET_DESCRIPTION)
+  .option("--dry-run", DRY_RUN_DESCRIPTION)
+  .option("--force", SKILLS_FORCE_DESCRIPTION)
   .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
     withCliError(async (opts, command: Command) => {
@@ -542,7 +571,7 @@ guide
   .description(
     "Inspect guide drift against a target directory without mutation",
   )
-  .option("--target <path>", "path (default: cwd)")
+  .option("--target <path>", CWD_TARGET_DESCRIPTION)
   .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
     withCliError((opts, command: Command) => {
@@ -559,8 +588,8 @@ guide
 guide
   .command("install")
   .description("Install or update the bundled guide into a target directory")
-  .option("--target <path>", "path (default: cwd)")
-  .option("--dry-run", "plan without writing target files")
+  .option("--target <path>", CWD_TARGET_DESCRIPTION)
+  .option("--dry-run", DRY_RUN_DESCRIPTION)
   .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
     withCliError(async (opts, command: Command) => {
@@ -579,8 +608,8 @@ const settings = program
 settings
   .command("install")
   .description("Install the bundled settings.example.json into the data root")
-  .option("--dry-run", "plan without writing target files")
-  .option("--force", "replace existing settings.json")
+  .option("--dry-run", DRY_RUN_DESCRIPTION)
+  .option("--force", SETTINGS_FORCE_DESCRIPTION)
   .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION)
   .action(
     withCliError(async (opts, command: Command) => {

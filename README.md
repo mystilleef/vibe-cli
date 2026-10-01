@@ -178,19 +178,27 @@ vibe guide install --json
 
 ### Query and maintenance
 
+`prune` and `doctor` print readable text by default. Pass `--json` to
+emit the machine-readable payload for automation. Existing stdout-parsing
+callers must add `--json` to both `prune` and `doctor`.
+
 ```sh
 vibe list all --json
 vibe prune --duplicates --yes
 vibe doctor --vacuum --purge-backups --yes
 vibe session
 vibe verify --provider gemini --model gemini-3.5-flash
+
+# Automation consumers
+vibe prune --duplicates --yes --json
+vibe doctor --vacuum --purge-backups --yes --json
 ```
 
 ### Diagnose and maintain local state
 
 Offline, provider-free diagnostics and confirmed maintenance for
-unreachable local state. Reports findings and counts as `JSON` without
-changing data.
+unreachable local state. Prints a readable report by default without
+changing data; pass `--json` to emit the machine-readable payload.
 
 ```sh
 vibe doctor
@@ -203,17 +211,18 @@ vibe doctor --vacuum --purge-backups --keep-backups 3 --yes
 - `--keep-backups <n>`: retained backup count; defaults to five.
 - `-y, --yes`: apply selected targets (all without target flags) after
   one safety backup.
+- `--json`: emit the machine-readable payload instead of readable text.
 
 Maintenance applies only with `--yes` (bare `--yes` applies every target). One
-safety backup precedes every apply and lands at `backupPath`.
+safety backup precedes every apply and lands at `backupPath` under `--json`.
 
-- Findings (`integrityCheck`, `foreignKeyCheck`, `freelistCount`,
+- Under `--json`, findings (`integrityCheck`, `foreignKeyCheck`, `freelistCount`,
   `excessBackups`, `latestBackupPath`, `legacyBackups`,
   `strandedOriginals`) keep pre-application values.
 - When `targets` include `purgeBackups`, even without `--yes`,
   `excessBackups` counts the pending safety backup, predicting the purge.
-- `appliedCounts` reports actual results: reclaimed free pages for
-  `vacuum`, deleted files for each purge.
+- Under `--json`, `appliedCounts` reports actual results: reclaimed free
+  pages for `vacuum`, deleted files for each purge.
 - `skippedTargets` lists unselected targets; `failedTargets` entries
   carry `{target, message}`.
 - Exit `1` covers unhealthy diagnostics, backup or target failures, and

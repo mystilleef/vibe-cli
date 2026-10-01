@@ -14,6 +14,10 @@ import { DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD } from "../utils/storage.j
 export const DEFAULT_PRUNE_AGE_DAYS = 90;
 export const DEFAULT_PRUNE_OVERLAP_THRESHOLD =
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD;
+
+/** Representative records carried per target in success payloads. */
+const REPRESENTATIVE_LIMIT = 5;
+
 export interface PruneInput {
   learnings?: boolean;
   duplicates?: boolean;
@@ -96,28 +100,34 @@ function extractRepresentativeDetails(
   candidates: PruneCandidateSets,
 ): PruneSuccessPayload["representativeDetails"] {
   return {
-    learnings: candidates.learnings.slice(0, 5).map((entry) => ({
-      id: entry.id,
-      category: entry.category,
-      observation: entry.observation,
-      timestamp: entry.timestamp,
-    })),
-    duplicates: candidates.duplicates.slice(0, 5).map((group) => ({
-      category: group.category,
-      keptId: group.kept.id,
-      prunableIds: group.prunable.map((entry) => entry.id),
-    })),
-    demos: candidates.demos.slice(0, 5).map((entry) => ({
+    learnings: candidates.learnings
+      .slice(0, REPRESENTATIVE_LIMIT)
+      .map((entry) => ({
+        id: entry.id,
+        category: entry.category,
+        observation: entry.observation,
+        timestamp: entry.timestamp,
+      })),
+    duplicates: candidates.duplicates
+      .slice(0, REPRESENTATIVE_LIMIT)
+      .map((group) => ({
+        category: group.category,
+        keptId: group.kept.id,
+        prunableIds: group.prunable.map((entry) => entry.id),
+      })),
+    demos: candidates.demos.slice(0, REPRESENTATIVE_LIMIT).map((entry) => ({
       id: entry.id,
       category: entry.category,
       observation: entry.observation,
       ...(entry.demoId !== undefined && { demoId: entry.demoId }),
     })),
-    sessions: candidates.sessions.slice(0, 5).map((session) => ({
-      sessionId: session.sessionId,
-      cwd: session.cwd,
-      lastAccessedAt: session.lastAccessedAt,
-    })),
+    sessions: candidates.sessions
+      .slice(0, REPRESENTATIVE_LIMIT)
+      .map((session) => ({
+        sessionId: session.sessionId,
+        cwd: session.cwd,
+        lastAccessedAt: session.lastAccessedAt,
+      })),
   };
 }
 

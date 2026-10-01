@@ -1,4 +1,12 @@
-import { JSON_OPTION_DESCRIPTION } from "./cliConstants.js";
+import {
+  CWD_TARGET_DESCRIPTION,
+  DRY_RUN_DESCRIPTION,
+  JSON_OPTION_DESCRIPTION,
+  PROVIDER_OPTION_DESCRIPTION,
+  SETTINGS_FORCE_DESCRIPTION,
+  SKILLS_FORCE_DESCRIPTION,
+  SKILLS_TARGET_DESCRIPTION,
+} from "./cliConstants.js";
 import { extractErrorMessage } from "./errors.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 
@@ -33,7 +41,7 @@ const COMMANDS = {
       "--uncertainty": "str (repeatable)",
       "--context": "str",
       "--prompt": "str",
-      "--provider": "settings provider entry name",
+      "--provider": PROVIDER_OPTION_DESCRIPTION,
       "--model": "str",
       "--max-attempts":
         "int (refinement loop limit; fallback: settings.maxAttempts → 10)",
@@ -127,6 +135,7 @@ const COMMANDS = {
       "--dry-run": "report candidates without deleting",
       "-y, --yes":
         "confirm deletion; without target flags, delete every target",
+      "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
       dryRun: "bool",
@@ -151,6 +160,7 @@ const COMMANDS = {
       "--keep-backups": "int=5 newest managed backups retained (default: five)",
       "-y, --yes":
         "apply selected targets (all without target flags) after one safety backup",
+      "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
       dryRun: "bool",
@@ -173,7 +183,7 @@ const COMMANDS = {
     when: "inspect bundled-skill drift against a harness skills directory without mutation",
     req: {},
     opt: {
-      "--target": "path (default: ~/.agents/skills)",
+      "--target": SKILLS_TARGET_DESCRIPTION,
       "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
@@ -186,10 +196,9 @@ const COMMANDS = {
     when: "opt-in copy of bundled skills into a harness skills directory",
     req: {},
     opt: {
-      "--target": "path (default: ~/.agents/skills)",
+      "--target": SKILLS_TARGET_DESCRIPTION,
       "--dry-run": "plan without writing staging or target files",
-      "--force":
-        "replace every existing bundled target, including hash matches",
+      "--force": SKILLS_FORCE_DESCRIPTION,
       "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
@@ -210,7 +219,7 @@ const COMMANDS = {
     when: "inspect guide drift against a target directory without mutation",
     req: {},
     opt: {
-      "--target": "path (default: cwd)",
+      "--target": CWD_TARGET_DESCRIPTION,
       "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
@@ -223,8 +232,8 @@ const COMMANDS = {
     when: "install or update the bundled guide into a target directory",
     req: {},
     opt: {
-      "--target": "path (default: cwd)",
-      "--dry-run": "plan without writing target files",
+      "--target": CWD_TARGET_DESCRIPTION,
+      "--dry-run": DRY_RUN_DESCRIPTION,
       "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {
@@ -244,8 +253,8 @@ const COMMANDS = {
     when: "install the bundled settings.example.json into the data root",
     req: {},
     opt: {
-      "--dry-run": "plan without writing target files",
-      "--force": "replace existing settings.json",
+      "--dry-run": DRY_RUN_DESCRIPTION,
+      "--force": SETTINGS_FORCE_DESCRIPTION,
       "--json": JSON_OPTION_DESCRIPTION,
     },
     out: {

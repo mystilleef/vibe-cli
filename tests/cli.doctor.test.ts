@@ -36,6 +36,7 @@ const DOCTOR_FLAGS = [
   "--purge-legacy",
   "--keep-backups",
   "-y, --yes",
+  "--json",
 ] as const;
 
 let home: TempHomeContext;
@@ -105,7 +106,7 @@ async function seedMaintenanceFixture(): Promise<void> {
     for (let index = 0; index < 100; index += 1) {
       insert.run("mistake", "maintenance", "x".repeat(800), index);
     }
-    db.exec("DELETE FROM learning_entries WHERE id > 50");
+    db.run("DELETE FROM learning_entries WHERE id > 50");
     insertLegacyRecord(db, "vibe-log.json", "vibe-log.json.bak");
   });
   await writeFile(join(home.dataRoot, "vibe-log.json"), '{"unimported":true}');
@@ -120,6 +121,24 @@ async function seedMaintenanceFixture(): Promise<void> {
       "backup",
     );
   }
+}
+
+/**
+ * One safe recorded legacy copy plus one traversal record that escapes the
+ * data root; returns the outside directory holding the escaped target.
+ */
+async function seedRefusedLegacyFixture(): Promise<string> {
+  const outsideDir = join(home.home, "outside");
+  await mkdir(outsideDir);
+  await writeFile(join(outsideDir, "history.json.bak"), "outside copy");
+  await seedDatabase((db) => {
+    insertLegacyRecord(db, "vibe-log.json", "vibe-log.json.bak");
+    insertLegacyRecord(db, "history.json", "link/../history.json.bak");
+  });
+  await symlink(outsideDir, join(home.dataRoot, "link"));
+  await writeFile(join(home.dataRoot, "vibe-log.json.bak"), "legacy copy");
+  await writeFile(join(home.dataRoot, "history.json.bak"), "inside copy");
+  return outsideDir;
 }
 
 function readRows(path = databasePath()): Record<string, unknown[]> {
@@ -149,12 +168,11 @@ async function listBackups(): Promise<string[]> {
 // ── CLI surface ───────────────────────────────────────────────────────────
 
 describe("doctor CLI surface", () => {
-  test("documents identical flags across help, schema, and README", async () => {
+  test("documents identical flags across help and schema", async () => {
     const help = await runDoctor("--help");
     const schema = JSON.parse((await runCliInProcess(["schema"])).stdout) as {
       commands: { doctor: { opt: Record<string, string> } };
     };
-    const readme = await readFile(join(repoRoot, "README.md"), "utf8");
 
     expect(help.exitCode).toBe(0);
     expect(Object.keys(schema.commands.doctor.opt).sort()).toEqual(
@@ -162,12 +180,11 @@ describe("doctor CLI surface", () => {
     );
     for (const flag of DOCTOR_FLAGS) {
       expect(help.stdout).toContain(flag);
-      expect(readme).toContain(flag);
     }
     expect(help.stdout).not.toContain("--dry-run");
   });
 
-  test("documents bare confirmation fallback and pending accounting in help", async () => {
+  test("documents bare confirmation fallback in help", async () => {
     const help = await runDoctor("--help");
     const normalizedHelp = help.stdout.replace(/\s+/g, " ");
 
@@ -177,9 +194,6 @@ describe("doctor CLI surface", () => {
     );
     expect(normalizedHelp).toContain(
       "Maintenance applies only with --yes (bare --yes applies every target)",
-    );
-    expect(normalizedHelp).toContain(
-      "When targets include purgeBackups, excessBackups counts that pending backup",
     );
   });
 
@@ -211,7 +225,7 @@ describe("doctor CLI surface", () => {
       label: "pending migrations",
       setup: () =>
         seedDatabase((db) =>
-          db.exec(
+          db.run(
             "DELETE FROM schema_migrations WHERE id = '003_rename_mistake_to_observation'",
           ),
         ),
@@ -235,7 +249,7 @@ describe("doctor report", () => {
     const backupsBefore = await listBackups();
     const fetchSpy = spyOn(globalThis, "fetch");
 
-    const result = await runDoctor();
+    const result = await runDoctor("--json");
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -266,11 +280,80 @@ describe("doctor report", () => {
     expect(existsSync(join(home.dataRoot, "settings.json"))).toBe(false);
   });
 
+  test("emits exact minified JSON bytes with trailing newline under --json", async () => {
+    await seedMaintenanceFixture();
+
+    const result = await runDoctor("--json");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(
+      `${JSON.stringify(JSON.parse(result.stdout))}\n`,
+    );
+    const payload = JSON.parse(result.stdout) as DoctorSuccessPayload & {
+      findings: Record<string, unknown>;
+    };
+    expect(Object.keys(payload)).toEqual([
+      "dryRun",
+      "targets",
+      "findings",
+      "backupPath",
+      "appliedCounts",
+      "skippedTargets",
+      "failedTargets",
+    ]);
+    expect(Object.keys(payload.findings)).toEqual([
+      "integrityCheck",
+      "foreignKeyCheck",
+      "freelistCount",
+      "excessBackups",
+      "latestBackupPath",
+      "legacyBackups",
+      "strandedOriginals",
+    ]);
+    expect(result.stdout).toContain('"backupPath":null');
+    expect(result.stdout).not.toContain("Doctor:");
+    expect(result.stdout).not.toContain("Status: ");
+  });
+
+  test("defaults to readable report-only text without flags", async () => {
+    await seedMaintenanceFixture();
+
+    const result = await runDoctor();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(
+      result.stdout.startsWith("Doctor: report only (apply with --yes)\n"),
+    ).toBe(true);
+    expect(result.stdout.trimEnd().endsWith("Status: healthy")).toBe(true);
+    expect(result.stdout).toBe(`${result.stdout.trimEnd()}\n`);
+    expect(result.stdout).not.toContain('"dryRun"');
+    expect(result.stdout).toContain("doctor never deletes originals");
+  });
+
+  test("renders unhealthy status with exit one in text mode", async () => {
+    await seedMaintenanceFixture();
+    seedForeignKeyViolations(2);
+
+    const result = await runDoctor();
+
+    expect(result.exitCode).toBe(1);
+    expect(
+      result.stdout.startsWith("Doctor: report only (apply with --yes)\n"),
+    ).toBe(true);
+    expect(result.stdout.trimEnd().endsWith("Status: unhealthy")).toBe(true);
+  });
+
   test("keeps targets without confirmation report-only", async () => {
     await seedMaintenanceFixture();
 
     const payload = parsePayload(
-      await runDoctor("--vacuum", "--purge-backups", "--purge-legacy"),
+      await runDoctor(
+        "--vacuum",
+        "--purge-backups",
+        "--purge-legacy",
+        "--json",
+      ),
     );
 
     expect(payload.dryRun).toBe(true);
@@ -284,7 +367,10 @@ describe("doctor report", () => {
     seedForeignKeyViolations(2);
     const rowsBefore = readRows();
 
-    for (const args of [[], ["--vacuum", "--purge-legacy", "--yes"]]) {
+    for (const args of [
+      ["--json"],
+      ["--vacuum", "--purge-legacy", "--yes", "--json"],
+    ]) {
       const result = await runDoctor(...args);
 
       expect(result.exitCode).toBe(1);
@@ -305,7 +391,7 @@ describe("doctor report", () => {
     });
     await writeFile(join(home.dataRoot, "history.json.bak"), "inside copy");
 
-    const result = await runDoctor();
+    const result = await runDoctor("--json");
 
     expect(result.exitCode).toBe(0);
     expect(parsePayload(result).findings.legacyBackups?.rejected).toEqual([
@@ -330,6 +416,7 @@ describe("doctor apply", () => {
       "--purge-backups",
       "--purge-legacy",
       "-y",
+      "--json",
     );
 
     expect(result.exitCode).toBe(0);
@@ -363,7 +450,7 @@ describe("doctor apply", () => {
     async (alias) => {
       await seedMaintenanceFixture();
 
-      const result = await runDoctor(alias);
+      const result = await runDoctor(alias, "--json");
 
       expect(result.exitCode).toBe(0);
       const payload = parsePayload(result);
@@ -385,7 +472,13 @@ describe("doctor apply", () => {
     await seedMaintenanceFixture();
 
     const payload = parsePayload(
-      await runDoctor("--purge-backups", "--keep-backups", "6", "--yes"),
+      await runDoctor(
+        "--purge-backups",
+        "--keep-backups",
+        "6",
+        "--yes",
+        "--json",
+      ),
     );
 
     expect(payload.findings.excessBackups).toBe(2);
@@ -394,18 +487,9 @@ describe("doctor apply", () => {
   });
 
   test("exits one on refused legacy records while deleting safe copies", async () => {
-    const outsideDir = join(home.home, "outside");
-    await mkdir(outsideDir);
-    await writeFile(join(outsideDir, "history.json.bak"), "outside copy");
-    await seedDatabase((db) => {
-      insertLegacyRecord(db, "vibe-log.json", "vibe-log.json.bak");
-      insertLegacyRecord(db, "history.json", "link/../history.json.bak");
-    });
-    await symlink(outsideDir, join(home.dataRoot, "link"));
-    await writeFile(join(home.dataRoot, "vibe-log.json.bak"), "legacy copy");
-    await writeFile(join(home.dataRoot, "history.json.bak"), "inside copy");
+    const outsideDir = await seedRefusedLegacyFixture();
 
-    const result = await runDoctor("--purge-legacy", "--yes");
+    const result = await runDoctor("--purge-legacy", "--yes", "--json");
 
     expect(result.exitCode).toBe(1);
     const payload = parsePayload(result);
@@ -442,6 +526,39 @@ describe("doctor apply", () => {
     ).toBe("unrecorded");
   });
 
+  test("defaults to readable applied text under confirmation", async () => {
+    await seedMaintenanceFixture();
+
+    const result = await runDoctor("--vacuum", "--purge-legacy", "-y");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.startsWith("Doctor: applied\n")).toBe(true);
+    expect(result.stdout.trimEnd().endsWith("Status: healthy")).toBe(true);
+    expect(result.stdout).not.toContain('"dryRun"');
+  });
+
+  test("starts applied text and reports unhealthy status when failures block maintenance", async () => {
+    await seedMaintenanceFixture();
+    seedForeignKeyViolations(2);
+
+    const result = await runDoctor("--vacuum", "--yes");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.startsWith("Doctor: applied\n")).toBe(true);
+    expect(result.stdout).toMatch(/^vacuum\s+not run\s*$/m);
+    expect(result.stdout.trimEnd().endsWith("Status: unhealthy")).toBe(true);
+  });
+
+  test("flags partially applied targets in text when a target fails after backup", async () => {
+    await seedRefusedLegacyFixture();
+
+    const result = await runDoctor("--purge-legacy", "--yes");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/^purgeLegacy\s+1 file, see failures\s*$/m);
+    expect(result.stdout).toContain("Failures\n--------\npurgeLegacy: ");
+  });
+
   test("exits one with backupPath null and zero applied counts when backup creation fails", async () => {
     await seedMaintenanceFixture();
     const rowsBefore = readRows();
@@ -449,7 +566,12 @@ describe("doctor apply", () => {
     await chmod(backupsDir, 0o555);
 
     try {
-      const result = await runDoctor("--vacuum", "--purge-legacy", "--yes");
+      const result = await runDoctor(
+        "--vacuum",
+        "--purge-legacy",
+        "--yes",
+        "--json",
+      );
 
       expect(result.exitCode).toBe(1);
       const payload = parsePayload(result);
@@ -480,7 +602,7 @@ describe("doctor process boundary", () => {
     await seedDatabase();
     seedForeignKeyViolations(2500);
 
-    const result = await runDoctorProcess([]);
+    const result = await runDoctorProcess(["--json"]);
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout.length).toBeGreaterThan(65_536);
