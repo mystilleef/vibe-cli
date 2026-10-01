@@ -1245,9 +1245,9 @@ describe("createPruneBackup — acquisition, concurrency, and failure safety", (
     mkdirSync(home.dataRoot, { recursive: true });
     const dbPath = join(home.dataRoot, "vibe.db");
     const rawDb = new Database(dbPath);
-    rawDb.exec("PRAGMA journal_mode = DELETE;");
-    rawDb.exec("CREATE TABLE custom_data (id INTEGER PRIMARY KEY, note TEXT);");
-    rawDb.exec("INSERT INTO custom_data VALUES (1, 'custom note test');");
+    rawDb.run("PRAGMA journal_mode = DELETE;");
+    rawDb.run("CREATE TABLE custom_data (id INTEGER PRIMARY KEY, note TEXT);");
+    rawDb.run("INSERT INTO custom_data VALUES (1, 'custom note test');");
     rawDb.close();
 
     const legacyFile = join(home.dataRoot, "vibe-log.json");
@@ -1311,8 +1311,8 @@ describe("createPruneBackup — acquisition, concurrency, and failure safety", (
   test("leaves concurrent application connection open, queryable, and with unchanged settings across backup", async () => {
     seedMultiPageDatabase(home.dataRoot);
     const appHandle = openVibeDatabase();
-    appHandle.db.exec("PRAGMA busy_timeout = 7890;");
-    appHandle.db.exec("PRAGMA foreign_keys = ON;");
+    appHandle.db.run("PRAGMA busy_timeout = 7890;");
+    appHandle.db.run("PRAGMA foreign_keys = ON;");
 
     try {
       const backupPath = await createPruneBackup();

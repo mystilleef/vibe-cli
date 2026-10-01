@@ -106,7 +106,7 @@ function expectReportKeys(report: object): void {
 function seedInitialMigrationOnly(databasePath: string): void {
   const db = new Database(databasePath, { create: true });
   try {
-    db.exec(`
+    db.run(`
       CREATE TABLE schema_migrations (
         id TEXT PRIMARY KEY,
         applied_at TEXT NOT NULL
@@ -174,7 +174,7 @@ function seedDuplicateDisplayCwdFailure(databasePath: string): void {
   seedInitialMigrationOnly(databasePath);
   const db = new Database(databasePath, { create: true });
   try {
-    db.exec("ALTER TABLE sessions ADD COLUMN cwd TEXT;");
+    db.run("ALTER TABLE sessions ADD COLUMN cwd TEXT;");
   } finally {
     db.close();
   }
@@ -188,7 +188,7 @@ describe("withDatabase", () => {
     withDatabase(
       (db) => {
         ran = true;
-        db.exec(
+        db.run(
           "CREATE TABLE IF NOT EXISTS test_table (id INTEGER PRIMARY KEY)",
         );
       },
@@ -230,7 +230,7 @@ describe("withDatabase", () => {
     await useTempHome();
 
     withDatabase((db) => {
-      db.exec(
+      db.run(
         "CREATE TABLE IF NOT EXISTS singleton_test (id INTEGER PRIMARY KEY)",
       );
     });

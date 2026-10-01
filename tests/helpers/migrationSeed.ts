@@ -20,7 +20,7 @@ export function seedSchemaMigrations(
   appliedIds: readonly string[],
   appliedAt: string = DEFAULT_SEED_APPLIED_AT,
 ): void {
-  db.exec(`
+  db.run(`
     CREATE TABLE schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
@@ -47,5 +47,5 @@ export function seedInitialMigration(
     throw new Error("no migrations registered");
   }
   seedSchemaMigrations(db, [initialId], appliedAt);
-  db.exec(getMigrationSql(initialId));
+  db.run(getMigrationSql(initialId));
 }

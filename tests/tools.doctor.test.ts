@@ -547,7 +547,7 @@ describe("runDoctor — safety backup and target execution", () => {
       for (let index = 0; index < 50; index += 1) {
         insert.run("mistake", "vacuum", "x".repeat(800), index);
       }
-      db.exec("DELETE FROM learning_entries WHERE id > 25");
+      db.run("DELETE FROM learning_entries WHERE id > 25");
     });
     const managedBackups = await seedManagedBackups(3);
     seedLegacyRecord("vibe-log.json", "vibe-log.json.bak");
@@ -726,7 +726,7 @@ describe("runDoctor — safety backup and target execution", () => {
       for (let index = 0; index < 50; index += 1) {
         insert.run("mistake", "vacuum", "x".repeat(800), index);
       }
-      db.exec("DELETE FROM learning_entries WHERE id > 25");
+      db.run("DELETE FROM learning_entries WHERE id > 25");
     });
     const initialFreelist = readFreelistCount();
     expect(initialFreelist).toBeGreaterThan(0);
@@ -878,7 +878,7 @@ describe("runDoctor — safety backup and target execution", () => {
       for (let index = 0; index < 100; index += 1) {
         insert.run("mistake", "vacuum", "x".repeat(800), index);
       }
-      db.exec("DELETE FROM learning_entries WHERE id > 50");
+      db.run("DELETE FROM learning_entries WHERE id > 50");
     });
     seedLegacyRecord("vibe-log.json", "vibe-log.json.bak");
     const learning = readTable("learning_entries");

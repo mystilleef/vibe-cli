@@ -32,7 +32,7 @@ describe("runVacuum fail-fast contention", () => {
       create: false,
     });
     try {
-      blocker.exec("BEGIN IMMEDIATE");
+      blocker.run("BEGIN IMMEDIATE");
 
       const startedAt = performance.now();
       await expect(runVacuum(databasePath())).rejects.toThrow(
@@ -43,7 +43,7 @@ describe("runVacuum fail-fast contention", () => {
       // Fail-fast: the default 5000ms contention wait never engages.
       expect(elapsed).toBeLessThan(1000);
     } finally {
-      blocker.exec("ROLLBACK");
+      blocker.run("ROLLBACK");
       blocker.close();
     }
   });

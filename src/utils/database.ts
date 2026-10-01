@@ -174,7 +174,7 @@ export const SQLITE_BUSY_TIMEOUT_DISABLED = 0;
 
 /** Apply the connection's `busy_timeout` pragma. */
 export function applyBusyTimeout(db: Database, timeoutMs: number): void {
-  db.exec(`PRAGMA busy_timeout = ${timeoutMs}`);
+  db.run(`PRAGMA busy_timeout = ${timeoutMs}`);
 }
 
 /**
@@ -182,7 +182,7 @@ export function applyBusyTimeout(db: Database, timeoutMs: number): void {
  * enforcement on, lock contention waiting out busy_timeout.
  */
 export function configureConnection(db: Database): void {
-  db.exec("PRAGMA foreign_keys = ON");
+  db.run("PRAGMA foreign_keys = ON");
   applyBusyTimeout(db, SQLITE_BUSY_TIMEOUT_MS);
 }
 
@@ -199,7 +199,7 @@ export function openVibeDatabaseWithMigrationReport(
 }
 
 export function initializeSchema(db: Database, ranAt?: string): string[] {
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
@@ -223,7 +223,7 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
     try {
       // Apply the migration in its own transaction for atomicity.
       db.transaction(() => {
-        db.exec(migration.sql);
+        db.run(migration.sql);
         insertMigration.run(migration.id, appliedAt);
       }).immediate();
       pending.push(migration.id);
@@ -240,7 +240,7 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
     }
   }
 
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS legacy_imports (
       artifact TEXT PRIMARY KEY,
       imported_at TEXT NOT NULL,
@@ -321,12 +321,12 @@ const WAL_ATTEMPTS = 3;
 function enableWriteAheadLog(db: Database): void {
   for (let attempt = 1; ; attempt++) {
     try {
-      db.exec("PRAGMA journal_mode = WAL");
+      db.run("PRAGMA journal_mode = WAL");
       return;
     } catch (error) {
       if (attempt === WAL_ATTEMPTS || !isSqliteBusy(error)) throw error;
-      db.exec("BEGIN IMMEDIATE");
-      db.exec("ROLLBACK");
+      db.run("BEGIN IMMEDIATE");
+      db.run("ROLLBACK");
     }
   }
 }

@@ -14,7 +14,7 @@ import { DATABASE_FILENAME, openVibeDatabase } from "../src/utils/database";
  */
 
 const WAL_PRAGMA = "PRAGMA journal_mode = WAL";
-const realExec = Database.prototype.exec;
+const realRun = Database.prototype.run;
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -33,9 +33,9 @@ async function tempPath(name: string): Promise<string> {
 /** Fail the WAL conversion with `code` for its first `failures` attempts. */
 function failWalConversion(code: string, failures: number): void {
   let remaining = failures;
-  spyOn(Database.prototype, "exec").mockImplementation(function (
+  spyOn(Database.prototype, "run").mockImplementation(function (
     this: Database,
-    ...args: Parameters<Database["exec"]>
+    ...args: Parameters<Database["run"]>
   ) {
     if (args[0] === WAL_PRAGMA && remaining > 0) {
       remaining--;
@@ -45,7 +45,7 @@ function failWalConversion(code: string, failures: number): void {
       error.code = code;
       throw error;
     }
-    return realExec.apply(this, args);
+    return realRun.apply(this, args);
   });
 }
 
@@ -93,7 +93,7 @@ describe("openVibeDatabase WAL conversion", () => {
     const path = await tempPath("init-fail");
     const db = new Database(path, { create: true });
     // An incompatible table makes initializeSchema throw.
-    db.exec("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY)");
+    db.run("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY)");
     db.close();
 
     // Spy after the setup db's own close() so this only counts the handle

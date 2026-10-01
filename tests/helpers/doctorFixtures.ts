@@ -90,7 +90,7 @@ export function createDoctorFixtures(
     seedForeignKeyViolations(ruleCount = 1, interactionCount = 0): void {
       const db = new Database(databasePath());
       try {
-        db.exec("PRAGMA foreign_keys = OFF");
+        db.run("PRAGMA foreign_keys = OFF");
         const insertRule = db.prepare(
           "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
         );

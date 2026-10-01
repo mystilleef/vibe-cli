@@ -294,7 +294,7 @@ describe("createDatabaseBackup — coordinated concurrency and snapshot consiste
     await reader.pin();
 
     // Writer commits an additional row while reader pins the WAL log
-    source.database.exec(
+    source.database.run(
       "INSERT INTO learning_entries (type, category, observation, solution, timestamp) " +
         "VALUES ('mistake', 'gen1', '[gen:1:row:extra] pinned-reader-test', 'extra-sol', 99999)",
     );
@@ -418,8 +418,8 @@ describe("createDatabaseBackup — coordinated concurrency and snapshot consiste
     const seed = seedMultiPageDatabase(home.dataRoot);
     const source = openSourceHandle(seed.dbPath);
 
-    source.database.exec("PRAGMA busy_timeout = 7890");
-    source.database.exec("PRAGMA foreign_keys = ON");
+    source.database.run("PRAGMA busy_timeout = 7890");
+    source.database.run("PRAGMA foreign_keys = ON");
 
     // Success path
     const backupPath = await createDatabaseBackup(source.sourcePath, {
@@ -481,8 +481,8 @@ describe("assertBackupGeneration — complete logical preservation", () => {
   function corruptBackup(backupPath: string, corruption: string): void {
     const database = new Database(backupPath);
     try {
-      database.exec(corruption);
-      database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      database.run(corruption);
+      database.run("PRAGMA wal_checkpoint(TRUNCATE)");
     } finally {
       database.close();
     }

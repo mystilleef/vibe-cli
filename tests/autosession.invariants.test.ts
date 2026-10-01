@@ -208,14 +208,14 @@ describe("resolveAutosession — write lock", () => {
     // A second connection probes the lock at the transaction's first read;
     // a deferred transaction would not hold it yet.
     const probe = new Database(join(home.dataRoot, DATABASE_FILENAME));
-    probe.exec("PRAGMA busy_timeout = 0");
+    probe.run("PRAGMA busy_timeout = 0");
     const { db } = getVibeDatabase();
     const query = db.query.bind(db);
     let probeError: unknown;
     spyOn(db, "query").mockImplementation((sql: string) => {
       try {
-        probe.exec("BEGIN IMMEDIATE");
-        probe.exec("ROLLBACK");
+        probe.run("BEGIN IMMEDIATE");
+        probe.run("ROLLBACK");
       } catch (error) {
         probeError = error;
       }

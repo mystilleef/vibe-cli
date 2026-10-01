@@ -54,12 +54,12 @@ export function seedMultiPageDatabase(
 
   try {
     initializeSchema(db);
-    db.exec(`PRAGMA journal_mode = ${journalMode}`);
+    db.run(`PRAGMA journal_mode = ${journalMode}`);
     if (journalMode === "WAL") {
-      db.exec("PRAGMA wal_autocheckpoint = 0");
+      db.run("PRAGMA wal_autocheckpoint = 0");
     }
 
-    db.exec(
+    db.run(
       "INSERT INTO sessions (id, cwd_key, created_at, last_accessed_at, cwd) " +
         "VALUES ('session-1', 'key-1', '2026-01-01T00:00:00.000Z', '[gen:1:accessed]', '/tmp/session-1')",
     );
@@ -98,7 +98,7 @@ export function seedMultiPageDatabase(
     );
     insertInteraction.finalize();
 
-    db.exec(
+    db.run(
       "INSERT INTO legacy_imports (artifact, imported_at, backup_path) " +
         "VALUES ('legacy-artifact.json', '2026-01-01T00:00:00.000Z', 'legacy-backup.json')",
     );
@@ -108,7 +108,7 @@ export function seedMultiPageDatabase(
         "VALUES (?, ?, ?, ?, ?)",
     );
 
-    db.exec("BEGIN");
+    db.run("BEGIN");
     for (let i = 0; i < rowCount; i++) {
       insertLearning.run(
         "mistake",
@@ -118,7 +118,7 @@ export function seedMultiPageDatabase(
         10000 + i,
       );
     }
-    db.exec("COMMIT");
+    db.run("COMMIT");
     insertLearning.finalize();
 
     const pageCountQuery = db.query<{ page_count: number }, []>(
@@ -942,7 +942,7 @@ import { Database } from "bun:sqlite";
 
 const sourcePath = process.argv[1];
 const db = new Database(sourcePath);
-db.exec("PRAGMA busy_timeout = 10000");
+db.run("PRAGMA busy_timeout = 10000");
 
 function emit(type, data = {}) {
   process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
@@ -961,18 +961,18 @@ process.stdin.on("data", (chunk) => {
     if (!cmd) continue;
     if (cmd === "PREPARE_GEN2") {
       try {
-        db.exec("BEGIN IMMEDIATE");
-        db.exec("UPDATE sessions SET last_accessed_at = '[gen:2:accessed]' WHERE id = 'session-1'");
-        db.exec("UPDATE constitution_rules SET rule = REPLACE(rule, '[gen:1:', '[gen:2:') WHERE session_id = 'session-1'");
-        db.exec("UPDATE interactions SET goal = REPLACE(goal, '[gen:1:', '[gen:2:'), output = REPLACE(output, '[gen:1:', '[gen:2:') WHERE session_id = 'session-1'");
-        db.exec("UPDATE learning_entries SET category = 'gen2', observation = REPLACE(observation, '[gen:1:', '[gen:2:'), solution = REPLACE(solution, '[gen:1:', '[gen:2:')");
+        db.run("BEGIN IMMEDIATE");
+        db.run("UPDATE sessions SET last_accessed_at = '[gen:2:accessed]' WHERE id = 'session-1'");
+        db.run("UPDATE constitution_rules SET rule = REPLACE(rule, '[gen:1:', '[gen:2:') WHERE session_id = 'session-1'");
+        db.run("UPDATE interactions SET goal = REPLACE(goal, '[gen:1:', '[gen:2:'), output = REPLACE(output, '[gen:1:', '[gen:2:') WHERE session_id = 'session-1'");
+        db.run("UPDATE learning_entries SET category = 'gen2', observation = REPLACE(observation, '[gen:1:', '[gen:2:'), solution = REPLACE(solution, '[gen:1:', '[gen:2:')");
         emit("prepared_gen2");
       } catch (err) {
         emit("error", { message: String(err) });
       }
     } else if (cmd === "COMMIT") {
       try {
-        db.exec("COMMIT");
+        db.run("COMMIT");
         const timestamp = Date.now();
         const hrtime = Number(process.hrtime.bigint());
         emit("committed", { timestamp, hrtime });
@@ -983,16 +983,16 @@ process.stdin.on("data", (chunk) => {
       }
     } else if (cmd === "PREPARE_UNCOMMITTED_GEN3") {
       try {
-        db.exec("BEGIN IMMEDIATE");
-        db.exec("UPDATE sessions SET last_accessed_at = '[gen:3:accessed]' WHERE id = 'session-1'");
-        db.exec("INSERT INTO learning_entries (type, category, observation, solution, timestamp) VALUES ('mistake', 'gen3', '[gen:3:uncommitted] payload', '[gen:3:sol]', 999999)");
+        db.run("BEGIN IMMEDIATE");
+        db.run("UPDATE sessions SET last_accessed_at = '[gen:3:accessed]' WHERE id = 'session-1'");
+        db.run("INSERT INTO learning_entries (type, category, observation, solution, timestamp) VALUES ('mistake', 'gen3', '[gen:3:uncommitted] payload', '[gen:3:sol]', 999999)");
         emit("prepared_gen3");
       } catch (err) {
         emit("error", { message: String(err) });
       }
     } else if (cmd === "ROLLBACK") {
       try {
-        db.exec("ROLLBACK");
+        db.run("ROLLBACK");
         emit("rolled_back");
         db.close();
         process.exit(0);
@@ -1143,7 +1143,7 @@ process.stdin.on("data", (chunk) => {
     if (!cmd) continue;
     if (cmd === "PIN") {
       try {
-        db.exec("BEGIN");
+        db.run("BEGIN");
         db.query("SELECT COUNT(*) FROM learning_entries").get();
         emit("pinned");
       } catch (err) {
@@ -1151,7 +1151,7 @@ process.stdin.on("data", (chunk) => {
       }
     } else if (cmd === "RELEASE") {
       try {
-        db.exec("ROLLBACK");
+        db.run("ROLLBACK");
         emit("released");
         db.close();
         process.exit(0);
@@ -1160,7 +1160,7 @@ process.stdin.on("data", (chunk) => {
       }
     } else if (cmd === "CLOSE") {
       try {
-        db.exec("ROLLBACK");
+        db.run("ROLLBACK");
       } catch {}
       db.close();
       process.exit(0);
@@ -1211,7 +1211,7 @@ function emit(type, data = {}) {
 
 process.stdin.resume();
 try {
-  db.exec("BEGIN EXCLUSIVE");
+  db.run("BEGIN EXCLUSIVE");
   emit("locked");
 } catch (err) {
   emit("error", { message: String(err) });
@@ -1228,7 +1228,7 @@ process.stdin.on("data", (chunk) => {
     if (!cmd) continue;
     if (cmd === "RELEASE" || cmd === "CLOSE") {
       try {
-        db.exec("ROLLBACK");
+        db.run("ROLLBACK");
       } catch {}
       db.close();
       process.exit(0);

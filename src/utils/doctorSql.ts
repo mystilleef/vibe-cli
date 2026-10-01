@@ -162,7 +162,7 @@ export async function runVacuum(databasePath: string): Promise<number> {
   return withExistingDatabase(databasePath, "write", (db) => {
     applyBusyTimeout(db, SQLITE_BUSY_TIMEOUT_DISABLED);
     const freePages = readFreelistCount(db);
-    db.exec("VACUUM");
+    db.run("VACUUM");
     return freePages;
   });
 }

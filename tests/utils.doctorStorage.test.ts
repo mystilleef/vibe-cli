@@ -230,7 +230,7 @@ describe("collectDoctorDiagnostics", () => {
       for (let index = 0; index < 50; index += 1) {
         insert.run(`s${index}`, "goal", "x".repeat(400), index);
       }
-      db.exec("DELETE FROM interactions WHERE id % 2 = 0");
+      db.run("DELETE FROM interactions WHERE id % 2 = 0");
     });
     const external = new Database(databasePath(), {
       readonly: true,
@@ -325,7 +325,7 @@ describe("collectDoctorDiagnostics", () => {
 
   test("keeps database bytes, journal mode, and data-root inventory unchanged during collection", async () => {
     await seedDatabase((db) => {
-      db.exec("PRAGMA journal_mode = WAL");
+      db.run("PRAGMA journal_mode = WAL");
     });
     const inventory = await readDataRootInventory();
     expect(inventory).toEqual(["vibe.db"]);
@@ -351,7 +351,7 @@ describe("collectDoctorDiagnostics", () => {
     }
     const writer = new Database(sourcePath);
     try {
-      writer.exec("PRAGMA journal_mode = WAL");
+      writer.run("PRAGMA journal_mode = WAL");
       writer
         .prepare(
           "INSERT INTO legacy_imports (artifact, imported_at, backup_path) VALUES (?, ?, ?)",
@@ -525,7 +525,7 @@ describe("collectDoctorDiagnostics open failures", () => {
     await mkdir(home.dataRoot, { recursive: true });
     const db = new Database(databasePath());
     try {
-      db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY)");
+      db.run("CREATE TABLE sessions (id TEXT PRIMARY KEY)");
     } finally {
       db.close();
     }
@@ -537,10 +537,10 @@ describe("collectDoctorDiagnostics open failures", () => {
 
   test("rejects a database behind this release's migrations without migrating it", async () => {
     await seedDatabase((db) => {
-      db.exec(
+      db.run(
         "ALTER TABLE learning_entries RENAME COLUMN observation TO mistake",
       );
-      db.exec(
+      db.run(
         "DELETE FROM schema_migrations WHERE id = '003_rename_mistake_to_observation'",
       );
     });
@@ -1267,7 +1267,7 @@ describe("existing-only connection seam", () => {
 
     await expect(
       withExistingDatabase(databasePath(), "read-only", (db) => {
-        db.exec("CREATE TABLE doctor_probe (x TEXT)");
+        db.run("CREATE TABLE doctor_probe (x TEXT)");
       }),
     ).rejects.toThrow(/readonly|read-only/i);
   });
@@ -1417,7 +1417,7 @@ describe("createDoctorDatabaseBackup storage contract", () => {
     await seedDatabase();
     const writer = new Database(databasePath());
     try {
-      writer.exec("PRAGMA journal_mode = WAL");
+      writer.run("PRAGMA journal_mode = WAL");
       const insertEntry = writer.prepare(
         "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       );
@@ -2791,7 +2791,7 @@ async function seedFreePages(): Promise<void> {
     for (let index = 0; index < 100; index += 1) {
       insert.run("mistake", "vacuum", "x".repeat(800), index, null);
     }
-    db.exec("DELETE FROM learning_entries WHERE id > 50");
+    db.run("DELETE FROM learning_entries WHERE id > 50");
   });
 }
 
@@ -2828,11 +2828,11 @@ describe("runVacuum", () => {
     await seedDatabase();
     const locker = new Database(databasePath());
     try {
-      locker.exec("BEGIN IMMEDIATE");
+      locker.run("BEGIN IMMEDIATE");
 
       await expect(runVacuum(databasePath())).rejects.toThrow(/locked|busy/i);
     } finally {
-      locker.exec("ROLLBACK");
+      locker.run("ROLLBACK");
       locker.close();
     }
     expect(readFreelistCount()).toBe(0);

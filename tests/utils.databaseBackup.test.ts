@@ -281,7 +281,7 @@ describe("createDatabaseBackup — real SQLite and filesystem", () => {
 
   test("opens independently without source WAL or SHM files and includes committed records", async () => {
     const source = openSourceHandle();
-    source.database.exec("PRAGMA journal_mode = WAL");
+    source.database.run("PRAGMA journal_mode = WAL");
     insertLearning(source.database, "wal entry");
     source.database
       .prepare(
@@ -329,12 +329,12 @@ describe("createDatabaseBackup — real SQLite and filesystem", () => {
 
   test("succeeds during concurrent WAL writer transaction without blocking", async () => {
     const source = openSourceHandle();
-    source.database.exec("PRAGMA journal_mode = WAL");
+    source.database.run("PRAGMA journal_mode = WAL");
     insertLearning(source.database, "committed entry");
 
     const writer = new Database(source.sourcePath);
     openHandles.push(writer);
-    writer.exec("BEGIN IMMEDIATE");
+    writer.run("BEGIN IMMEDIATE");
     insertLearning(writer, "uncommitted writer entry");
 
     try {
@@ -358,18 +358,18 @@ describe("createDatabaseBackup — real SQLite and filesystem", () => {
         backup.close();
       }
     } finally {
-      writer.exec("ROLLBACK");
+      writer.run("ROLLBACK");
     }
   });
 
   test("succeeds during concurrent WAL pinned reader without blocking", async () => {
     const source = openSourceHandle();
-    source.database.exec("PRAGMA journal_mode = WAL");
+    source.database.run("PRAGMA journal_mode = WAL");
     insertLearning(source.database, "initial entry");
 
     const reader = new Database(source.sourcePath, { readonly: true });
     openHandles.push(reader);
-    reader.exec("BEGIN");
+    reader.run("BEGIN");
     reader.query("SELECT COUNT(*) FROM learning_entries").get();
 
     insertLearning(source.database, "post-reader entry");
@@ -388,22 +388,22 @@ describe("createDatabaseBackup — real SQLite and filesystem", () => {
         backup.close();
       }
     } finally {
-      reader.exec("ROLLBACK");
+      reader.run("ROLLBACK");
     }
   });
 
   test("rejects visibly and cleans up owned output under genuine database contention", async () => {
     const source = openSourceHandle();
     // DELETE journal mode: BEGIN EXCLUSIVE locks out any reader from opening
-    source.database.exec("PRAGMA journal_mode = DELETE");
+    source.database.run("PRAGMA journal_mode = DELETE");
     const exclusive = new Database(source.sourcePath);
     openHandles.push(exclusive);
-    exclusive.exec("BEGIN EXCLUSIVE");
+    exclusive.run("BEGIN EXCLUSIVE");
 
     try {
       await expect(backUp(source.sourcePath)).rejects.toThrow();
     } finally {
-      exclusive.exec("ROLLBACK");
+      exclusive.run("ROLLBACK");
     }
 
     expect(

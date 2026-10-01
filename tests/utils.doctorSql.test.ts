@@ -42,15 +42,15 @@ const { databasePath, seedDatabase } = createDoctorFixtures(
 describe("openExistingDatabase pragma failure", () => {
   test("closes the fresh handle and rethrows when post-open setup fails", async () => {
     await seedDatabase();
-    const realExec = Database.prototype.exec;
-    spyOn(Database.prototype, "exec").mockImplementation(function (
+    const realRun = Database.prototype.run;
+    spyOn(Database.prototype, "run").mockImplementation(function (
       this: Database,
-      ...args: Parameters<Database["exec"]>
+      ...args: Parameters<Database["run"]>
     ) {
       if (args[0] === "PRAGMA foreign_keys = ON") {
         throw new Error("pragma setup rejected");
       }
-      return realExec.apply(this, args);
+      return realRun.apply(this, args);
     });
     const closeSpy = spyOn(Database.prototype, "close");
 
@@ -66,7 +66,7 @@ describe("openExistingDatabase pragma failure", () => {
 describe("runDiagnose section independence", () => {
   test("keeps healthy sections available when one section query fails", async () => {
     await seedDatabase((db) => {
-      db.exec("DROP TABLE legacy_imports");
+      db.run("DROP TABLE legacy_imports");
     });
 
     const payload = await runDiagnose(databasePath());

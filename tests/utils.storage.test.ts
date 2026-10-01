@@ -900,8 +900,8 @@ describe("executeDestructivePrune", () => {
     withDatabase(() => undefined);
     const direct = new Database(getDatabasePath(), { create: true });
     try {
-      direct.exec("PRAGMA foreign_keys = ON");
-      direct.exec("PRAGMA journal_mode = WAL");
+      direct.run("PRAGMA foreign_keys = ON");
+      direct.run("PRAGMA journal_mode = WAL");
       insertLearningRowsInto(direct, [
         { category: "wal", observation: "wal old", timestamp: 50 * DAY_MS },
       ]);
@@ -1012,7 +1012,7 @@ describe("executeDestructivePrune", () => {
         timestamp: 50 * DAY_MS,
       },
     ]);
-    getVibeDatabase().db.exec(
+    getVibeDatabase().db.run(
       "CREATE TRIGGER block_learning_delete BEFORE DELETE ON learning_entries BEGIN SELECT RAISE(ABORT, 'learning delete blocked'); END",
     );
 
