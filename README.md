@@ -201,16 +201,17 @@ vibe doctor --vacuum --purge-backups --keep-backups 3 --yes
 - `--purge-backups`: delete retired managed backups beyond retention.
 - `--purge-legacy`: delete recorded legacy `.bak` copies.
 - `--keep-backups <n>`: retained backup count; defaults to five.
-- `-y, --yes`: confirm applying explicit targets.
+- `-y, --yes`: apply selected targets (all without target flags) after
+  one safety backup.
 
-Maintenance applies only when explicit targets accompany `--yes`. One
+Maintenance applies only with `--yes` (bare `--yes` applies every target). One
 safety backup precedes every apply and lands at `backupPath`.
 
 - Findings (`integrityCheck`, `foreignKeyCheck`, `freelistCount`,
   `excessBackups`, `latestBackupPath`, `legacyBackups`,
   `strandedOriginals`) keep pre-application values.
-- With `--purge-backups`, `excessBackups` counts the pending safety
-  backup, predicting the purge.
+- When `targets` include `purgeBackups`, even without `--yes`,
+  `excessBackups` counts the pending safety backup, predicting the purge.
 - `appliedCounts` reports actual results: reclaimed free pages for
   `vacuum`, deleted files for each purge.
 - `skippedTargets` lists unselected targets; `failedTargets` entries

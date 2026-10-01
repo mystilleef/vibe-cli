@@ -73,8 +73,10 @@
   Provider names select settings entries; protocol specs select adapters.
 - `OpenAI`-compatible, `Anthropic`, and `Gemini` adapters translate
   authentication, thinking settings, and response shapes beneath review
-  logic. Preserve custom-endpoint routing when changing transport code;
-  do not move protocol-specific payloads into gate orchestration.
+  logic. Gemini SDK and custom-endpoint transports share payload
+  builders in `utils/provider.ts`. Preserve custom-endpoint routing when
+  changing transport code; do not move protocol-specific payloads into
+  gate orchestration.
 
 ## Destructive-data boundary
 
@@ -89,8 +91,9 @@
 - Doctor preserves pre-apply findings separately from applied counts.
   Unavailable diagnostics produce null findings and failures; unhealthy
   or incomplete preflight blocks backup and maintenance. Successful
-  preflight plus explicit confirmation and targets permits one backup
-  before apply; later target failures do not stop unrelated targets.
+  preflight plus confirmation permits one backup before applying
+  selected targets, or every target when none are selected; later
+  target failures do not stop unrelated targets.
 - Prune and doctor share `utils/databaseBackup.ts` and
   `utils/databaseSnapshot.ts`: a read-only child snapshots SQLite into
   private staging, then exclusive hard-link publication prevents backup
@@ -117,8 +120,9 @@
   rollback. Guide installation replaces drifted content; settings
   installation preserves existing content without explicit replacement.
 - Guide and settings installers share `utils/validation.ts` path checks
-  and temporary-sibling atomic writes. Do not assume skill-tree copying
-  shares that atomicity or overwrite policy.
+  and temporary-sibling atomic writes. All three installers resolve
+  dry-run action pairs via `utils/validation.ts`. Do not assume
+  skill-tree copying shares that atomicity or overwrite policy.
 
 ## Evidence and uncertainty
 
