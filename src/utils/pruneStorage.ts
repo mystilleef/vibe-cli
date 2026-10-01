@@ -522,7 +522,7 @@ function deleteRowsById<T extends number | string>(
   if (deduped.length === 0) return 0;
 
   return withDatabase((db) => {
-    const remove = db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+    const remove = db.query(`DELETE FROM ${table} WHERE id = ?`);
     const removeRows = db.transaction(
       (rowIds: readonly T[]) =>
         rowIds.filter((id) => remove.run(id).changes > 0).length,

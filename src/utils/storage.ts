@@ -46,7 +46,7 @@ export function addLearningEntry(
   const now = Date.now();
   withDatabase((db) =>
     db
-      .prepare(
+      .query(
         "INSERT INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(type, category, observation, solution ?? null, now, demoId ?? null),
@@ -121,7 +121,7 @@ export function getLearningCategorySummary(): LearningCategorySummary[] {
  */
 export function removeLearningEntriesForDemo(demoId: string): void {
   withDatabase((db) =>
-    db.prepare("DELETE FROM learning_entries WHERE demo_id = ?").run(demoId),
+    db.query("DELETE FROM learning_entries WHERE demo_id = ?").run(demoId),
   );
 }
 
@@ -133,7 +133,7 @@ export function removeLearningEntriesForDemo(demoId: string): void {
  */
 export function removeStaleDemoEntries(): void {
   withDatabase((db) =>
-    db.prepare("DELETE FROM learning_entries WHERE demo_id IS NOT NULL").run(),
+    db.query("DELETE FROM learning_entries WHERE demo_id IS NOT NULL").run(),
   );
 }
 

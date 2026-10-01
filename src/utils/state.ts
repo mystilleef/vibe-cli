@@ -10,7 +10,7 @@ interface InteractionRow {
 }
 
 function pruneSession(db: Database, sessionId: string): void {
-  db.prepare(
+  db.query(
     `DELETE FROM interactions
      WHERE session_id = ?
        AND id NOT IN (
@@ -70,7 +70,7 @@ export async function addToHistory(
           cwdKey: `history:${getCwdKey(sessionId)}`,
           createdAt: new Date().toISOString(),
         });
-        db.prepare(
+        db.query(
           "INSERT INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
         ).run(sessionId, input.goal, output, Date.now());
         pruneSession(db, sessionId);

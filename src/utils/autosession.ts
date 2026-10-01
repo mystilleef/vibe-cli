@@ -85,17 +85,17 @@ export function resolveAutosession(cwd = process.cwd()): AutosessionRecord {
           const record = toRecord(existing);
           if (!isExpired(record, now.getTime())) {
             const touched = { ...record, lastAccessedAt: now.toISOString() };
-            db.prepare(
+            db.query(
               "UPDATE sessions SET last_accessed_at = ? WHERE cwd_key = ?",
             ).run(touched.lastAccessedAt, cwdKey);
             return touched;
           }
 
-          db.prepare("DELETE FROM sessions WHERE cwd_key = ?").run(cwdKey);
+          db.query("DELETE FROM sessions WHERE cwd_key = ?").run(cwdKey);
         }
 
         const record = createRecord(now, cwd);
-        db.prepare(
+        db.query(
           "INSERT INTO sessions (id, cwd_key, cwd, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)",
         ).run(
           record.id,

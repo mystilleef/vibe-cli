@@ -32,10 +32,10 @@ function replaceSessionRules(sessionId: string, rules: string[]): void {
   withDatabase((db) =>
     db
       .transaction(() => {
-        db.prepare("DELETE FROM constitution_rules WHERE session_id = ?").run(
+        db.query("DELETE FROM constitution_rules WHERE session_id = ?").run(
           sessionId,
         );
-        const insert = db.prepare(
+        const insert = db.query(
           "INSERT INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
         );
         const timestamp = new Date().toISOString();

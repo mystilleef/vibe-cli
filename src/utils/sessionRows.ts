@@ -21,7 +21,7 @@ export interface SessionAnchor {
  */
 export function ensureSessionRow(db: Database, anchor: SessionAnchor): void {
   const { id, cwdKey, createdAt, lastAccessedAt = createdAt } = anchor;
-  db.prepare(
+  db.query(
     "INSERT OR IGNORE INTO sessions (id, cwd_key, created_at, last_accessed_at) VALUES (?, ?, ?, ?)",
   ).run(id, cwdKey, createdAt, lastAccessedAt);
 }

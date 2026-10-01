@@ -208,7 +208,7 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
 
   const appliedAt = ranAt ?? new Date().toISOString();
   const pending: string[] = [];
-  const insertMigration = db.prepare(
+  const insertMigration = db.query(
     "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
   );
 

@@ -123,7 +123,7 @@ function importLegacyLearningEntries(db: Database): void {
     artifact: LEGACY_LEARNING_LOG,
     parse: extractLearningEntries,
     apply: (entries) => {
-      const insert = db.prepare(
+      const insert = db.query(
         "INSERT OR IGNORE INTO learning_entries (type, category, observation, solution, timestamp, demo_id) VALUES (?, ?, ?, ?, ?, ?)",
       );
       for (const entry of entries) {
@@ -149,7 +149,7 @@ function importLegacyConstitutionRules(db: Database): void {
     parse: parseStringArrayRecord,
     apply: (rulesBySession) => {
       const now = new Date().toISOString();
-      const insertRule = db.prepare(
+      const insertRule = db.query(
         "INSERT OR IGNORE INTO constitution_rules (session_id, rule, position, created_at) VALUES (?, ?, ?, ?)",
       );
       for (const [sessionId, rules] of Object.entries(rulesBySession)) {
@@ -175,7 +175,7 @@ function importLegacyInteractions(db: Database): void {
     parse: parseInteractionRecord,
     apply: (interactionsBySession) => {
       const now = new Date().toISOString();
-      const insertInteraction = db.prepare(
+      const insertInteraction = db.query(
         "INSERT OR IGNORE INTO interactions (session_id, goal, output, timestamp) VALUES (?, ?, ?, ?)",
       );
       for (const [sessionId, interactions] of Object.entries(
@@ -217,7 +217,7 @@ function markImportComplete(
   artifact: string,
   backupPath: string,
 ): void {
-  db.prepare(
+  db.query(
     "INSERT OR IGNORE INTO legacy_imports (artifact, imported_at, backup_path) VALUES (?, ?, ?)",
   ).run(artifact, new Date().toISOString(), backupPath);
 }
