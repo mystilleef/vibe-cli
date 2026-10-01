@@ -5,7 +5,7 @@ import { callProvider, resolveProviderAndModel } from "./provider.js";
 import { loadProviderSettings, resolveProviderEntry } from "./settings.js";
 import { getLearningContextText } from "./storage.js";
 
-export { callProvider, type GateDecision, parseGateDecision };
+export { callProvider, parseGateDecision };
 
 /** System prompt injected into every mentor feedback generation call. */
 const SYSTEM_PROMPT = `Mentor for AI agents. Job: surface the one finding that most changes what the agent does next.
@@ -234,7 +234,7 @@ export async function verifyConnection(opts?: {
       ok: false,
       provider: providerName,
       model: modelName || "(default)",
-      error: err instanceof Error ? err.message : String(err),
+      error: extractErrorMessage(err),
     };
   }
 }
