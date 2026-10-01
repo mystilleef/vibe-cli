@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,5 +101,14 @@ describe("openVibeDatabase WAL conversion", () => {
     const closeSpy = spyOn(Database.prototype, "close");
     expect(() => openVibeDatabase({ path })).toThrow();
     expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("checkpoints and removes the WAL on close after schema setup", async () => {
+    // A statement left unfinalized defers the real close to GC, where its
+    // checkpoint races other connections for the database lock.
+    const path = await tempPath("close-releases");
+    openVibeDatabase({ path }).close();
+
+    expect(existsSync(`${path}-wal`)).toBe(false);
   });
 });
