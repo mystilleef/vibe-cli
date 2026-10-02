@@ -25,6 +25,7 @@ import {
   createDoctorFixtures,
   managedBackupName,
 } from "./helpers/doctorFixtures.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 const repoRoot = join(import.meta.dir, "..");
@@ -561,40 +562,43 @@ describe("doctor apply", () => {
     expect(result.stdout).toContain("Failures\n--------\npurgeLegacy: ");
   });
 
-  test("exits one with backupPath null and zero applied counts when backup creation fails", async () => {
-    await seedMaintenanceFixture();
-    const rowsBefore = readRows();
-    const backupsDir = join(home.dataRoot, "backups");
-    await chmod(backupsDir, 0o555);
+  test.skipIf(!canEnforcePermissions)(
+    "exits one with backupPath null and zero applied counts when backup creation fails",
+    async () => {
+      await seedMaintenanceFixture();
+      const rowsBefore = readRows();
+      const backupsDir = join(home.dataRoot, "backups");
+      await chmod(backupsDir, 0o555);
 
-    try {
-      const result = await runDoctor(
-        "--vacuum",
-        "--purge-legacy",
-        "--yes",
-        "--json",
-      );
+      try {
+        const result = await runDoctor(
+          "--vacuum",
+          "--purge-legacy",
+          "--yes",
+          "--json",
+        );
 
-      expect(result.exitCode).toBe(1);
-      const payload = parsePayload(result);
-      expect(payload.backupPath).toBeNull();
-      expect(payload.appliedCounts).toEqual({
-        vacuum: 0,
-        purgeBackups: 0,
-        purgeLegacy: 0,
-      });
-      expect(payload.failedTargets).toEqual([
-        {
-          target: "backup",
-          message: expect.stringMatching(/permission denied|EACCES/),
-        },
-      ]);
-      expect(readRows()).toEqual(rowsBefore);
-      expect(existsSync(join(home.dataRoot, "vibe-log.json.bak"))).toBe(true);
-    } finally {
-      await chmod(backupsDir, 0o755);
-    }
-  });
+        expect(result.exitCode).toBe(1);
+        const payload = parsePayload(result);
+        expect(payload.backupPath).toBeNull();
+        expect(payload.appliedCounts).toEqual({
+          vacuum: 0,
+          purgeBackups: 0,
+          purgeLegacy: 0,
+        });
+        expect(payload.failedTargets).toEqual([
+          {
+            target: "backup",
+            message: expect.stringMatching(/permission denied|EACCES/),
+          },
+        ]);
+        expect(readRows()).toEqual(rowsBefore);
+        expect(existsSync(join(home.dataRoot, "vibe-log.json.bak"))).toBe(true);
+      } finally {
+        await chmod(backupsDir, 0o755);
+      }
+    },
+  );
 });
 
 // ── Process boundary ──────────────────────────────────────────────────────

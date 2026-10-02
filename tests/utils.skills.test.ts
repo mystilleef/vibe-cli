@@ -14,6 +14,7 @@ import {
   SkillTargetError,
 } from "../src/utils/skills.js";
 import { runChild } from "./helpers/childProcess.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
   cleanupTempDirs,
   createPackageRoot,
@@ -213,42 +214,48 @@ describe("discoverBundledSkills", () => {
     );
   });
 
-  test("throws SkillSourceError when skills/ directory is unreadable", async () => {
-    const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
+  test.skipIf(!canEnforcePermissions)(
+    "throws SkillSourceError when skills/ directory is unreadable",
+    async () => {
+      const root = await createPackageRoot(tempDirs);
+      const skillsDir = join(root, "skills");
+      await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
-    try {
-      await chmod(skillsDir, 0o000);
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        SkillSourceError,
-      );
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        /Failed to read skills directory/i,
-      );
-    } finally {
-      await chmod(skillsDir, 0o755);
-    }
-  });
+      try {
+        await chmod(skillsDir, 0o000);
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          SkillSourceError,
+        );
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          /Failed to read skills directory/i,
+        );
+      } finally {
+        await chmod(skillsDir, 0o755);
+      }
+    },
+  );
 
-  test("throws SkillSourceError when source skill file is unreadable", async () => {
-    const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    await createSkillDir(skillsDir, "skill-a", {
-      "SKILL.md": "# A",
-      "secret.txt": "secret",
-    });
-    const secret = join(skillsDir, "skill-a", "secret.txt");
+  test.skipIf(!canEnforcePermissions)(
+    "throws SkillSourceError when source skill file is unreadable",
+    async () => {
+      const root = await createPackageRoot(tempDirs);
+      const skillsDir = join(root, "skills");
+      await createSkillDir(skillsDir, "skill-a", {
+        "SKILL.md": "# A",
+        "secret.txt": "secret",
+      });
+      const secret = join(skillsDir, "skill-a", "secret.txt");
 
-    try {
-      await chmod(secret, 0o000);
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        SkillSourceError,
-      );
-    } finally {
-      await chmod(secret, 0o644);
-    }
-  });
+      try {
+        await chmod(secret, 0o000);
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          SkillSourceError,
+        );
+      } finally {
+        await chmod(secret, 0o644);
+      }
+    },
+  );
 
   test("throws SkillSourceError when SKILL.md is not a regular file", async () => {
     const root = await createPackageRoot(tempDirs);
@@ -533,28 +540,31 @@ describe("readSkillTarget", () => {
     expect(() => readSkillTarget("skill-a", targetRoot)).toThrow("symlink");
   });
 
-  test("throws SkillTargetError for unreadable target file", async () => {
-    const targetRoot = await createTempDir(tempDirs);
-    const skillDir = join(targetRoot, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    await writeFile(join(skillDir, "secret.txt"), "secret");
+  test.skipIf(!canEnforcePermissions)(
+    "throws SkillTargetError for unreadable target file",
+    async () => {
+      const targetRoot = await createTempDir(tempDirs);
+      const skillDir = join(targetRoot, "skill-a");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, "SKILL.md"), "# A");
+      await writeFile(join(skillDir, "secret.txt"), "secret");
 
-    // Make file unreadable (if possible on this platform)
-    try {
-      await import("node:fs").then((fs) =>
-        fs.chmodSync(join(skillDir, "secret.txt"), 0o000),
-      );
-      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
-        SkillTargetError,
-      );
-    } finally {
-      // Restore permissions for cleanup
-      await import("node:fs").then((fs) =>
-        fs.chmodSync(join(skillDir, "secret.txt"), 0o644),
-      );
-    }
-  });
+      // Make file unreadable (if possible on this platform)
+      try {
+        await import("node:fs").then((fs) =>
+          fs.chmodSync(join(skillDir, "secret.txt"), 0o000),
+        );
+        expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+          SkillTargetError,
+        );
+      } finally {
+        // Restore permissions for cleanup
+        await import("node:fs").then((fs) =>
+          fs.chmodSync(join(skillDir, "secret.txt"), 0o644),
+        );
+      }
+    },
+  );
 });
 
 describe("computeSkillsInventory", () => {
@@ -1236,51 +1246,57 @@ describe("walkSkillDirectory — file read failure", () => {
     }
   });
 
-  test("throws SkillSourceError when a file becomes unreadable after lstat succeeds", async () => {
-    const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    await createSkillDir(skillsDir, "skill-a", {
-      "SKILL.md": "# A",
-      "broken.txt": "should be unreadable",
-    });
+  test.skipIf(!canEnforcePermissions)(
+    "throws SkillSourceError when a file becomes unreadable after lstat succeeds",
+    async () => {
+      const root = await createPackageRoot(tempDirs);
+      const skillsDir = join(root, "skills");
+      await createSkillDir(skillsDir, "skill-a", {
+        "SKILL.md": "# A",
+        "broken.txt": "should be unreadable",
+      });
 
-    const brokenPath = join(skillsDir, "skill-a", "broken.txt");
-    try {
-      // Remove read permission so readFileSync fails (hashFile → throw).
-      await chmod(brokenPath, 0o000);
+      const brokenPath = join(skillsDir, "skill-a", "broken.txt");
+      try {
+        // Remove read permission so readFileSync fails (hashFile → throw).
+        await chmod(brokenPath, 0o000);
 
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        SkillSourceError,
-      );
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        /Failed to read file/i,
-      );
-    } finally {
-      await chmod(brokenPath, 0o644);
-    }
-  });
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          SkillSourceError,
+        );
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          /Failed to read file/i,
+        );
+      } finally {
+        await chmod(brokenPath, 0o644);
+      }
+    },
+  );
 
-  test("throws SkillTargetError when a target file becomes unreadable after lstat succeeds", async () => {
-    const targetRoot = await createTempDir(tempDirs);
-    const skillDir = join(targetRoot, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    await writeFile(join(skillDir, "secret.txt"), "sensitive");
+  test.skipIf(!canEnforcePermissions)(
+    "throws SkillTargetError when a target file becomes unreadable after lstat succeeds",
+    async () => {
+      const targetRoot = await createTempDir(tempDirs);
+      const skillDir = join(targetRoot, "skill-a");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, "SKILL.md"), "# A");
+      await writeFile(join(skillDir, "secret.txt"), "sensitive");
 
-    const brokenPath = join(skillDir, "secret.txt");
-    try {
-      await chmod(brokenPath, 0o000);
+      const brokenPath = join(skillDir, "secret.txt");
+      try {
+        await chmod(brokenPath, 0o000);
 
-      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
-        SkillTargetError,
-      );
-      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
-        /Failed to read file/i,
-      );
-    } finally {
-      await chmod(brokenPath, 0o644);
-    }
-  });
+        expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+          SkillTargetError,
+        );
+        expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+          /Failed to read file/i,
+        );
+      } finally {
+        await chmod(brokenPath, 0o644);
+      }
+    },
+  );
 });
 
 describe("walkSkillDirectory — non-regular file type", () => {

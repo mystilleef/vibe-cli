@@ -14,6 +14,7 @@ import {
   mockSettings,
   writeSettings as writeSettingsShared,
 } from "./helpers/mockSettings.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 let tempHome: TempHomeContext;
@@ -186,18 +187,23 @@ describe("loadProviderSettings", () => {
     );
   });
 
-  test("rethrows non-SyntaxError file read errors", async () => {
-    const settingsPath = join(tempHome.dataRoot, "settings.json");
-    await mkdir(tempHome.dataRoot, { recursive: true });
-    await writeFile(settingsPath, "{}", { mode: 0o644 });
-    await chmod(settingsPath, 0o000);
+  test.skipIf(!canEnforcePermissions)(
+    "rethrows non-SyntaxError file read errors",
+    async () => {
+      const settingsPath = join(tempHome.dataRoot, "settings.json");
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      await writeFile(settingsPath, "{}", { mode: 0o644 });
+      await chmod(settingsPath, 0o000);
 
-    try {
-      expect(() => loadProviderSettings()).toThrow(/EACCES|Permission denied/);
-    } finally {
-      await chmod(settingsPath, 0o644);
-    }
-  });
+      try {
+        expect(() => loadProviderSettings()).toThrow(
+          /EACCES|Permission denied/,
+        );
+      } finally {
+        await chmod(settingsPath, 0o644);
+      }
+    },
+  );
 
   test("fails when top-level provider is missing", async () => {
     await writeSettings(validSettings({ provider: undefined }));
