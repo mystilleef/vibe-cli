@@ -16,6 +16,7 @@ import {
   InstallValidationError,
   installSkills,
 } from "../src/tools/skillsInstaller.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
   createPackageRoot,
   createSkillDir,
@@ -746,34 +747,37 @@ describe("installSkills - missing package root", () => {
 });
 
 describe("installSkills — validateTargetParent edge cases", () => {
-  test("rejects when target parent has no write access", async () => {
-    const packageRoot = await createPackageRoot(tempDirs);
-    // Create a parent directory that is read-only
-    const base = await createTempDir(tempDirs);
-    const parentDir = join(base, "readonly-parent");
-    await mkdir(parentDir);
-    const targetRoot = join(parentDir, "skills");
-    await chmod(parentDir, 0o555);
+  test.skipIf(!canEnforcePermissions)(
+    "rejects when target parent has no write access",
+    async () => {
+      const packageRoot = await createPackageRoot(tempDirs);
+      // Create a parent directory that is read-only
+      const base = await createTempDir(tempDirs);
+      const parentDir = join(base, "readonly-parent");
+      await mkdir(parentDir);
+      const targetRoot = join(parentDir, "skills");
+      await chmod(parentDir, 0o555);
 
-    try {
-      await expect(
-        installSkills(targetRoot, {
-          dryRun: false,
-          force: false,
-          packageRoot,
-        }),
-      ).rejects.toThrow(InstallValidationError);
-      await expect(
-        installSkills(targetRoot, {
-          dryRun: false,
-          force: false,
-          packageRoot,
-        }),
-      ).rejects.toThrow(/No write access/);
-    } finally {
-      await chmod(parentDir, 0o755);
-    }
-  });
+      try {
+        await expect(
+          installSkills(targetRoot, {
+            dryRun: false,
+            force: false,
+            packageRoot,
+          }),
+        ).rejects.toThrow(InstallValidationError);
+        await expect(
+          installSkills(targetRoot, {
+            dryRun: false,
+            force: false,
+            packageRoot,
+          }),
+        ).rejects.toThrow(/No write access/);
+      } finally {
+        await chmod(parentDir, 0o755);
+      }
+    },
+  );
 
   test("surfaces generic computeSkillsInventory error as InstallError", async () => {
     const targetRoot = join(await createTempDir(tempDirs), "skills");
@@ -1516,25 +1520,28 @@ describe("installSkills - SKILL.md not a regular file", () => {
 });
 
 describe("installSkills - source skill readdir failure", () => {
-  test("rejects when skills directory cannot be read", async () => {
-    const packageRoot = await createPackageRoot(tempDirs);
-    const skillsDir = join(packageRoot, "skills");
-    await createSkillDir(skillsDir, "my-skill", { "SKILL.md": "# My Skill" });
-    // Remove read permission from skills directory
-    await chmod(skillsDir, 0o222);
+  test.skipIf(!canEnforcePermissions)(
+    "rejects when skills directory cannot be read",
+    async () => {
+      const packageRoot = await createPackageRoot(tempDirs);
+      const skillsDir = join(packageRoot, "skills");
+      await createSkillDir(skillsDir, "my-skill", { "SKILL.md": "# My Skill" });
+      // Remove read permission from skills directory
+      await chmod(skillsDir, 0o222);
 
-    const targetRoot = await createTempDir(tempDirs);
+      const targetRoot = await createTempDir(tempDirs);
 
-    try {
-      await expect(
-        installSkills(targetRoot, {
-          dryRun: false,
-          force: false,
-          packageRoot,
-        }),
-      ).rejects.toThrow(InstallError);
-    } finally {
-      await chmod(skillsDir, 0o755);
-    }
-  });
+      try {
+        await expect(
+          installSkills(targetRoot, {
+            dryRun: false,
+            force: false,
+            packageRoot,
+          }),
+        ).rejects.toThrow(InstallError);
+      } finally {
+        await chmod(skillsDir, 0o755);
+      }
+    },
+  );
 });

@@ -58,10 +58,8 @@ import {
   createDoctorFixtures,
   managedBackupName,
 } from "./helpers/doctorFixtures.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
-
-const canEnforcePermissions =
-  process.platform !== "win32" && process.getuid?.() !== 0;
 
 let home: TempHomeContext;
 

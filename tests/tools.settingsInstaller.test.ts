@@ -133,6 +133,7 @@ import {
   SettingsInstallError,
   SettingsInstallValidationError,
 } from "../src/tools/settingsInstaller.js";
+import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
   cleanupTempDirs,
   createTempDir,
@@ -875,38 +876,44 @@ describe("installSettings - invalid target failures", () => {
     ).rejects.toThrow(SettingsInstallValidationError);
   });
 
-  test("rejects unwritable target root", async () => {
-    const packageRoot = await createSettingsPackageRoot(tempDirs);
-    const targetDir = await createTempDir(tempDirs);
-    await chmod(targetDir, 0o444);
+  test.skipIf(!canEnforcePermissions)(
+    "rejects unwritable target root",
+    async () => {
+      const packageRoot = await createSettingsPackageRoot(tempDirs);
+      const targetDir = await createTempDir(tempDirs);
+      await chmod(targetDir, 0o444);
 
-    await expect(
-      installSettings(targetDir, {
-        dryRun: false,
-        sourceAnchor: packageRoot,
-      }),
-    ).rejects.toThrow(SettingsInstallValidationError);
+      await expect(
+        installSettings(targetDir, {
+          dryRun: false,
+          sourceAnchor: packageRoot,
+        }),
+      ).rejects.toThrow(SettingsInstallValidationError);
 
-    // Restore permissions for cleanup
-    await chmod(targetDir, 0o755);
-  });
+      // Restore permissions for cleanup
+      await chmod(targetDir, 0o755);
+    },
+  );
 
-  test("rejects unwritable parent when target root absent", async () => {
-    const packageRoot = await createSettingsPackageRoot(tempDirs);
-    const base = await createTempDir(tempDirs);
-    await chmod(base, 0o444);
-    const absentTarget = join(base, "new-root");
+  test.skipIf(!canEnforcePermissions)(
+    "rejects unwritable parent when target root absent",
+    async () => {
+      const packageRoot = await createSettingsPackageRoot(tempDirs);
+      const base = await createTempDir(tempDirs);
+      await chmod(base, 0o444);
+      const absentTarget = join(base, "new-root");
 
-    await expect(
-      installSettings(absentTarget, {
-        dryRun: false,
-        sourceAnchor: packageRoot,
-      }),
-    ).rejects.toThrow(SettingsInstallValidationError);
+      await expect(
+        installSettings(absentTarget, {
+          dryRun: false,
+          sourceAnchor: packageRoot,
+        }),
+      ).rejects.toThrow(SettingsInstallValidationError);
 
-    // Restore permissions for cleanup
-    await chmod(base, 0o755);
-  });
+      // Restore permissions for cleanup
+      await chmod(base, 0o755);
+    },
+  );
 });
 
 describe("installSettings - source validation failures", () => {
@@ -1292,29 +1299,32 @@ describe("installSettings - ENOTDIR on target path", () => {
 });
 
 describe("installSettings - resolveSourcePath non-ENOENT lstat error", () => {
-  test("rejects source when parent directory is inaccessible", async () => {
-    const packageRoot = await createSettingsPackageRoot(tempDirs);
-    // Remove execute permission from package root to cause lstatSync to fail with EACCES
-    await chmod(packageRoot, 0o666);
-    const targetDir = await createTempDir(tempDirs);
+  test.skipIf(!canEnforcePermissions)(
+    "rejects source when parent directory is inaccessible",
+    async () => {
+      const packageRoot = await createSettingsPackageRoot(tempDirs);
+      // Remove execute permission from package root to cause lstatSync to fail with EACCES
+      await chmod(packageRoot, 0o666);
+      const targetDir = await createTempDir(tempDirs);
 
-    try {
-      await expect(
-        installSettings(targetDir, {
-          dryRun: false,
-          sourceAnchor: packageRoot,
-        }),
-      ).rejects.toThrow(SettingsInstallError);
-      await expect(
-        installSettings(targetDir, {
-          dryRun: false,
-          sourceAnchor: packageRoot,
-        }),
-      ).rejects.toThrow(/Settings source inaccessible/);
-    } finally {
-      await chmod(packageRoot, 0o755);
-    }
-  });
+      try {
+        await expect(
+          installSettings(targetDir, {
+            dryRun: false,
+            sourceAnchor: packageRoot,
+          }),
+        ).rejects.toThrow(SettingsInstallError);
+        await expect(
+          installSettings(targetDir, {
+            dryRun: false,
+            sourceAnchor: packageRoot,
+          }),
+        ).rejects.toThrow(/Settings source inaccessible/);
+      } finally {
+        await chmod(packageRoot, 0o755);
+      }
+    },
+  );
 });
 
 describe("installSettings - readAndValidateSource non-SyntaxError parse", () => {
