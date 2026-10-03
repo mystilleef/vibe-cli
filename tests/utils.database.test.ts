@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  applyBusyTimeout,
   DATABASE_FILENAME,
   getDatabasePath,
   getMigrationIds,
@@ -12,6 +13,7 @@ import {
   openVibeDatabase,
   openVibeDatabaseWithMigrationReport,
   readAppliedMigrationIds,
+  SQLITE_BUSY_TIMEOUT_DISABLED,
   type VibeDatabase,
   withDatabase,
 } from "../src/utils/database";
@@ -378,6 +380,19 @@ describe("openVibeDatabase", () => {
       journal_mode: string;
     };
     expect(journalMode.journal_mode).toBe("wal");
+  });
+
+  test("falls back to os.homedir() for the database path when HOME is unset", () => {
+    const previousHome = process.env["HOME"];
+    delete process.env["HOME"];
+    try {
+      expect(getDatabasePath()).toBe(
+        join(homedir(), ".vibe-cli", DATABASE_FILENAME),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = previousHome;
+    }
   });
 
   test("supports isolated file databases", async () => {
@@ -886,6 +901,37 @@ describe("getMigrationSql", () => {
   test("returns non-empty SQL for every known migration id", () => {
     for (const id of getMigrationIds()) {
       expect(getMigrationSql(id).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("applyBusyTimeout", () => {
+  test("applies a custom busy timeout to the connection", async () => {
+    const path = await tempDatabasePath("busy-custom");
+    const db = new Database(path, { create: true });
+    try {
+      applyBusyTimeout(db, 7890);
+      const row = db.query("PRAGMA busy_timeout").get() as {
+        timeout: number;
+      };
+      expect(row.timeout).toBe(7890);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("disables lock-contention waiting via SQLITE_BUSY_TIMEOUT_DISABLED", async () => {
+    expect(SQLITE_BUSY_TIMEOUT_DISABLED).toBe(0);
+    const path = await tempDatabasePath("busy-disabled");
+    const db = new Database(path, { create: true });
+    try {
+      applyBusyTimeout(db, SQLITE_BUSY_TIMEOUT_DISABLED);
+      const row = db.query("PRAGMA busy_timeout").get() as {
+        timeout: number;
+      };
+      expect(row.timeout).toBe(0);
+    } finally {
+      db.close();
     }
   });
 });

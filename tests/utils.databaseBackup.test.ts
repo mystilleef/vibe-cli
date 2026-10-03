@@ -16,6 +16,7 @@ import {
   type DatabaseBackupOptions,
   DOCTOR_BACKUP_PREFIX,
   formatBackupTimestampLabel,
+  inspectBackupsDirectory,
   PRUNE_BACKUP_PREFIX,
 } from "../src/utils/databaseBackup";
 import {
@@ -1992,5 +1993,65 @@ describe("createDatabaseBackup — isolated child failure ordering", () => {
     expect(child.killed()).toBe(true);
     expect(reapedExitStates).toEqual([true]);
     expect(cleanupExitStates).toEqual([true]);
+  });
+});
+
+describe("inspectBackupsDirectory", () => {
+  test("classifies a missing directory", async () => {
+    const dir = join(home.dataRoot, "backups");
+    await expect(inspectBackupsDirectory(dir)).resolves.toBe("missing");
+  });
+
+  test("classifies a symlink", async () => {
+    const target = join(home.dataRoot, "real-backups");
+    mkdirSync(target, { recursive: true });
+    const link = join(home.dataRoot, "backups-link");
+    symlinkSync(target, link);
+    await expect(inspectBackupsDirectory(link)).resolves.toBe("symlink");
+  });
+
+  test("classifies an existing directory", async () => {
+    const dir = join(home.dataRoot, "backups");
+    mkdirSync(dir, { recursive: true });
+    await expect(inspectBackupsDirectory(dir)).resolves.toBe("ok");
+  });
+
+  test("classifies a regular file", async () => {
+    mkdirSync(home.dataRoot, { recursive: true });
+    const file = join(home.dataRoot, "backups-file");
+    writeFileSync(file, "not a directory");
+    await expect(inspectBackupsDirectory(file)).resolves.toBe("not-directory");
+  });
+});
+
+describe("createDatabaseBackup — backup destination safety", () => {
+  test("rejects a symlinked backups directory without writing through it", async () => {
+    const source = openSourceHandle();
+    const backupsDir = join(home.dataRoot, "backups");
+    const target = join(home.dataRoot, "elsewhere");
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, backupsDir);
+
+    const error = await backUp(source.sourcePath).catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      `backup destination is a symlink: ${backupsDir}`,
+    );
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  test("rejects a regular-file backups directory without writing through it", async () => {
+    const source = openSourceHandle();
+    const backupsDir = join(home.dataRoot, "backups");
+    writeFileSync(backupsDir, "not a directory");
+
+    const error = await backUp(source.sourcePath).catch((e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      `backup destination is not a directory: ${backupsDir}`,
+    );
+    expect(readFileSync(backupsDir, "utf8")).toBe("not a directory");
   });
 });

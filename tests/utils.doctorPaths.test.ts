@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import {
   ARTIFACT_PATH_ROLE,
   BACKUP_PATH_ROLE,
+  checkContainedPath,
   isWithinRoot,
   verifyRecordedPath,
 } from "../src/utils/doctorPaths.js";
@@ -179,4 +180,30 @@ describe("verifyRecordedPath", () => {
       }
     },
   );
+});
+
+describe("checkContainedPath", () => {
+  test("reports missing when an intermediate component does not exist", async () => {
+    const path = join(home.dataRoot, "absent-dir", "leaf.json.bak");
+
+    await expect(checkContainedPath(path, home.dataRoot)).resolves.toEqual({
+      status: "missing",
+    });
+  });
+
+  test("treats the data root itself as safe containment", async () => {
+    await expect(
+      checkContainedPath(home.dataRoot, home.dataRoot),
+    ).resolves.toEqual({ status: "safe", isFile: false });
+  });
+
+  test("returns safe for a path outside the data root, deferring containment to callers", async () => {
+    const sibling = join(dirname(home.dataRoot), "outside");
+    mkdirSync(sibling, { recursive: true });
+
+    await expect(checkContainedPath(sibling, home.dataRoot)).resolves.toEqual({
+      status: "safe",
+      isFile: false,
+    });
+  });
 });

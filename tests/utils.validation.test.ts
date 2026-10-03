@@ -260,6 +260,7 @@ describe("validateDirectory - access failure", () => {
 
 import {
   atomicFileWrite,
+  ensureTargetDirectory,
   validateInstallerTarget,
 } from "../src/utils/validation.js";
 
@@ -555,5 +556,21 @@ describe("atomicFileWrite", () => {
       writeSpy.mockRestore();
       rmSpy.mockRestore();
     }
+  });
+});
+
+describe("ensureTargetDirectory", () => {
+  test("wraps mkdir failures in the caller error class", async () => {
+    const base = await createTempDir(vldDirs);
+    const fileParent = join(base, "not-a-dir");
+    await writeFile(fileParent, "file content");
+    const target = join(fileParent, "nested", "target");
+
+    await expect(ensureTargetDirectory(target, InstallerError)).rejects.toThrow(
+      InstallerError,
+    );
+    await expect(ensureTargetDirectory(target, InstallerError)).rejects.toThrow(
+      /Failed to create target/,
+    );
   });
 });

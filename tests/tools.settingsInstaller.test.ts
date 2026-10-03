@@ -6,6 +6,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -1443,5 +1444,79 @@ describe("installSettings - inspectDestination lstat error (non-ENOENT)", () => 
     } finally {
       failLstatSyncPath = null;
     }
+  });
+});
+
+describe("installSettings - source safety", () => {
+  test("rejects a symlinked settings source", async () => {
+    const packageRoot = await createSettingsPackageRoot(tempDirs);
+    const sourcePath = join(packageRoot, "settings.example.json");
+    await rm(sourcePath);
+    const realDir = await createTempDir(tempDirs);
+    const realSource = join(realDir, "real-settings.json");
+    await writeFile(realSource, "{}");
+    await symlink(realSource, sourcePath);
+
+    const targetDir = await createTempDir(tempDirs);
+    const error = await installSettings(targetDir, {
+      dryRun: true,
+      sourceAnchor: packageRoot,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SettingsInstallError);
+    expect((error as Error).message).toBe(
+      `Settings source is a symlink: ${sourcePath}`,
+    );
+  });
+
+  test("rejects a non-regular-file settings source", async () => {
+    const packageRoot = await createSettingsPackageRoot(tempDirs);
+    const sourcePath = join(packageRoot, "settings.example.json");
+    await rm(sourcePath);
+    await mkdir(sourcePath);
+
+    const targetDir = await createTempDir(tempDirs);
+    const error = await installSettings(targetDir, {
+      dryRun: true,
+      sourceAnchor: packageRoot,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SettingsInstallError);
+    expect((error as Error).message).toBe(
+      `Settings source is not a regular file: ${sourcePath}`,
+    );
+  });
+
+  test("rejects malformed JSON in the settings source", async () => {
+    const packageRoot = await createSettingsPackageRoot(tempDirs, "{not json");
+
+    const targetDir = await createTempDir(tempDirs);
+    const error = await installSettings(targetDir, {
+      dryRun: true,
+      sourceAnchor: packageRoot,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SettingsInstallError);
+    expect((error as Error).message).toMatch(
+      /^Malformed JSON in settings source: /,
+    );
+  });
+
+  test("rejects structurally invalid provider settings", async () => {
+    const packageRoot = await createSettingsPackageRoot(
+      tempDirs,
+      JSON.stringify({ provider: "unmatched", providers: [] }),
+    );
+
+    const targetDir = await createTempDir(tempDirs);
+    const error = await installSettings(targetDir, {
+      dryRun: true,
+      sourceAnchor: packageRoot,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SettingsInstallError);
+    expect((error as Error).message).toBe(
+      "Settings source validation failed: settings.json providers must not be empty",
+    );
   });
 });
