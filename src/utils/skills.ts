@@ -234,6 +234,74 @@ function walkSkillDirectory(skillPath: string, isSource: boolean): SkillFile[] {
   return files;
 }
 
+/** Reject missing, symlinked, or non-regular SKILL.md before tree traversal. */
+function assertSkillMdEntry(skillPath: string, entry: string): void {
+  const skillMdPath = join(skillPath, "SKILL.md");
+  let skillMdStats: Stats;
+  try {
+    skillMdStats = lstatSync(skillMdPath);
+  } catch (error) {
+    throw new SkillSourceError(
+      `Skill '${entry}' SKILL.md not accessible: ${error}`,
+    );
+  }
+  if (skillMdStats.isSymbolicLink()) {
+    throw new SkillSourceError(`Skill '${entry}' has symlinked SKILL.md`);
+  }
+  if (!skillMdStats.isFile()) {
+    throw new SkillSourceError(
+      `Skill '${entry}' SKILL.md is not a regular file`,
+    );
+  }
+}
+
+/**
+ * Collect one top-level skills entry as an inventory source: validate the
+ * entry shape, walk its tree, and hash the collected files. Returns
+ * undefined for non-directories (metadata files stay outside inventory);
+ * rejects symlinks and malformed skill trees.
+ */
+function collectSkillSourceEntry(
+  entry: string,
+  skillsDir: string,
+): SkillSource | undefined {
+  const skillPath = join(skillsDir, entry);
+
+  let stats: Stats;
+  try {
+    stats = lstatSync(skillPath);
+  } catch (error) {
+    throw new SkillSourceError(`Failed to stat ${skillPath}: ${error}`);
+  }
+
+  // Reject top-level skill-directory symlinks.
+  if (stats.isSymbolicLink()) {
+    throw new SkillSourceError(`Skill directory '${entry}' is a symlink`);
+  }
+
+  // Top-level non-directories (metadata files) stay outside inventory.
+  if (!stats.isDirectory()) {
+    return undefined;
+  }
+
+  assertSkillMdEntry(skillPath, entry);
+
+  const files = walkSkillDirectory(skillPath, true);
+
+  if (!files.some((f) => f.relativePath === "SKILL.md")) {
+    throw new SkillSourceError(
+      `Skill '${entry}' SKILL.md missing after tree walk`,
+    );
+  }
+
+  return {
+    name: entry,
+    sourcePath: skillPath,
+    hash: computeSkillHash(files),
+    files,
+  };
+}
+
 /**
  * Discover bundled skills from the package's skills/ directory.
  * Returns skills in lexical order by name.
@@ -260,65 +328,10 @@ export function discoverBundledSkills(
   }
 
   const skills: SkillSource[] = [];
-
   for (const entry of entries) {
-    const skillPath = join(skillsDir, entry);
-
-    let stats: Stats;
-    try {
-      stats = lstatSync(skillPath);
-    } catch (error) {
-      throw new SkillSourceError(`Failed to stat ${skillPath}: ${error}`);
-    }
-
-    // Reject top-level skill-directory symlinks.
-    if (stats.isSymbolicLink()) {
-      throw new SkillSourceError(`Skill directory '${entry}' is a symlink`);
-    }
-
-    // Top-level non-directories (metadata files) stay outside inventory.
-    if (!stats.isDirectory()) {
-      continue;
-    }
-
-    const skillMdPath = join(skillPath, "SKILL.md");
-    let skillMdStats: Stats;
-    try {
-      skillMdStats = lstatSync(skillMdPath);
-    } catch (error) {
-      throw new SkillSourceError(
-        `Skill '${entry}' SKILL.md not accessible: ${error}`,
-      );
-    }
-
-    if (skillMdStats.isSymbolicLink()) {
-      throw new SkillSourceError(`Skill '${entry}' has symlinked SKILL.md`);
-    }
-
-    if (!skillMdStats.isFile()) {
-      throw new SkillSourceError(
-        `Skill '${entry}' SKILL.md is not a regular file`,
-      );
-    }
-
-    const files = walkSkillDirectory(skillPath, true);
-
-    if (!files.some((f) => f.relativePath === "SKILL.md")) {
-      throw new SkillSourceError(
-        `Skill '${entry}' SKILL.md missing after tree walk`,
-      );
-    }
-
-    const hash = computeSkillHash(files);
-
-    skills.push({
-      name: entry,
-      sourcePath: skillPath,
-      hash,
-      files,
-    });
+    const skill = collectSkillSourceEntry(entry, skillsDir);
+    if (skill !== undefined) skills.push(skill);
   }
-
   return skills;
 }
 
