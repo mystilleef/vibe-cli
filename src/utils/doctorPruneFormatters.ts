@@ -74,33 +74,42 @@ function findingsRows(findings: DoctorFindings): string[][] {
   ];
 }
 
-/** Detail sections for non-empty findings; empty findings stay hidden. */
-function findingDetailSections(findings: DoctorFindings): string[] {
-  const sections: string[] = [];
-
-  const integrity = findings.integrityCheck;
-  if (integrity !== null && !integrity.ok && integrity.rows.length > 0) {
-    sections.push(formatListSection("Integrity", integrity.rows.join("\n")));
+/** Integrity failure detail; healthy or rowless findings stay hidden. */
+function integrityDetailSection(
+  integrity: DoctorFindings["integrityCheck"],
+): string[] {
+  if (integrity === null || integrity.ok || integrity.rows.length === 0) {
+    return [];
   }
+  return [formatListSection("Integrity", integrity.rows.join("\n"))];
+}
 
-  const violations = findings.foreignKeyCheck;
-  if (violations !== null && violations.length > 0) {
-    sections.push(
-      formatListSection(
-        "Foreign keys",
-        formatAlignedRows(
-          ["table", "rowid"],
-          violations.map((violation) => [
-            violation.table,
-            violation.rowid === null ? "null" : String(violation.rowid),
-          ]),
-        ),
+/** Foreign-key violation table; findings without violations stay hidden. */
+function foreignKeyDetailSection(
+  violations: DoctorFindings["foreignKeyCheck"],
+): string[] {
+  if (violations === null || violations.length === 0) return [];
+  return [
+    formatListSection(
+      "Foreign keys",
+      formatAlignedRows(
+        ["table", "rowid"],
+        violations.map((violation) => [
+          violation.table,
+          violation.rowid === null ? "null" : String(violation.rowid),
+        ]),
       ),
-    );
-  }
+    ),
+  ];
+}
 
-  const legacy = findings.legacyBackups;
-  if (legacy !== null && legacy.candidates.length > 0) {
+/** Legacy-copy tables; candidate and rejected lists render independently. */
+function legacyDetailSections(
+  legacy: DoctorFindings["legacyBackups"],
+): string[] {
+  if (legacy === null) return [];
+  const sections: string[] = [];
+  if (legacy.candidates.length > 0) {
     sections.push(
       formatListSection(
         "Legacy copies",
@@ -111,7 +120,7 @@ function findingDetailSections(findings: DoctorFindings): string[] {
       ),
     );
   }
-  if (legacy !== null && legacy.rejected.length > 0) {
+  if (legacy.rejected.length > 0) {
     sections.push(
       formatListSection(
         "Rejected legacy copies",
@@ -126,24 +135,36 @@ function findingDetailSections(findings: DoctorFindings): string[] {
       ),
     );
   }
-
-  const stranded = findings.strandedOriginals;
-  if (stranded !== null && stranded.length > 0) {
-    sections.push(
-      formatListSection(
-        "Stranded originals",
-        [
-          formatAlignedRows(
-            ["artifact", "path", "status"],
-            stranded.map((record) => [record.artifact, record.path, "kept"]),
-          ),
-          "doctor never deletes originals",
-        ].join("\n"),
-      ),
-    );
-  }
-
   return sections;
+}
+
+/** Stranded-original table; findings without records stay hidden. */
+function strandedDetailSection(
+  stranded: DoctorFindings["strandedOriginals"],
+): string[] {
+  if (stranded === null || stranded.length === 0) return [];
+  return [
+    formatListSection(
+      "Stranded originals",
+      [
+        formatAlignedRows(
+          ["artifact", "path", "status"],
+          stranded.map((record) => [record.artifact, record.path, "kept"]),
+        ),
+        "doctor never deletes originals",
+      ].join("\n"),
+    ),
+  ];
+}
+
+/** Detail sections for non-empty findings; empty findings stay hidden. */
+function findingDetailSections(findings: DoctorFindings): string[] {
+  return [
+    ...integrityDetailSection(findings.integrityCheck),
+    ...foreignKeyDetailSection(findings.foreignKeyCheck),
+    ...legacyDetailSections(findings.legacyBackups),
+    ...strandedDetailSection(findings.strandedOriginals),
+  ];
 }
 
 /** Maintenance rows for selected targets only; skipped targets stay hidden. */
@@ -281,6 +302,89 @@ function pruneTargetsSection(payload: PruneSuccessPayload): string | null {
   );
 }
 
+/** Representative records supplied per prune target. */
+type PruneRepresentatives = PruneSuccessPayload["representativeDetails"];
+
+/** Learning candidates preview; unshown candidates stay counted in the remainder. */
+function learningDetailSection(
+  learnings: PruneRepresentatives["learnings"],
+  candidateCount: number,
+  clock: ListClock,
+): string | null {
+  if (learnings.length === 0) return null;
+  return detailSection(
+    "Learnings",
+    ["entry", "observation", "age"],
+    learnings.map((entry) => [
+      `#${entry.id} [${entry.category}]`,
+      truncateText(entry.observation, OBSERVATION_PREVIEW_LENGTH),
+      formatRelativeTime(entry.timestamp, clock),
+    ]),
+    candidateCount - learnings.length,
+  );
+}
+
+/** Duplicate-group preview; remainder counts unshown entries, not groups. */
+function duplicateDetailSection(
+  duplicates: PruneRepresentatives["duplicates"],
+  candidateCount: number,
+): string | null {
+  if (duplicates.length === 0) return null;
+  const shownEntries = duplicates.reduce(
+    (total, group) => total + group.prunableIds.length,
+    0,
+  );
+  return detailSection(
+    "Duplicates",
+    ["category", "kept", "prunable"],
+    duplicates.map((group) => [
+      `[${group.category}]`,
+      String(group.keptId),
+      group.prunableIds.join(", "),
+    ]),
+    candidateCount - shownEntries,
+    "entries",
+  );
+}
+
+/** Demo candidates preview; the demo-id column appears only when recorded. */
+function demoDetailSection(
+  demos: PruneRepresentatives["demos"],
+  candidateCount: number,
+): string | null {
+  if (demos.length === 0) return null;
+  const showDemoId = demos.some((demo) => demo.demoId !== undefined);
+  return detailSection(
+    "Demos",
+    showDemoId ? ["demo", "observation", "demo id"] : ["demo", "observation"],
+    demos.map((demo) => [
+      `#${demo.id} [${demo.category}]`,
+      truncateText(demo.observation, OBSERVATION_PREVIEW_LENGTH),
+      ...(showDemoId ? [demo.demoId ?? ""] : []),
+    ]),
+    candidateCount - demos.length,
+  );
+}
+
+/** Expired-session preview; sessions without a cwd render a placeholder. */
+function sessionDetailSection(
+  sessions: PruneRepresentatives["sessions"],
+  candidateCount: number,
+  clock: ListClock,
+): string | null {
+  if (sessions.length === 0) return null;
+  return detailSection(
+    "Sessions",
+    ["session", "cwd", "last access"],
+    sessions.map((session) => [
+      session.sessionId,
+      session.cwd ?? "(unknown cwd)",
+      formatRelativeTime(session.lastAccessedAt, clock),
+    ]),
+    candidateCount - sessions.length,
+  );
+}
+
 /**
  * Detail sections for selected targets. Representatives arrive capped by the
  * payload, so every supplied record renders.
@@ -289,80 +393,23 @@ function pruneDetailSections(
   payload: PruneSuccessPayload,
   clock: ListClock,
 ): string[] {
-  const sections: string[] = [];
   const { learnings, duplicates, demos, sessions } =
     payload.representativeDetails;
-  const selected = (target: PruneSuccessPayload["targets"][number]) =>
-    payload.targets.includes(target);
+  const counts = payload.candidateCounts;
+  const sections: string[] = [];
+  const add = (
+    target: PruneSuccessPayload["targets"][number],
+    section: string | null,
+  ) => {
+    if (payload.targets.includes(target) && section !== null) {
+      sections.push(section);
+    }
+  };
 
-  if (selected("learnings") && learnings.length > 0) {
-    sections.push(
-      detailSection(
-        "Learnings",
-        ["entry", "observation", "age"],
-        learnings.map((entry) => [
-          `#${entry.id} [${entry.category}]`,
-          truncateText(entry.observation, OBSERVATION_PREVIEW_LENGTH),
-          formatRelativeTime(entry.timestamp, clock),
-        ]),
-        payload.candidateCounts.learnings - learnings.length,
-      ),
-    );
-  }
-
-  if (selected("duplicates") && duplicates.length > 0) {
-    // Duplicate candidate counts measure prunable entries, not groups.
-    const shownEntries = duplicates.reduce(
-      (total, group) => total + group.prunableIds.length,
-      0,
-    );
-    sections.push(
-      detailSection(
-        "Duplicates",
-        ["category", "kept", "prunable"],
-        duplicates.map((group) => [
-          `[${group.category}]`,
-          String(group.keptId),
-          group.prunableIds.join(", "),
-        ]),
-        payload.candidateCounts.duplicates - shownEntries,
-        "entries",
-      ),
-    );
-  }
-
-  if (selected("demos") && demos.length > 0) {
-    const showDemoId = demos.some((demo) => demo.demoId !== undefined);
-    sections.push(
-      detailSection(
-        "Demos",
-        showDemoId
-          ? ["demo", "observation", "demo id"]
-          : ["demo", "observation"],
-        demos.map((demo) => [
-          `#${demo.id} [${demo.category}]`,
-          truncateText(demo.observation, OBSERVATION_PREVIEW_LENGTH),
-          ...(showDemoId ? [demo.demoId ?? ""] : []),
-        ]),
-        payload.candidateCounts.demos - demos.length,
-      ),
-    );
-  }
-
-  if (selected("sessions") && sessions.length > 0) {
-    sections.push(
-      detailSection(
-        "Sessions",
-        ["session", "cwd", "last access"],
-        sessions.map((session) => [
-          session.sessionId,
-          session.cwd ?? "(unknown cwd)",
-          formatRelativeTime(session.lastAccessedAt, clock),
-        ]),
-        payload.candidateCounts.sessions - sessions.length,
-      ),
-    );
-  }
+  add("learnings", learningDetailSection(learnings, counts.learnings, clock));
+  add("duplicates", duplicateDetailSection(duplicates, counts.duplicates));
+  add("demos", demoDetailSection(demos, counts.demos));
+  add("sessions", sessionDetailSection(sessions, counts.sessions, clock));
 
   return sections;
 }
