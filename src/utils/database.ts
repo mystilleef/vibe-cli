@@ -206,7 +206,26 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
     );
   `);
 
-  const appliedAt = ranAt ?? new Date().toISOString();
+  const pending = applyPendingMigrations(db, ranAt ?? new Date().toISOString());
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS legacy_imports (
+      artifact TEXT PRIMARY KEY,
+      imported_at TEXT NOT NULL,
+      backup_path TEXT NOT NULL
+    );
+  `);
+
+  return pending;
+}
+
+/**
+ * Apply each migration missing from `schema_migrations`, returning the ids
+ * applied now. Each migration commits in its own transaction so a concurrent
+ * winner between the existence check and the DDL is detected on failure and
+ * treated as already applied.
+ */
+function applyPendingMigrations(db: Database, appliedAt: string): string[] {
   const pending: string[] = [];
   const insertMigration = db.query(
     "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
@@ -239,14 +258,6 @@ export function initializeSchema(db: Database, ranAt?: string): string[] {
       throw err;
     }
   }
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS legacy_imports (
-      artifact TEXT PRIMARY KEY,
-      imported_at TEXT NOT NULL,
-      backup_path TEXT NOT NULL
-    );
-  `);
 
   return pending;
 }
