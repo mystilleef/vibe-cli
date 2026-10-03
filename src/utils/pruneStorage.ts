@@ -283,6 +283,34 @@ function buildLearningOverlapGraph(
 }
 
 /**
+ * Collect the connected component reachable from `startId` via depth-first
+ * traversal. Every reached id is recorded in `visited`, so later rows skip
+ * nodes already grouped.
+ */
+function collectGraphComponentIds(
+  startId: number,
+  edges: ReadonlyMap<number, ReadonlySet<number>>,
+  visited: Set<number>,
+): number[] {
+  const componentIds: number[] = [];
+  const stack = [startId];
+  visited.add(startId);
+
+  while (stack.length > 0) {
+    const currentId = stack.pop();
+    if (currentId === undefined) continue;
+    componentIds.push(currentId);
+    for (const nextId of edges.get(currentId) ?? []) {
+      if (visited.has(nextId)) continue;
+      visited.add(nextId);
+      stack.push(nextId);
+    }
+  }
+
+  return componentIds;
+}
+
+/**
  * Find connected components in a duplicate overlap graph and assemble each
  * into a `DuplicateLearningPruneGroup`.
  *
@@ -303,20 +331,7 @@ function buildDuplicateLearningGroupsFromGraph(
   for (const row of rows) {
     if (visited.has(row.id)) continue;
 
-    const componentIds: number[] = [];
-    const stack = [row.id];
-    visited.add(row.id);
-
-    while (stack.length > 0) {
-      const currentId = stack.pop();
-      if (currentId === undefined) continue;
-      componentIds.push(currentId);
-      for (const nextId of edges.get(currentId) ?? []) {
-        if (visited.has(nextId)) continue;
-        visited.add(nextId);
-        stack.push(nextId);
-      }
-    }
+    const componentIds = collectGraphComponentIds(row.id, edges, visited);
 
     if (componentIds.length < 2) continue;
 
