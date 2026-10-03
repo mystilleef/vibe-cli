@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { LearningEntry } from "../src/utils/learningEntryCore.js";
+import type {
+  LearningEntry,
+  LearningEntryStorageRow,
+} from "../src/utils/learningEntryCore.js";
 import {
+  compareLearningEntryOrder,
   DAY_MS,
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   getLearningOverlapScore,
@@ -9,6 +13,66 @@ import {
   summarizeLearningCategories,
   summarizeLearningCategoryGroups,
 } from "../src/utils/learningEntryCore.js";
+
+describe("compareLearningEntryOrder", () => {
+  function storageRow(
+    overrides: Partial<LearningEntryStorageRow> = {},
+  ): LearningEntryStorageRow {
+    return {
+      id: 1,
+      type: "mistake",
+      category: "cat",
+      observation: "obs",
+      solution: null,
+      timestamp: 1000,
+      demo_id: null,
+      ...overrides,
+    };
+  }
+
+  test.each([
+    {
+      name: "earlier timestamp sorts first",
+      left: { timestamp: 999 },
+      right: { timestamp: 1000 },
+      expected: -1,
+    },
+    {
+      name: "later timestamp sorts last",
+      left: { timestamp: 1001 },
+      right: { timestamp: 1000 },
+      expected: 1,
+    },
+    {
+      name: "negative timestamps keep chronological order",
+      left: { timestamp: -5 },
+      right: { timestamp: -3 },
+      expected: -1,
+    },
+    {
+      name: "equal timestamps defer to category",
+      left: { category: "alpha" },
+      right: { category: "beta" },
+      expected: -1,
+    },
+    {
+      name: "equal timestamps and categories defer to id",
+      left: { id: 1 },
+      right: { id: 2 },
+      expected: -1,
+    },
+    {
+      name: "identical rows compare equal",
+      left: {},
+      right: {},
+      expected: 0,
+    },
+  ])("$name", ({ left, right, expected }) => {
+    expect(
+      Math.sign(compareLearningEntryOrder(storageRow(left), storageRow(right))),
+    ).toBe(expected);
+  });
+});
 
 describe("learningRowToEntry", () => {
   test("converts full row with solution and demo_id", () => {
