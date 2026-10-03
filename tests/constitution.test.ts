@@ -1,12 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { createTempHarness } from "./helpers/tempHome";
 
-let home: TempHomeContext | undefined;
-let cwd: string | undefined;
-const originalCwd = process.cwd();
+const harness = createTempHarness();
+
 let mod: typeof import("../src/tools/constitution");
 
 beforeAll(async () => {
@@ -14,18 +10,12 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
-  if (cwd) await rm(cwd, { recursive: true, force: true });
-  cwd = undefined;
-  if (home) await home.cleanup();
-  home = undefined;
+  await harness.cleanup();
 });
 
 async function setup(): Promise<string> {
-  home = await createTempHome();
-  cwd = await mkdtemp(join(tmpdir(), "vibe-cli-constitution-"));
-  process.chdir(cwd);
-  return cwd;
+  await harness.useTempHome();
+  return harness.useCwd("constitution");
 }
 
 describe("constitution guards", () => {

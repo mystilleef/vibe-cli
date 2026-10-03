@@ -1,12 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { createTempHarness } from "./helpers/tempHome";
 
-let home: TempHomeContext | undefined;
-let cwd: string | undefined;
-const originalCwd = process.cwd();
+const harness = createTempHarness();
+
 let tools: typeof import("../src/tools/vibeLearn") &
   typeof import("../src/tools/constitution");
 
@@ -18,18 +14,12 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
-  if (cwd) await rm(cwd, { recursive: true, force: true });
-  cwd = undefined;
-  if (home) await home.cleanup();
-  home = undefined;
+  await harness.cleanup();
 });
 
 async function setupIsolatedCwd(): Promise<string> {
-  home = await createTempHome();
-  cwd = await mkdtemp(join(tmpdir(), "vibe-cli-learn-constitution-"));
-  process.chdir(cwd);
-  return cwd;
+  await harness.useTempHome();
+  return harness.useCwd("learn-constitution");
 }
 
 describe("learn and constitution autosessions", () => {
@@ -52,9 +42,7 @@ describe("learn and constitution autosessions", () => {
 
   test("same CWD shares constitution rules and different CWD isolates them", async () => {
     const firstCwd = await setupIsolatedCwd();
-    const secondCwd = await mkdtemp(
-      join(tmpdir(), "vibe-cli-learn-constitution-"),
-    );
+    const secondCwd = await harness.createCwd("learn-constitution");
 
     tools.updateConstitution("Prefer tested rollback plans.");
     const firstSession = tools.getCurrentConstitutionSessionId();
@@ -72,8 +60,6 @@ describe("learn and constitution autosessions", () => {
 
     process.chdir(firstCwd);
     expect(tools.getConstitution()).toEqual(["Prefer tested rollback plans."]);
-
-    await rm(secondCwd, { recursive: true, force: true });
   });
 
   test("constitution reset targets the current autosession", async () => {

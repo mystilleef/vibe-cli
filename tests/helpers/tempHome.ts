@@ -18,6 +18,8 @@ export interface TempHarness {
   useTempHome(): Promise<TempHomeContext>;
   /** Create a temp working directory registered for cleanup. */
   createCwd(label: string): Promise<string>;
+  /** Create a temp working directory, chdir into it, and register cleanup. */
+  useCwd(label: string): Promise<string>;
   /** Register an externally created temp directory for cleanup. */
   trackCwd(dir: string): void;
   /** Unregister a tracked directory already removed by the test itself. */
@@ -30,15 +32,21 @@ export function createTempHarness(): TempHarness {
   const homes: TempHomeContext[] = [];
   const cwdRoots: string[] = [];
   const originalCwd = process.cwd();
+  const createCwd = async (label: string): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), `vibe-cli-${label}-`));
+    cwdRoots.push(dir);
+    return dir;
+  };
   return {
     async useTempHome() {
       const home = await createTempHome();
       homes.push(home);
       return home;
     },
-    async createCwd(label: string) {
-      const dir = await mkdtemp(join(tmpdir(), `vibe-cli-${label}-`));
-      cwdRoots.push(dir);
+    createCwd,
+    async useCwd(label: string) {
+      const dir = await createCwd(label);
+      process.chdir(dir);
       return dir;
     },
     trackCwd(dir: string) {

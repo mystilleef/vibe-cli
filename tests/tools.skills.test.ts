@@ -1,23 +1,16 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fsPromises from "node:fs/promises";
-import {
-  chmod,
-  mkdir,
-  readdir,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   InstallError,
-  type InstallResult,
   InstallValidationError,
   installSkills,
 } from "../src/tools/skillsInstaller.js";
 import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
+  actionMap,
+  cleanupTempDirsBestEffort,
   createPackageRoot,
   createSkillDir,
   createTempDir,
@@ -35,52 +28,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   process.chdir(originalCwd);
-  await Promise.all(
-    tempDirs.map(async (dir) => {
-      try {
-        await chmodRecursiveWritable(dir);
-      } catch {
-        // best effort before rm
-      }
-      try {
-        await rm(dir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup races (e.g. dangling symlinks)
-      }
-    }),
-  );
+  await cleanupTempDirsBestEffort(tempDirs);
 });
-
-async function chmodRecursiveWritable(dir: string): Promise<void> {
-  try {
-    await chmod(dir, 0o755);
-  } catch {
-    return;
-  }
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return;
-  }
-  for (const name of entries) {
-    const full = join(dir, name);
-    try {
-      const s = await stat(full);
-      if (s.isDirectory()) {
-        await chmodRecursiveWritable(full);
-      } else {
-        await chmod(full, 0o644);
-      }
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function actionMap(result: InstallResult): Record<string, string> {
-  return Object.fromEntries(result.skills.map((s) => [s.name, s.action]));
-}
 
 /**
  * Deterministically deny `access(W_OK)` for exactly `targetRoot` by mocking

@@ -6,14 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  chmod,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCliInProcess } from "../src/cli";
 import {
@@ -23,6 +16,8 @@ import {
   installSkills,
 } from "../src/tools/skillsInstaller.js";
 import {
+  actionMap,
+  cleanupTempDirsBestEffort,
   createPackageRoot,
   createSkillDir,
   createTempDir,
@@ -41,52 +36,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   process.chdir(originalCwd);
-  await Promise.all(
-    tempDirs.map(async (dir) => {
-      try {
-        await chmodRecursiveWritable(dir);
-      } catch {
-        // best effort before rm
-      }
-      try {
-        await rm(dir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup races
-      }
-    }),
-  );
+  await cleanupTempDirsBestEffort(tempDirs);
 });
-
-async function chmodRecursiveWritable(dir: string): Promise<void> {
-  try {
-    await chmod(dir, 0o755);
-  } catch {
-    return;
-  }
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return;
-  }
-  for (const name of entries) {
-    const full = join(dir, name);
-    try {
-      const s = await stat(full);
-      if (s.isDirectory()) {
-        await chmodRecursiveWritable(full);
-      } else {
-        await chmod(full, 0o644);
-      }
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function actionMap(result: InstallResult): Record<string, string> {
-  return Object.fromEntries(result.skills.map((s) => [s.name, s.action]));
-}
 
 const REAL_SKILL_NAMES = ["vibe-check", "vibe-constitution", "vibe-learn"];
 

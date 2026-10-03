@@ -2,9 +2,11 @@
  * Shared test utilities for skills-related tests.
  *
  * Provides temp directory lifecycle management, skill directory creation,
- * and filesystem inspection helpers used across multiple test files.
+ * filesystem inspection helpers, and installer result mapping used across
+ * multiple test files.
  */
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -15,6 +17,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { InstallResult } from "../../src/tools/skillsInstaller.js";
 
 // ── Temp directory lifecycle ────────────────────────────────────────────────
 
@@ -40,6 +43,55 @@ export async function cleanupTempDirs(dirs: string[]): Promise<void> {
   await Promise.all(
     dirs.map((dir) => rm(dir, { recursive: true, force: true })),
   );
+}
+
+/**
+ * Best-effort cleanup for temp dirs permission tests may have made
+ * read-only: restores recursive writability, then removes. Permission
+ * failures and cleanup races never throw.
+ */
+export async function cleanupTempDirsBestEffort(dirs: string[]): Promise<void> {
+  await Promise.all(
+    dirs.map(async (dir) => {
+      try {
+        await chmodRecursiveWritable(dir);
+      } catch {
+        // best effort before rm
+      }
+      try {
+        await rm(dir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup races (e.g. dangling symlinks)
+      }
+    }),
+  );
+}
+
+async function chmodRecursiveWritable(dir: string): Promise<void> {
+  try {
+    await chmod(dir, 0o755);
+  } catch {
+    return;
+  }
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const full = join(dir, name);
+    try {
+      const s = await stat(full);
+      if (s.isDirectory()) {
+        await chmodRecursiveWritable(full);
+      } else {
+        await chmod(full, 0o644);
+      }
+    } catch {
+      // ignore
+    }
+  }
 }
 
 // ── Skill directory creation ────────────────────────────────────────────────
@@ -124,4 +176,11 @@ export async function readDirTree(
   }
   await walk(dir, "");
   return result;
+}
+
+// ── Installer result helpers ────────────────────────────────────────────────────
+
+/** Map an installer result to `skill name → action`. */
+export function actionMap(result: InstallResult): Record<string, string> {
+  return Object.fromEntries(result.skills.map((s) => [s.name, s.action]));
 }
