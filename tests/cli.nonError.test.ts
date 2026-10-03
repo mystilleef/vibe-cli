@@ -1,11 +1,14 @@
 /**
  * Tests for runCliInProcess non-Error exception handling.
  *
- * The "constitution set" subcommand is not wrapped in withCliError, so a
- * non-Error throw from updateConstitution escapes Commander and reaches
- * runCliInProcess's catch block, hitting its String(e) branch. A restorable
- * spy injects the throw: a mock.module override would outlive this file and
- * break later suites sharing the module registry.
+ * `constitution set` wraps its action in `withCliError`, so a non-Error
+ * throw from updateConstitution is caught there and routed through
+ * `extractErrorMessage` (String(e)) into `fatal`'s JSON diagnostic. This
+ * locks the wrapped-command contract that non-Error failures serialize as
+ * `{"error":"[object Object]"}` with exit code 1. The unwrapped-handler
+ * String(e) branch of runCliInProcess is exercised by cli.demo.test.ts. A
+ * restorable spy injects the throw: a mock.module override would outlive
+ * this file and break later suites sharing the module registry.
  */
 
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
