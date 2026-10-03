@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { resetConstitution } from "../src/tools/constitution";
 import { mapAnthropicThinkingBudget } from "../src/utils/anthropic";
 import {
-  callProvider,
   FALLBACK_FEEDBACK,
   getGateDecision,
   getMentorFeedback,
-  parseGateDecision,
   revisePlan,
   verifyConnection,
 } from "../src/utils/llm";
+import { callProvider } from "../src/utils/provider";
 import type { ProviderSpec, ThinkingLevel } from "../src/utils/settings";
 import {
   isThinkingActive,
@@ -192,55 +191,6 @@ afterEach(async () => {
     else process.env[key] = savedEnv[key];
   }
   globalThis.fetch = originalFetch;
-});
-
-describe("parseGateDecision", () => {
-  test("parses clean JSON", () => {
-    const result = parseGateDecision(
-      '{"proceed":true,"confidence":0.9,"reason":"ok"}',
-    );
-
-    expect(result).toEqual({ proceed: true, confidence: 0.9, reason: "ok" });
-  });
-
-  test("strips markdown fences", () => {
-    const result = parseGateDecision(
-      '```json\n{"proceed":false,"confidence":0.7,"reason":"risk"}\n```',
-    );
-
-    expect(result.proceed).toBe(false);
-    expect(result.confidence).toBe(0.7);
-  });
-
-  test("extracts the last embedded JSON object", () => {
-    const raw =
-      'First: {"proceed":true,"confidence":0.9,"reason":"first"}. Second: {"proceed":false,"confidence":0.3,"reason":"second"}';
-
-    expect(parseGateDecision(raw)).toEqual({
-      proceed: false,
-      confidence: 0.3,
-      reason: "second",
-    });
-  });
-
-  test("falls back for invalid shape", () => {
-    const result = parseGateDecision("not json");
-
-    expect(result.proceed).toBe(false);
-    expect(result.confidence).toBe(0.5);
-    expect(result.reason).toMatch(/unavailable/);
-  });
-
-  test("clamps confidence boundaries", () => {
-    expect(
-      parseGateDecision('{"proceed":true,"confidence":2,"reason":"ok"}')
-        .confidence,
-    ).toBe(1);
-    expect(
-      parseGateDecision('{"proceed":true,"confidence":-1,"reason":"ok"}')
-        .confidence,
-    ).toBe(0);
-  });
 });
 
 describe("settings-backed provider and model resolution", () => {

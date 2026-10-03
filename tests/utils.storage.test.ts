@@ -10,13 +10,13 @@ import {
 import {
   collectDemoLearningPruneCandidates,
   collectDuplicateLearningPruneGroups,
+  collectPruneCandidates,
   collectStaleLearningPruneCandidates,
   collectStaleSessionPruneCandidates,
+  executeDestructivePrune,
 } from "../src/utils/pruneStorage";
 import {
   addLearningEntry,
-  collectPruneCandidates,
-  executeDestructivePrune,
   getLearningCategorySummary,
   getLearningContextText,
   getLearningEntries,

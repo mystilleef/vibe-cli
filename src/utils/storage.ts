@@ -15,13 +15,8 @@ import { groupBy } from "./listDataUtilsCollections.js";
 export {
   DEFAULT_LEARNING_DUPLICATE_OVERLAP_THRESHOLD,
   isLearningOverlapDuplicate,
-  type LearningEntry,
   type LearningType,
 } from "./learningEntryCore.js";
-export {
-  collectPruneCandidates,
-  executeDestructivePrune,
-} from "./pruneStorage.js";
 
 /**
  * Append a learning entry to the log under `category`.
