@@ -3,13 +3,14 @@
  * Register the `vibe` command surface with mixed text/JSON process output.
  *
  * Human-facing commands (`list`, `skills`, `guide`, `settings install`,
- * `prune`, `doctor`) print readable text by default and emit JSON under
+ * `prune`, `doctor`, `tldr`) print readable text by default and emit JSON under
  * `--json`; agent-loop commands always emit JSON. Operational failures route
  * through `fatal` as one stderr JSON error line so agents can parse errors
  * without scraping text.
  */
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
+import tldrPageText from "../docs/tldr.md" with { type: "text" };
 import packageJson from "../package.json" with { type: "json" };
 import { resetConstitution, updateConstitution } from "./tools/constitution.js";
 import { runDemo } from "./tools/demo.js";
@@ -40,6 +41,7 @@ import {
 import {
   buildCheckParams,
   buildPruneParams,
+  isTldrInvocation,
   resolveModelOverride,
 } from "./utils/cliHelpers.js";
 import { openVibeDatabaseWithMigrationReport } from "./utils/database.js";
@@ -89,6 +91,7 @@ import {
   formatSkillsInstall,
   formatSkillsList,
 } from "./utils/skillsGuideFormatters.js";
+import { formatTldr, parseTldr } from "./utils/tldr.js";
 
 /** Emit one JSON payload to stdout for successful command responses. */
 function emit(data: unknown): void {
@@ -279,6 +282,8 @@ program
     throw error;
   })
   .configureOutput({ writeErr: () => {} });
+
+program.addHelpText("after", "\nRun `vibe tldr` for quick examples.\n");
 
 const checkCmd = program
   .command("check")
@@ -517,6 +522,19 @@ program
     emit(buildSchema());
   });
 
+const tldr = program
+  .command("tldr")
+  .description("Print the offline workflow cheat sheet (12 quick examples)")
+  .option(JSON_OPTION_FLAG, JSON_OPTION_DESCRIPTION);
+tldr.action(() => {
+  const page = parseTldr(tldrPageText);
+  // Color stays resolved at the action edge: styling needs a real terminal
+  // and an unset or empty NO_COLOR; JSON output never carries styling.
+  const color =
+    process.stdout.isTTY === true && (process.env["NO_COLOR"] ?? "") === "";
+  emitListResult(tldr, page, formatTldr(page, { color }));
+});
+
 const skills = program
   .command("skills")
   .description("Inspect or install bundled skills");
@@ -641,10 +659,13 @@ export async function runCliInProcess(
   coordinationCallback?: () => Promise<void>,
 ): Promise<CliResult> {
   return runCapturedInvocation(async (capture) => {
-    // Re-run dotenv warning with intercepted stderr
-    warnLegacyDotenv((data: string) => {
-      capture.appendStderr(data);
-    });
+    // Legacy .env diagnostics stay invocation-local: only a `tldr` root
+    // command exempts itself, resolved from this run's own args.
+    if (!isTldrInvocation(args)) {
+      warnLegacyDotenv((data: string) => {
+        capture.appendStderr(data);
+      });
+    }
 
     // Yield if coordination callback provided (test seam for post-await isolation)
     if (coordinationCallback !== undefined) {
@@ -680,7 +701,15 @@ export async function runCliInProcess(
   });
 }
 
-warnLegacyDotenv();
+// Legacy .env diagnostics follow the invocation: plain imports keep the
+// existing module-load warning, and direct runs warn unless their root
+// command is `tldr`. `isDirectCliEntry` is a hoisted declaration.
+const directEntryArgs = isDirectCliEntry(process.argv[1], import.meta.url)
+  ? process.argv.slice(2)
+  : undefined;
+if (directEntryArgs === undefined || !isTldrInvocation(directEntryArgs)) {
+  warnLegacyDotenv();
+}
 
 /**
  * True when `moduleUrl` (an `import.meta.url`) refers to the same file as

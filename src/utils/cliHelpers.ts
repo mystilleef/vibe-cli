@@ -5,6 +5,19 @@ import type { runPrune } from "../tools/prune.js";
 import type { vibeGateLoop } from "../tools/vibeGate.js";
 
 /**
+ * True when the invocation's root command is `tldr`.
+ *
+ * Commander resolves the root command from the first non-flag token, so a
+ * `tldr` appearing later is only an argument or option value (for example
+ * `check --goal tldr --help`) and never exempts the invocation. Detection
+ * stays pure — no filesystem, storage, provider, or ambient `process.argv`
+ * access — so every captured run gates its own legacy `.env` diagnostics.
+ */
+export function isTldrInvocation(args: readonly string[]): boolean {
+  return args.find((arg) => !arg.startsWith("-")) === "tldr";
+}
+
+/**
  * Resolve model override from CLI options.
  *
  * Returns an empty object when neither provider nor model is set,

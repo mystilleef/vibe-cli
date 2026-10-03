@@ -8,6 +8,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import {
   cp,
@@ -20,7 +21,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDirectCliEntry, runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
@@ -886,6 +887,62 @@ describe("CLI autosession surface", () => {
       providers: expect.objectContaining({ deepseek: "deepseek-v4-pro" }),
     });
     expectLegacyDotenvWarningOnce(all.stderr);
+  });
+
+  test("legacy env warning stays silent for tldr cheat-sheet runs", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+
+    for (const args of [["tldr"], ["tldr", "--json"]]) {
+      const result = await runCli(args, { home: home.home });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+    }
+  });
+
+  test("legacy env warning survives literal tldr arguments on help-only runs", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+
+    const checkHelp = await runCli(["check", "--goal", "tldr", "--help"], {
+      home: home.home,
+    });
+    const skillsHelp = await runCli(
+      ["skills", "list", "--target", "tldr", "--help"],
+      { home: home.home },
+    );
+
+    expect(checkHelp.exitCode).toBe(0);
+    expect(checkHelp.stdout).toContain("Usage:");
+    expectLegacyDotenvWarningOnce(checkHelp.stderr);
+
+    expect(skillsHelp.exitCode).toBe(0);
+    expect(skillsHelp.stdout).toContain("Usage:");
+    expectLegacyDotenvWarningOnce(skillsHelp.stderr);
+
+    // Help short-circuits dispatch: neither action may touch local state.
+    expect(existsSync(join(home.dataRoot, "vibe.db"))).toBe(false);
+  });
+
+  test("overlapping tldr and non-tldr help invocations isolate legacy warnings", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+
+    await withMutatedEnv({ HOME: home.home }, async () => {
+      const [tldr, help] = await Promise.all([
+        runCliInProcess(["tldr"]),
+        runCliInProcess(["check", "--help"]),
+      ]);
+
+      expect(tldr.exitCode).toBe(0);
+      expect(tldr.stderr).toBe("");
+      expect(help.exitCode).toBe(0);
+      expectLegacyDotenvWarningOnce(help.stderr);
+    });
   });
 
   test("list checks filters, limits, parses, and truncates reasons", async () => {
@@ -4819,16 +4876,22 @@ describe("CLI autosession surface", () => {
 
 /**
  * Assembles the minimal file set the direct-entry CLI needs to run under
- * `specialProject`: source (relative imports), package.json (package-root
- * discovery), and a symlinked node_modules (dependency resolution). Copying
- * the full repo instead would race other `--parallel` tests that create and
- * remove their own temp dirs directly under `originalCwd`, causing
- * intermittent ENOENT during the recursive walk.
+ * `specialProject`: source (relative imports), the bundled tldr page its
+ * text import resolves, package.json (package-root discovery), and a
+ * symlinked node_modules (dependency resolution). Copying the full repo
+ * instead would race other `--parallel` tests that create and remove their
+ * own temp dirs directly under `originalCwd`, causing intermittent ENOENT
+ * during the recursive walk.
  */
 async function buildSpecialCliProject(specialProject: string): Promise<void> {
   await cp(join(originalCwd, "src"), join(specialProject, "src"), {
     recursive: true,
   });
+  await mkdir(join(specialProject, "docs"), { recursive: true });
+  await cp(
+    join(originalCwd, "docs", "tldr.md"),
+    join(specialProject, "docs", "tldr.md"),
+  );
   await cp(
     join(originalCwd, "package.json"),
     join(specialProject, "package.json"),
@@ -4924,6 +4987,34 @@ console.log("import successful");
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim()).toBe("import successful");
+    } finally {
+      await rm(importScript, { force: true });
+    }
+  });
+
+  test("plain CLI import keeps the legacy env warning even for tldr argv", async () => {
+    const home = await useTempHome();
+    await mkdir(home.dataRoot, { recursive: true });
+    await writeFile(join(home.dataRoot, ".env"), "DEFAULT_MODEL=file-model\n");
+    const importScript = join(tmpdir(), "vibe-cli-import-tldr-test.ts");
+
+    try {
+      await writeFile(
+        importScript,
+        `import { runCliInProcess } from "${cli}";
+console.log(typeof runCliInProcess === "function" ? "import successful" : "import broken");
+`,
+      );
+
+      const result = await runChild("bun", ["run", importScript, "tldr"], {
+        cwd: originalCwd,
+        env: { ...process.env, HOME: home.home },
+        timeout: 10_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("import successful");
+      expectLegacyDotenvWarningOnce(result.stderr);
     } finally {
       await rm(importScript, { force: true });
     }
@@ -5054,16 +5145,6 @@ describe("emitTestErrorMarker", () => {
   });
 });
 
-describe("runCliInProcess - non-Error exception handling", () => {
-  test("non-Error exception codepath is exercised by dedicated test file", () => {
-    // Behavioral test lives in tests/cli.nonError.test.ts which uses
-    // mock.module to trigger a non-Error throw from a command handler
-    // and asserts String(e) serialization in stderr.
-    // This placeholder documents the split and prevents coverage drift.
-    expect(true).toBe(true);
-  });
-});
-
 describe("bundled CLI safety backup execution", () => {
   let packFixtureRoot: string | undefined;
   let extractedRoot: string;
@@ -5072,6 +5153,11 @@ describe("bundled CLI safety backup execution", () => {
     const fixture = await packAndExtract("vibe-packed-backup-");
     packFixtureRoot = fixture.workRoot;
     extractedRoot = fixture.extractedRoot;
+    // The bundle must carry the tldr page text itself; drop the
+    // fixture-private staged copy so no runtime fallback can read it.
+    await rm(join(packFixtureRoot, "stage", "docs", "tldr.md"), {
+      force: true,
+    });
   });
 
   afterAll(async () => {
@@ -5286,6 +5372,247 @@ describe("bundled CLI safety backup execution", () => {
       expect(result.stdout).toContain("Targets\n-------");
       expect(result.stdout).toBe(`${result.stdout.trimEnd()}\n`);
       expect(result.stdout).not.toContain('"dryRun"');
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  const EXPECTED_TLDR_COMMANDS = [
+    "vibe settings install",
+    "vibe verify",
+    "vibe skills install --target ~/.claude/skills",
+    "vibe guide install",
+    "vibe demo",
+    "vibe list all",
+    "vibe list learnings --type mistake",
+    'vibe check --goal "{{goal}}" --plan "{{steps}}"',
+    "vibe doctor",
+    "vibe prune --duplicates",
+    "vibe prune --duplicates --yes",
+    "vibe doctor --json",
+  ];
+  const ESC = String.fromCharCode(27);
+
+  /** Run one bundled invocation from an unrelated caller directory. */
+  async function runBundled(
+    args: string[],
+    options: { home: TempHomeContext; cwd: string; recordPath: string },
+  ): Promise<CliResult> {
+    return runChild(
+      "bun",
+      [
+        "run",
+        "--preload",
+        failOnFetchRecorder,
+        join(extractedRoot, "dist", "vibe.js"),
+        ...args,
+      ],
+      {
+        cwd: options.cwd,
+        env: {
+          ...process.env,
+          HOME: options.home.home,
+          VIBE_FETCH_RECORD: options.recordPath,
+          CI: "true",
+          NO_COLOR: "1",
+          PAGER: "cat",
+          TERM: "dumb",
+        },
+        timeout: 30_000,
+      },
+    );
+  }
+
+  /** Assert every curated command appears backticked in curated order. */
+  function expectOrderedTldrCommands(output: string): void {
+    let previous = -1;
+    for (const command of EXPECTED_TLDR_COMMANDS) {
+      const index = output.indexOf(`\`${command}\``);
+      expect(index).toBeGreaterThan(previous);
+      previous = index;
+    }
+  }
+
+  /** Snapshot every file under `root` as sorted `path:sha256` entries. */
+  async function snapshotTree(root: string): Promise<string[]> {
+    const entries: string[] = [];
+    async function walk(dir: string): Promise<void> {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(path);
+          continue;
+        }
+        const digest = createHash("sha256")
+          .update(await readFile(path))
+          .digest("hex");
+        entries.push(`${relative(root, path)}:${digest}`);
+      }
+    }
+    await walk(root);
+    return entries.sort();
+  }
+
+  test("keeps the extracted package free of the tldr markdown asset", () => {
+    expect(existsSync(join(extractedRoot, "docs", "vibe-guide.md"))).toBe(true);
+    expect(existsSync(join(extractedRoot, "docs", "tldr.md"))).toBe(false);
+  });
+
+  test("renders complete bundled tldr text from an isolated caller directory without network attempts", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    const recordPath = join(callerCwd, "fetch-records.jsonl");
+    try {
+      const result = await runBundled(["tldr"], {
+        home: tempHome,
+        cwd: callerCwd,
+        recordPath,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.split("\n")[0]).toBe("vibe");
+      expect(result.stdout).toContain("mentor");
+      expect(result.stdout).toContain("{{goal}}");
+      expect(result.stdout).toContain("{{steps}}");
+      expect(result.stdout).not.toContain(ESC);
+      expectOrderedTldrCommands(result.stdout);
+      expect(existsSync(recordPath)).toBe(false);
+      expect(existsSync(tempHome.dataRoot)).toBe(false);
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("emits the exact bundled tldr JSON shape with preserved commands and placeholders", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    const recordPath = join(callerCwd, "fetch-records.jsonl");
+    try {
+      const result = await runBundled(["tldr", "--json"], {
+        home: tempHome,
+        cwd: callerCwd,
+        recordPath,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).not.toContain(ESC);
+
+      const payload = JSON.parse(result.stdout) as {
+        title: string;
+        description: string;
+        examples: { description: string; command: string }[];
+      };
+      expect(Object.keys(payload).sort()).toEqual([
+        "description",
+        "examples",
+        "title",
+      ]);
+      expect(payload.title).toBe("vibe");
+      expect(payload.description).toContain("mentor");
+      expect(payload.examples).toHaveLength(12);
+      expect(payload.examples.map((example) => example.command)).toEqual(
+        EXPECTED_TLDR_COMMANDS,
+      );
+      for (const example of payload.examples) {
+        expect(Object.keys(example).sort()).toEqual(["command", "description"]);
+        expect(example.description.length).toBeGreaterThan(0);
+      }
+      expect(existsSync(recordPath)).toBe(false);
+      expect(existsSync(tempHome.dataRoot)).toBe(false);
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps seeded storage and legacy .env byte-identical across bundled tldr runs", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    const recordPath = join(callerCwd, "fetch-records.jsonl");
+    try {
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      await writeFile(
+        join(tempHome.dataRoot, ".env"),
+        "DEFAULT_MODEL=file-model\n",
+      );
+      seedLearningEntries(tempHome.dataRoot, [
+        {
+          type: "mistake",
+          category: "bundled",
+          observation: "Seeded observation",
+          solution: "Seeded solution",
+          timestamp: Date.parse("2026-01-01T00:00:00.000Z"),
+        },
+      ]);
+      seedSessionsAndInteractions(
+        tempHome,
+        [{ id: "session-seeded", cwdKey: "bundled-tldr" }],
+        [],
+      );
+      // No settings.json: bundled tldr must not require provider settings.
+      const before = await snapshotTree(tempHome.dataRoot);
+
+      const text = await runBundled(["tldr"], {
+        home: tempHome,
+        cwd: callerCwd,
+        recordPath,
+      });
+      const json = await runBundled(["tldr", "--json"], {
+        home: tempHome,
+        cwd: callerCwd,
+        recordPath,
+      });
+
+      expect(text.exitCode).toBe(0);
+      expect(text.stderr).toBe("");
+      expect(json.exitCode).toBe(0);
+      expect(json.stderr).toBe("");
+      expect(
+        (JSON.parse(json.stdout) as { examples: unknown[] }).examples,
+      ).toHaveLength(12);
+      expect(existsSync(recordPath)).toBe(false);
+      expect(await snapshotTree(tempHome.dataRoot)).toEqual(before);
+    } finally {
+      await rm(callerCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps bundled non-tldr help runs warning once despite literal tldr arguments", async () => {
+    const tempHome = await harness.useTempHome();
+    const callerCwd = await mkdtemp(join(tmpdir(), "vibe-isolated-caller-"));
+    const recordPath = join(callerCwd, "fetch-records.jsonl");
+    try {
+      await mkdir(tempHome.dataRoot, { recursive: true });
+      await writeFile(
+        join(tempHome.dataRoot, ".env"),
+        "DEFAULT_MODEL=file-model\n",
+      );
+
+      const checkHelp = await runBundled(
+        ["check", "--goal", "tldr", "--help"],
+        {
+          home: tempHome,
+          cwd: callerCwd,
+          recordPath,
+        },
+      );
+      const skillsHelp = await runBundled(
+        ["skills", "list", "--target", "tldr", "--help"],
+        { home: tempHome, cwd: callerCwd, recordPath },
+      );
+
+      expect(checkHelp.exitCode).toBe(0);
+      expect(checkHelp.stdout).toContain("Usage:");
+      expectLegacyDotenvWarningOnce(checkHelp.stderr);
+
+      expect(skillsHelp.exitCode).toBe(0);
+      expect(skillsHelp.stdout).toContain("Usage:");
+      expectLegacyDotenvWarningOnce(skillsHelp.stderr);
+
+      // Help short-circuits dispatch: neither action may touch local state.
+      expect(existsSync(join(tempHome.dataRoot, "vibe.db"))).toBe(false);
+      expect(existsSync(recordPath)).toBe(false);
     } finally {
       await rm(callerCwd, { recursive: true, force: true });
     }

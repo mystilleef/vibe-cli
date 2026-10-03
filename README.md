@@ -71,6 +71,9 @@ your agent's system prompt so agents know when and how to trigger `vibe`
 skills. Loading remains opt-in. The install command never alters context
 files automatically.
 
+Run `vibe tldr` for the offline cheat sheet
+([`docs/tldr.md`](docs/tldr.md)).
+
 ## Harness skill workflows
 
 Developers instruct coding agents via natural language.
@@ -250,6 +253,7 @@ bun verify
 - `skills/`: bundled agent skills (`vibe-check`, `vibe-learn`,
   `vibe-constitution`).
 - `docs/vibe-guide.md`: operational policy for harness agent context.
+- `docs/tldr.md`: curated offline cheat sheet behind `vibe tldr`.
 - `tests/`: `Bun` test suite.
 
 ## Credits

@@ -19,6 +19,7 @@ const BUILD_INPUTS = [
   "README.md",
   "LICENSE",
   "src",
+  "docs/tldr.md",
 ];
 
 export interface PackedFixture {

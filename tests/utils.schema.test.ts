@@ -51,6 +51,7 @@ describe("buildSchema", () => {
     expect(schema.v).toBe("1.0.0");
     expect(schema.data).toBe("~/.vibe-cli/");
     expect(schema.commands.check).toBeDefined();
+    expect(schema.commands).not.toHaveProperty("tldr");
   });
 
   test("uses provider defaultModel when settings model absent", async () => {
