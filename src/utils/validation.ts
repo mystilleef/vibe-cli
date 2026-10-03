@@ -192,30 +192,10 @@ export async function validateInstallerTarget(
   });
 
   // Preflight target root: reject existing regular-file and non-writable-directory roots
-  let targetExists = false;
-  let targetStat: Stats | undefined;
-  try {
-    targetStat = await lstat(targetRoot);
-    targetExists = true;
-  } catch (error) {
-    if (isEnoent(error)) {
-      // Absent root — defer to parent validation below
-    } else if ((error as NodeJS.ErrnoException).code === "ENOTDIR") {
-      // A path component is not a directory — defer to parent validation
-    } else {
-      throw new validationErrorClass(
-        `Failed to inspect target root '${targetRoot}': ${extractErrorMessage(error)}`,
-      );
-    }
-  }
-
-  if (targetExists && targetStat) {
-    await requireWritableTargetRoot(
-      targetRoot,
-      targetStat,
-      validationErrorClass,
-    );
-  }
+  const targetExists = await inspectTargetRoot(
+    targetRoot,
+    validationErrorClass,
+  );
 
   // Validate immediate parent when target root doesn't exist yet
   if (!targetExists) {
@@ -226,6 +206,37 @@ export async function validateInstallerTarget(
       baseErrorClass,
     });
   }
+}
+
+/**
+ * Enforce the writable-directory contract on an existing target root.
+ *
+ * Returns whether the root exists; absent roots (ENOENT) and non-directory
+ * path components (ENOTDIR) defer to parent validation instead of failing.
+ */
+async function inspectTargetRoot(
+  targetRoot: string,
+  validationErrorClass: ValidateInstallerTargetOptions["validationErrorClass"],
+): Promise<boolean> {
+  let targetStat: Stats | undefined;
+  try {
+    targetStat = await lstat(targetRoot);
+  } catch (error) {
+    if (isEnoent(error)) {
+      // Absent root — defer to parent validation
+      return false;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOTDIR") {
+      // A path component is not a directory — defer to parent validation
+      return false;
+    }
+    throw new validationErrorClass(
+      `Failed to inspect target root '${targetRoot}': ${extractErrorMessage(error)}`,
+    );
+  }
+
+  await requireWritableTargetRoot(targetRoot, targetStat, validationErrorClass);
+  return true;
 }
 
 // ── Destination inspection ────────────────────────────────────────────────

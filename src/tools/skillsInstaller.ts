@@ -9,6 +9,7 @@ import { extractErrorMessage, isEnoent } from "../utils/errors.js";
 import { findPackageRoot } from "../utils/packageRoot.js";
 import {
   computeSkillsInventory,
+  type SkillSource,
   SkillSourceError,
   type SkillsInventory,
   SkillTargetError,
@@ -189,6 +190,35 @@ async function validateTargetRootDirectory(targetRoot: string): Promise<void> {
 }
 
 /**
+ * Execute the planned skill-tree copies into the target root. Per-skill
+ * copy failures mark that entry `failed` without rollback so later skills
+ * still install; batch blocking for modified targets runs earlier.
+ */
+async function copySkillTrees(
+  toInstall: InstallSkillAction[],
+  sourceByName: ReadonlyMap<string, SkillSource>,
+  targetRoot: string,
+): Promise<void> {
+  for (const entry of toInstall) {
+    const source = sourceByName.get(entry.name);
+    if (!source) continue;
+    const destPath = join(targetRoot, entry.name);
+    try {
+      // Remove any existing directory first so a replace mirrors the
+      // bundle exactly, instead of merging and leaving target-only
+      // files the bundle no longer ships.
+      if (entry.status !== "missing") {
+        await rm(destPath, { recursive: true, force: true });
+      }
+      await cp(source.sourcePath, destPath, { recursive: true });
+    } catch (error) {
+      entry.action = "failed";
+      entry.error = extractErrorMessage(error);
+    }
+  }
+}
+
+/**
  * Install bundled skills into target directory.
  */
 export async function installSkills(
@@ -241,25 +271,7 @@ export async function installSkills(
 
   await ensureTargetDirectory(absoluteTargetRoot, InstallError);
 
-  let ok = true;
-  for (const entry of toInstall) {
-    const source = sourceByName.get(entry.name);
-    if (!source) continue;
-    const destPath = join(absoluteTargetRoot, entry.name);
-    try {
-      // Remove any existing directory first so a replace mirrors the
-      // bundle exactly, instead of merging and leaving target-only
-      // files the bundle no longer ships.
-      if (entry.status !== "missing") {
-        await rm(destPath, { recursive: true, force: true });
-      }
-      await cp(source.sourcePath, destPath, { recursive: true });
-    } catch (error) {
-      entry.action = "failed";
-      entry.error = extractErrorMessage(error);
-      ok = false;
-    }
-  }
+  await copySkillTrees(toInstall, sourceByName, absoluteTargetRoot);
 
-  return makeResult(ok);
+  return makeResult(!actions.some((a) => a.action === "failed"));
 }
