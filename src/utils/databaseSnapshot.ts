@@ -286,6 +286,73 @@ interface SnapshotProtocolRun {
   readonly stdoutEnded: boolean;
 }
 
+/** Outcome of consuming one protocol line: continue, or halt consumption. */
+type SnapshotLineOutcome =
+  | { readonly kind: "continue"; readonly protocolIndex: number }
+  | {
+      readonly kind: "halt";
+      readonly protocolIndex: number;
+      readonly failureError: unknown;
+    };
+
+/**
+ * Validate and dispatch one protocol line: parse the frame, enforce the
+ * ordered lifecycle and gated-authorization contract, and dispatch it to the
+ * observer under `deadline`. The outcome carries the advanced protocol index;
+ * a parse failure, violation, dispatch failure, or bound halts consumption
+ * with the effective failure (`null` for a bound).
+ */
+async function processSnapshotProtocolLine(params: {
+  line: string;
+  protocolIndex: number;
+  deadline: Promise<void>;
+  observer: DatabaseSnapshotObserver | undefined;
+  control: DatabaseSnapshotControl;
+  gated: boolean;
+  isAuthorized: () => boolean;
+}): Promise<SnapshotLineOutcome> {
+  const {
+    line,
+    protocolIndex,
+    deadline,
+    observer,
+    control,
+    gated,
+    isAuthorized,
+  } = params;
+  let frame: SnapshotProtocolFrame;
+  try {
+    frame = parseSnapshotProtocolFrame(line);
+  } catch (error) {
+    return { kind: "halt", protocolIndex, failureError: error };
+  }
+  const violation = checkSnapshotProtocolOrder(
+    frame,
+    protocolIndex,
+    gated,
+    isAuthorized(),
+  );
+  if (violation !== null) {
+    return { kind: "halt", protocolIndex, failureError: violation };
+  }
+  const nextIndex = protocolIndex + 1;
+  const dispatchOutcome = await raceSnapshotSettlement(
+    deadline,
+    invokeSnapshotObserver(frame, observer, control),
+  );
+  if (dispatchOutcome.kind === "error") {
+    return {
+      kind: "halt",
+      protocolIndex: nextIndex,
+      failureError: dispatchOutcome.error,
+    };
+  }
+  if (dispatchOutcome.kind === "bound") {
+    return { kind: "halt", protocolIndex: nextIndex, failureError: null };
+  }
+  return { kind: "continue", protocolIndex: nextIndex };
+}
+
 /**
  * Consume the child's stdout protocol stream: parse frames, enforce the
  * ordered lifecycle and gated-authorization contract, and dispatch every
@@ -333,33 +400,20 @@ async function runSnapshotProtocolLoop(params: {
     stdoutBuffer = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.trim()) continue;
-      let frame: SnapshotProtocolFrame;
-      try {
-        frame = parseSnapshotProtocolFrame(line);
-      } catch (error) {
-        failureError = error;
-        break readLoop;
-      }
-      const violation = checkSnapshotProtocolOrder(
-        frame,
+      const lineOutcome = await processSnapshotProtocolLine({
+        line,
         protocolIndex,
-        gated,
-        isAuthorized(),
-      );
-      if (violation !== null) {
-        failureError = violation;
-        break readLoop;
-      }
-      protocolIndex += 1;
-      const dispatchOutcome = await raceSnapshotSettlement(
         deadline,
-        invokeSnapshotObserver(frame, observer, control),
-      );
-      if (dispatchOutcome.kind === "error") {
-        failureError = dispatchOutcome.error;
+        observer,
+        control,
+        gated,
+        isAuthorized,
+      });
+      protocolIndex = lineOutcome.protocolIndex;
+      if (lineOutcome.kind === "halt") {
+        failureError = lineOutcome.failureError;
         break readLoop;
       }
-      if (dispatchOutcome.kind === "bound") break readLoop;
     }
   }
 
@@ -415,96 +469,40 @@ function throwOnSnapshotOutcome(outcome: SnapshotOutcome): void {
 }
 
 /**
- * Execute a SQLite snapshot from `sourcePath` to `destinationPath` in an
- * isolated Bun subprocess.
- *
- * Validates the ordered child lifecycle before any caller treats the snapshot
- * as complete, and settles only after every awaited child resource is
- * terminated, drained, and reaped.
+ * Run the optional pre-spawn observer callback bounded by `deadline`. A bound
+ * or observer failure throws before the child is ever spawned.
  */
-export async function executeDatabaseSnapshot(
-  sourcePath: string,
-  destinationPath: string,
-  options: DatabaseSnapshotOptions = {},
+async function dispatchSnapshotBeforeSpawn(
+  observer: DatabaseSnapshotObserver | undefined,
+  deadline: Promise<void>,
+  timeout: number,
 ): Promise<void> {
-  const { observer, gated = false, timeout = 30_000 } = options;
-
-  let proc: ReturnType<typeof Bun.spawn> | null = null;
-  let stdin: ReturnType<typeof Bun.spawn>["stdin"] | null = null;
-
-  let timedOut = false;
-  let resolveDeadline: () => void = () => {};
-  const deadline = new Promise<void>((resolve) => {
-    resolveDeadline = resolve;
-  });
-  let beginTermination: () => void = () => {};
-  const termination = new Promise<void>((resolve) => {
-    beginTermination = resolve;
-  });
-
-  // Observer completion gets one fixed grace window once termination starts,
-  // so a termination-triggered callback that never resolves cannot hold
-  // settlement open. Actual child reaping is awaited separately below.
-  let terminationTimer: ReturnType<typeof setTimeout> | null = null;
-  const terminationCutoff = termination.then(
-    () =>
-      new Promise<void>((resolve) => {
-        terminationTimer = setTimeout(resolve, TERMINATION_GRACE_MS);
-      }),
+  if (!observer?.onBeforeSpawn) return;
+  const outcome = await raceSnapshotSettlement(
+    deadline,
+    (async () => {
+      await observer.onBeforeSpawn?.();
+    })(),
   );
-
-  let terminationArmed = false;
-  const terminateChild = () => {
-    if (proc !== null) {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        // Child may have already exited.
-      }
-    }
-    if (stdin && typeof stdin !== "number") {
-      try {
-        stdin.end();
-      } catch {
-        // Child may have already closed stdin.
-      }
-    }
-    if (!terminationArmed) {
-      terminationArmed = true;
-      beginTermination();
-    }
-  };
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    resolveDeadline();
-    terminateChild();
-  }, timeout);
-
-  if (observer?.onBeforeSpawn) {
-    const beforeSpawnOutcome = await raceSnapshotSettlement(
-      deadline,
-      (async () => {
-        await observer.onBeforeSpawn?.();
-      })(),
-    );
-    if (beforeSpawnOutcome.kind === "bound") {
-      clearTimeout(timer);
-      throw new Error(`snapshot process timed out after ${timeout}ms`);
-    }
-    if (beforeSpawnOutcome.kind === "error") {
-      clearTimeout(timer);
-      throw beforeSpawnOutcome.error;
-    }
-  }
-
-  if (timedOut) {
-    clearTimeout(timer);
+  if (outcome.kind === "bound") {
     throw new Error(`snapshot process timed out after ${timeout}ms`);
   }
+  if (outcome.kind === "error") {
+    throw outcome.error;
+  }
+}
 
+/**
+ * Spawn the isolated snapshot child. Launch failures surface as one wrapped
+ * error; the caller owns everything after a successful spawn.
+ */
+function spawnSnapshotChild(
+  sourcePath: string,
+  destinationPath: string,
+  gated: boolean,
+): ReturnType<typeof Bun.spawn> {
   try {
-    proc = Bun.spawn(
+    return Bun.spawn(
       [
         process.execPath,
         "-e",
@@ -522,66 +520,44 @@ export async function executeDatabaseSnapshot(
       },
     );
   } catch (error) {
-    clearTimeout(timer);
     throw new Error(
       `snapshot process failed to spawn: ${extractErrorMessage(error)}`,
     );
   }
+}
 
-  stdin = proc.stdin;
-  if (!stdin || typeof stdin === "number") {
-    clearTimeout(timer);
-    terminateChild();
-    throw new Error("subprocess stdin pipe is unavailable");
+/**
+ * Return a usable child pipe stream. A missing stream or a numeric handle —
+ * an inherited file descriptor, never a pipe — fails as unavailable.
+ */
+function requireSubprocessPipe<T extends object>(
+  stream: T | null | number | undefined,
+  label: string,
+): T {
+  if (!stream || typeof stream === "number") {
+    throw new Error(`subprocess ${label} pipe is unavailable`);
   }
+  return stream;
+}
 
-  const stdout = proc.stdout;
-  if (!stdout || typeof stdout === "number") {
-    clearTimeout(timer);
-    terminateChild();
-    throw new Error("subprocess stdout pipe is unavailable");
-  }
-
-  const stderrStream = proc.stderr;
-  if (!stderrStream || typeof stderrStream === "number") {
-    clearTimeout(timer);
-    terminateChild();
-    throw new Error("subprocess stderr pipe is unavailable");
-  }
-
-  const validStdin = stdin;
-  let authorized = false;
-  const authorizeStart = () => {
-    if (authorized) return;
-    authorized = true;
-    try {
-      validStdin.write("START\n");
-      validStdin.flush();
-    } catch {
-      // Child may have already closed stdin.
-    }
-  };
-
-  const control: DatabaseSnapshotControl = { authorizeStart };
-
-  const reader = stdout.getReader();
-  const stderrPromise = new Response(stderrStream).text();
-  const childExit = proc.exited.then(
-    () => undefined,
-    () => undefined,
-  );
-
-  let { failureError, protocolIndex, stdoutEnded } =
-    await runSnapshotProtocolLoop({
-      reader,
-      deadline,
-      observer,
-      control,
-      gated,
-      isAuthorized: () => authorized,
-      hasTimedOut: () => timedOut,
-    });
-
+/**
+ * Settle the child after protocol consumption. A captured failure — or a
+ * completion racing past `deadline` — terminates the child first; then queued
+ * stdout is drained, stderr is captured, and the child's actual exit is
+ * awaited, so settlement and staging cleanup never race ahead of reaping.
+ * Returns the effective failure and captured stderr.
+ */
+async function settleSnapshotChild(params: {
+  failureError: unknown;
+  deadline: Promise<void>;
+  reader: SnapshotStreamReader;
+  stdoutEnded: boolean;
+  stderrPromise: Promise<string>;
+  childExit: Promise<void>;
+  terminateChild: () => void;
+}): Promise<{ failureError: unknown; stderr: string }> {
+  const { deadline, reader, stderrPromise, childExit, terminateChild } = params;
+  let { failureError, stdoutEnded } = params;
   let stderr = "";
 
   const drainStdout = async (): Promise<void> => {
@@ -635,8 +611,26 @@ export async function executeDatabaseSnapshot(
     }
   }
 
-  const exitCode = proc.exitCode ?? null;
-  const signal = proc.signalCode ?? null;
+  return { failureError, stderr };
+}
+
+/**
+ * Dispatch the optional reaped-observer callback bounded by the termination
+ * grace once termination started, and by `deadline` otherwise. A reaped
+ * failure never replaces an earlier primary failure.
+ */
+async function dispatchSnapshotReaped(params: {
+  observer: DatabaseSnapshotObserver | undefined;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  failureError: unknown;
+  timedOut: boolean;
+  deadline: Promise<void>;
+  terminationCutoff: Promise<void>;
+}): Promise<unknown> {
+  const { observer, exitCode, signal, timedOut, deadline, terminationCutoff } =
+    params;
+  let { failureError } = params;
   const reapedCallback = observer?.onReaped;
   if (reapedCallback) {
     const bound =
@@ -651,24 +645,170 @@ export async function executeDatabaseSnapshot(
       failureError = reapedOutcome.error;
     }
   }
+  return failureError;
+}
 
-  clearTimeout(timer);
-  if (terminationTimer !== null) {
-    clearTimeout(terminationTimer);
-  }
+/**
+ * Execute a SQLite snapshot from `sourcePath` to `destinationPath` in an
+ * isolated Bun subprocess.
+ *
+ * Validates the ordered child lifecycle before any caller treats the snapshot
+ * as complete, and settles only after every awaited child resource is
+ * terminated, drained, and reaped.
+ */
+export async function executeDatabaseSnapshot(
+  sourcePath: string,
+  destinationPath: string,
+  options: DatabaseSnapshotOptions = {},
+): Promise<void> {
+  const { observer, gated = false, timeout = 30_000 } = options;
+
+  let proc: ReturnType<typeof Bun.spawn> | null = null;
+  let stdin: ReturnType<typeof Bun.spawn>["stdin"] | null = null;
+
+  let timedOut = false;
+  const deadline = Promise.withResolvers<void>();
+  const termination = Promise.withResolvers<void>();
+
+  // Observer completion gets one fixed grace window once termination starts,
+  // so a termination-triggered callback that never resolves cannot hold
+  // settlement open. Actual child reaping is awaited separately below.
+  let terminationTimer: ReturnType<typeof setTimeout> | null = null;
+  const terminationCutoff = termination.promise.then(
+    () =>
+      new Promise<void>((resolve) => {
+        terminationTimer = setTimeout(resolve, TERMINATION_GRACE_MS);
+      }),
+  );
+
+  let terminationArmed = false;
+  const terminateChild = () => {
+    if (proc !== null) {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // Child may have already exited.
+      }
+    }
+    if (stdin && typeof stdin !== "number") {
+      try {
+        stdin.end();
+      } catch {
+        // Child may have already closed stdin.
+      }
+    }
+    if (!terminationArmed) {
+      terminationArmed = true;
+      termination.resolve();
+    }
+  };
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    deadline.resolve();
+    terminateChild();
+  }, timeout);
+
   try {
-    reader.releaseLock();
-  } catch {
-    // A read the grace window could not settle still owns the lock.
-  }
+    await dispatchSnapshotBeforeSpawn(observer, deadline.promise, timeout);
+    if (timedOut) {
+      throw new Error(`snapshot process timed out after ${timeout}ms`);
+    }
 
-  throwOnSnapshotOutcome({
-    failureError,
-    timedOut,
-    signal,
-    exitCode,
-    protocolIndex,
-    stderr,
-    timeout,
-  });
+    proc = spawnSnapshotChild(sourcePath, destinationPath, gated);
+
+    // Pipe failure terminates the child before surfacing the pipe error.
+    const requirePipe = <T extends object>(
+      stream: T | null | number | undefined,
+      label: string,
+    ): T => {
+      try {
+        return requireSubprocessPipe(stream, label);
+      } catch (error) {
+        terminateChild();
+        throw error;
+      }
+    };
+
+    const validStdin = requirePipe(proc.stdin, "stdin");
+    stdin = validStdin;
+    const stdout = requirePipe(proc.stdout, "stdout");
+    const stderrStream = requirePipe(proc.stderr, "stderr");
+
+    let authorized = false;
+    const authorizeStart = () => {
+      if (authorized) return;
+      authorized = true;
+      try {
+        validStdin.write("START\n");
+        validStdin.flush();
+      } catch {
+        // Child may have already closed stdin.
+      }
+    };
+
+    const control: DatabaseSnapshotControl = { authorizeStart };
+
+    const reader = stdout.getReader();
+    const stderrPromise = new Response(stderrStream).text();
+    const childExit = proc.exited.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    const protocolRun = await runSnapshotProtocolLoop({
+      reader,
+      deadline: deadline.promise,
+      observer,
+      control,
+      gated,
+      isAuthorized: () => authorized,
+      hasTimedOut: () => timedOut,
+    });
+
+    const settled = await settleSnapshotChild({
+      failureError: protocolRun.failureError,
+      deadline: deadline.promise,
+      reader,
+      stdoutEnded: protocolRun.stdoutEnded,
+      stderrPromise,
+      childExit,
+      terminateChild,
+    });
+    let { failureError } = settled;
+    const { stderr } = settled;
+
+    const exitCode = proc.exitCode ?? null;
+    const signal = proc.signalCode ?? null;
+    failureError = await dispatchSnapshotReaped({
+      observer,
+      exitCode,
+      signal,
+      failureError,
+      timedOut,
+      deadline: deadline.promise,
+      terminationCutoff,
+    });
+
+    if (terminationTimer !== null) {
+      clearTimeout(terminationTimer);
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // A read the grace window could not settle still owns the lock.
+    }
+
+    throwOnSnapshotOutcome({
+      failureError,
+      timedOut,
+      signal,
+      exitCode,
+      protocolIndex: protocolRun.protocolIndex,
+      stderr,
+      timeout,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
