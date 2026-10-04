@@ -30,8 +30,7 @@ import {
 } from "./helpers/concurrentBackupFixtures";
 import { seedLearningEntries, seedSessionRows } from "./helpers/storageSeed";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { DAY_MS } from "./helpers/timeFixtures";
 
 let home: TempHomeContext;
 const activeExclusiveLocks: ConcurrentExclusiveLockProcess[] = [];

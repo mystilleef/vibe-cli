@@ -32,10 +32,9 @@ import {
   type SeedSessionInput,
 } from "./helpers/storageSeed";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
+import { DAY_MS } from "./helpers/timeFixtures";
 
 let home: TempHomeContext;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 beforeEach(async () => {
   home = await createTempHome();
