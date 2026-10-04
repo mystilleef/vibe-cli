@@ -26,8 +26,15 @@ import * as dbCore from "../src/utils/db-core.js";
 import * as provider from "../src/utils/provider.js";
 import * as settings from "../src/utils/settings.js";
 import { runChild } from "./helpers/childProcess.js";
+import { withMutatedEnv } from "./helpers/envFixtures.js";
+import { deepseekSettings, writeSettings } from "./helpers/mockSettings.js";
 import { seedLearningEntries, seedSessionRows } from "./helpers/storageSeed.js";
-import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
+import {
+  createTempHome,
+  type TempHomeContext,
+  withFreshHome,
+} from "./helpers/tempHome.js";
+import { EXPECTED_COMMANDS } from "./helpers/tldrFixtures.js";
 
 type CliModule = typeof import("../src/cli.js");
 
@@ -36,21 +43,6 @@ const originalCwd = process.cwd();
 const ESC = String.fromCharCode(27);
 const LEGACY_DOTENV_WARNING =
   "Deprecated ~/.vibe-cli/.env ignored. Move provider settings to ~/.vibe-cli/settings.json and provide secrets through the parent process environment.";
-
-const EXPECTED_COMMANDS = [
-  "vibe settings install",
-  "vibe verify",
-  "vibe skills install --target ~/.claude/skills",
-  "vibe guide install",
-  "vibe demo",
-  "vibe list all",
-  "vibe list learnings --type mistake",
-  'vibe check --goal "{{goal}}" --plan "{{steps}}"',
-  "vibe doctor",
-  "vibe prune --duplicates",
-  "vibe prune --duplicates --yes",
-  "vibe doctor --json",
-];
 
 let cli: CliModule;
 let fileHome: TempHomeContext;
@@ -63,27 +55,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await fileHome.cleanup();
 });
-
-/** Temporarily apply env overrides (`undefined` deletes) and restore. */
-async function withMutatedEnv<T>(
-  overrides: Record<string, string | undefined>,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const saved = new Map<string, string | undefined>();
-  for (const key of Object.keys(overrides)) saved.set(key, process.env[key]);
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
 
 /** Run `fn` with a controlled `process.stdout.isTTY`, then restore it. */
 async function withStdoutTty<T>(
@@ -105,18 +76,6 @@ async function withStdoutTty<T>(
     } else {
       Object.defineProperty(process.stdout, "isTTY", descriptor);
     }
-  }
-}
-
-/** Run `fn` against a fresh temp HOME, restoring the prior HOME afterwards. */
-async function withFreshHome<T>(
-  fn: (home: TempHomeContext) => Promise<T>,
-): Promise<T> {
-  const fresh = await createTempHome();
-  try {
-    return await fn(fresh);
-  } finally {
-    await fresh.cleanup();
   }
 }
 
@@ -666,25 +625,7 @@ describe("source-process legacy .env diagnostics", () => {
   test("keeps one legacy diagnostic for a source settings-backed command", async () => {
     await withFreshHome(async (fresh) => {
       await writeLegacyEnv(fresh);
-      await writeFile(
-        join(fresh.dataRoot, "settings.json"),
-        JSON.stringify(
-          {
-            provider: "deepseek",
-            providers: [
-              {
-                name: "deepseek",
-                spec: "openai",
-                envVar: "DEEPSEEK_API_KEY",
-                baseUrl: "https://api.deepseek.com/v1",
-                defaultModel: "deepseek-v4-pro",
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-      );
+      await writeSettings(fresh, deepseekSettings());
 
       const result = await runChild(
         "bun",

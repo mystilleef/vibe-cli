@@ -2,24 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { formatTldr, parseTldr } from "../src/utils/tldr.js";
+import { EXPECTED_COMMANDS } from "./helpers/tldrFixtures.js";
 
 const pagePath = join(import.meta.dir, "..", "docs", "tldr.md");
 const tldrModulePath = join(import.meta.dir, "..", "src", "utils", "tldr.ts");
-
-const EXPECTED_COMMANDS = [
-  "vibe settings install",
-  "vibe verify",
-  "vibe skills install --target ~/.claude/skills",
-  "vibe guide install",
-  "vibe demo",
-  "vibe list all",
-  "vibe list learnings --type mistake",
-  'vibe check --goal "{{goal}}" --plan "{{steps}}"',
-  "vibe doctor",
-  "vibe prune --duplicates",
-  "vibe prune --duplicates --yes",
-  "vibe doctor --json",
-] as const;
 
 const ESC = String.fromCharCode(27);
 const ANSI_SEQUENCE = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
