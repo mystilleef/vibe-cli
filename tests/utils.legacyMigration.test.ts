@@ -8,26 +8,16 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { backupLegacyPath } from "../src/utils/legacyMigration.js";
+import { cleanupTempDirs, createTempDir } from "./helpers/skillsTestUtils.js";
 
 const tempRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    tempRoots
-      .splice(0)
-      .map((root) => rm(root, { recursive: true, force: true })),
-  );
+  await cleanupTempDirs(tempRoots.splice(0));
 });
-
-async function createTempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "vibe-cli-legacy-"));
-  tempRoots.push(root);
-  return root;
-}
 
 describe("backupLegacyPath", () => {
   test.each([
@@ -42,7 +32,7 @@ describe("backupLegacyPath", () => {
       expectedSuffix: ".3.bak",
     },
   ])("$name", async ({ existing, expectedSuffix }) => {
-    const root = await createTempRoot();
+    const root = await createTempDir(tempRoots, "vibe-cli-legacy-");
     const artifact = join(root, "vibe-log.json");
     const originalContent = `artifact-bytes-${expectedSuffix}`;
     await writeFile(artifact, originalContent);
