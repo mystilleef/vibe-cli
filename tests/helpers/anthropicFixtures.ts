@@ -22,6 +22,17 @@ export function configureAnthropicEnv(defaultModel: string): void {
 }
 
 /**
+ * Anthropic response text carrying a gate verdict for mock response queues.
+ */
+export function gateDecision(
+  proceed: boolean,
+  confidence: number,
+  reason: string,
+): string {
+  return JSON.stringify({ proceed, confidence, reason });
+}
+
+/**
  * Write a single-provider Anthropic settings file into a temp home.
  *
  * `defaultModel` becomes the provider entry's default model, independent of

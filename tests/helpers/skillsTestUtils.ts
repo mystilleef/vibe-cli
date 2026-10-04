@@ -13,6 +13,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -130,6 +131,23 @@ export async function createPackageRoot(
     await createSkillDir(skillsDir, name, files);
   }
   return root;
+}
+
+// ── Path fixtures ──────────────────────────────────────────────────────────
+
+/**
+ * Create a target path whose parent chain traverses a symlinked directory.
+ * Returns the symlink's real directory alongside the target so callers can
+ * assert nothing leaked through the link.
+ */
+export async function createSymlinkAncestorTarget(
+  tracking: string[],
+): Promise<{ realDir: string; target: string }> {
+  const realDir = await createTempDir(tracking);
+  const parentDir = await createTempDir(tracking);
+  const symlinkDir = join(parentDir, "symlinked-dir");
+  await symlink(realDir, symlinkDir, "dir");
+  return { realDir, target: join(symlinkDir, "nested") };
 }
 
 // ── Filesystem inspection helpers ───────────────────────────────────────────

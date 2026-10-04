@@ -937,6 +937,21 @@ async function closeProtocolChild(child: ProtocolChild): Promise<void> {
   await terminateAndReapChild(child.lifetime, child.label);
 }
 
+/** Shared protocol-child plumbing: framed JSON lines on stdout. */
+const CHILD_EMIT = `function emit(type, data = {}) {
+  process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
+}`;
+
+/** Shared stdin line framing dispatching one trimmed command per line. */
+const CHILD_LINE_FRAMING = `let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  const lines = buffer.split("\\n");
+  buffer = lines.pop() ?? "";
+  for (const line of lines) {
+    const cmd = line.trim();
+    if (!cmd) continue;`;
+
 const WRITER_CHILD_SCRIPT = `
 import { Database } from "bun:sqlite";
 
@@ -944,21 +959,12 @@ const sourcePath = process.argv[1];
 const db = new Database(sourcePath);
 db.run("PRAGMA busy_timeout = 10000");
 
-function emit(type, data = {}) {
-  process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
-}
+${CHILD_EMIT}
 
 process.stdin.resume();
 emit("started");
 
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString();
-  const lines = buffer.split("\\n");
-  buffer = lines.pop() ?? "";
-  for (const line of lines) {
-    const cmd = line.trim();
-    if (!cmd) continue;
+${CHILD_LINE_FRAMING}
     if (cmd === "PREPARE_GEN2") {
       try {
         db.run("BEGIN IMMEDIATE");
@@ -1056,21 +1062,12 @@ import { Database } from "bun:sqlite";
 const sourcePath = process.argv[1];
 const db = new Database(sourcePath);
 
-function emit(type, data = {}) {
-  process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
-}
+${CHILD_EMIT}
 
 process.stdin.resume();
 emit("started");
 
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString();
-  const lines = buffer.split("\\n");
-  buffer = lines.pop() ?? "";
-  for (const line of lines) {
-    const cmd = line.trim();
-    if (!cmd) continue;
+${CHILD_LINE_FRAMING}
     if (cmd === "CHECKPOINT") {
       try {
         db.run("PRAGMA wal_checkpoint(PASSIVE)");
@@ -1126,21 +1123,12 @@ import { Database } from "bun:sqlite";
 const sourcePath = process.argv[1];
 const db = new Database(sourcePath, { readonly: true });
 
-function emit(type, data = {}) {
-  process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
-}
+${CHILD_EMIT}
 
 process.stdin.resume();
 emit("started");
 
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString();
-  const lines = buffer.split("\\n");
-  buffer = lines.pop() ?? "";
-  for (const line of lines) {
-    const cmd = line.trim();
-    if (!cmd) continue;
+${CHILD_LINE_FRAMING}
     if (cmd === "PIN") {
       try {
         db.run("BEGIN");
@@ -1205,9 +1193,7 @@ import { Database } from "bun:sqlite";
 const sourcePath = process.argv[1];
 const db = new Database(sourcePath);
 
-function emit(type, data = {}) {
-  process.stdout.write(JSON.stringify({ type, ...data }) + "\\n");
-}
+${CHILD_EMIT}
 
 process.stdin.resume();
 try {
@@ -1218,14 +1204,7 @@ try {
   process.exit(1);
 }
 
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString();
-  const lines = buffer.split("\\n");
-  buffer = lines.pop() ?? "";
-  for (const line of lines) {
-    const cmd = line.trim();
-    if (!cmd) continue;
+${CHILD_LINE_FRAMING}
     if (cmd === "RELEASE" || cmd === "CLOSE") {
       try {
         db.run("ROLLBACK");

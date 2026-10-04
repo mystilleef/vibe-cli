@@ -9,6 +9,17 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { initializeSchema } from "../../src/utils/database.js";
 import { formatBackupTimestampLabel } from "../../src/utils/databaseBackup.js";
+import type { DoctorSection } from "../../src/utils/doctorSql.js";
+
+/** Successful doctor section carrying `value`. */
+export function sectionOk<T>(value: T): DoctorSection<T> {
+  return { ok: true, value };
+}
+
+/** Failed doctor section carrying `error`. */
+export function sectionFail<T>(error: string): DoctorSection<T> {
+  return { ok: false, error };
+}
 
 /** Timestamp every recorded legacy row carries. */
 const LEGACY_IMPORTED_AT = "2026-01-01T00:00:00.000Z";

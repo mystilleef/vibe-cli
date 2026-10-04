@@ -68,6 +68,18 @@ export function createTempHarness(): TempHarness {
   };
 }
 
+/** Run `fn` against a fresh temp HOME, restoring the prior HOME afterwards. */
+export async function withFreshHome<T>(
+  fn: (home: TempHomeContext) => Promise<T>,
+): Promise<T> {
+  const fresh = await createTempHome();
+  try {
+    return await fn(fresh);
+  } finally {
+    await fresh.cleanup();
+  }
+}
+
 export async function createTempHome(): Promise<TempHomeContext> {
   const previousHome = process.env["HOME"];
   const home = await mkdtemp(join(tmpdir(), "vibe-cli-test-"));

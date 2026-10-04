@@ -1,4 +1,6 @@
 // fallow-ignore-file unused-file
+import { gateDecision } from "./anthropicFixtures.js";
+
 const mode = process.env["VIBE_TEST_ANTHROPIC_MODE"] ?? "proceed";
 
 function anthropicMessage(text: string): Response {
@@ -21,11 +23,11 @@ globalThis.fetch = Object.assign(
 
     if (system.includes("Go/no-go decision engine")) {
       return anthropicMessage(
-        JSON.stringify({
-          proceed: mode === "proceed",
-          confidence: mode === "proceed" ? 0.91 : 0.31,
-          reason: `${mode}:${model}`,
-        }),
+        gateDecision(
+          mode === "proceed",
+          mode === "proceed" ? 0.91 : 0.31,
+          `${mode}:${model}`,
+        ),
       );
     }
 

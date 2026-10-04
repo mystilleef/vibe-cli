@@ -39,6 +39,15 @@ const DEFAULT_PROVIDERS = [
   },
 ] as const;
 
+/** Deepseek provider entry shared by provider-dependent command fixtures. */
+export const DEEPSEEK_PROVIDER = {
+  name: "deepseek",
+  spec: "openai",
+  envVar: "DEEPSEEK_API_KEY",
+  baseUrl: "https://api.deepseek.com/v1",
+  defaultModel: "deepseek-v4-pro",
+} as const;
+
 /**
  * Build a settings object for test fixtures.
  *
@@ -52,6 +61,14 @@ export function mockSettings(overrides: Record<string, unknown> = {}) {
     providers: [...DEFAULT_PROVIDERS],
     ...overrides,
   };
+}
+
+/**
+ * Minimal single-provider deepseek settings for commands that only need
+ * one resolvable provider.
+ */
+export function deepseekSettings() {
+  return { provider: "deepseek", providers: [DEEPSEEK_PROVIDER] };
 }
 
 /** Write settings JSON to a temp home data root. */
