@@ -60,7 +60,7 @@ export interface ListCheck {
   displayCwd: string | null;
 }
 
-export interface ListCategorySummary extends LearningCategorySummary {}
+export type ListCategorySummary = LearningCategorySummary;
 
 export interface ListStats {
   learnings: {
