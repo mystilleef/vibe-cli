@@ -75,7 +75,7 @@ interface GeminiSdkCall {
 }
 
 let geminiSdkCalls: GeminiSdkCall[] = [];
-let geminiResponses: string[] = [];
+let geminiResponses: Array<string | Record<string, unknown> | undefined> = [];
 let geminiErrorMessages: Array<string | undefined> = [];
 let geminiApiKeys: string[] = [];
 
@@ -102,7 +102,12 @@ mock.module("@google/genai", () => ({
         });
         const customError = geminiErrorMessages[geminiSdkCalls.length - 1];
         if (customError !== undefined) throw new Error(customError);
-        return { text: geminiResponses.shift() ?? "" };
+        const next = geminiResponses.shift();
+        // Raw object responses let tests exercise the no-text fallback
+        // branch; strings and empty queues keep the legacy `{ text }` shape.
+        return typeof next === "object" && next !== null
+          ? next
+          : { text: next ?? "" };
       },
     };
   },
@@ -2703,5 +2708,62 @@ describe("Gemini custom endpoint thinking", () => {
     expect(genConfig).toEqual({
       thinkingConfig: { thinkingLevel: "high" },
     });
+  });
+});
+
+describe("Gemini empty-response fallbacks", () => {
+  test.each([
+    ["an absent candidates key", {}],
+    ["an empty candidates array", { candidates: [] }],
+    ["a candidate without content", { candidates: [{}] }],
+    ["parts without text", { candidates: [{ content: { parts: [{}] } }] }],
+  ])(
+    "custom endpoint 200 response with %s resolves to an empty string",
+    async (_label, body) => {
+      process.env["GEMINI_API_KEY"] = "gemini-key";
+      mockFetch(
+        () =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+
+      const result = await callProvider(
+        {
+          name: "gemini",
+          spec: "gemini",
+          envVar: "GEMINI_API_KEY",
+          baseUrl: "https://proxy.example/v1/",
+        },
+        { apiKey: "gemini-key" },
+        "gemini-model",
+        "system prompt",
+        "user prompt",
+      );
+
+      expect(result).toBe("");
+      expect(geminiSdkCalls).toHaveLength(0);
+    },
+  );
+
+  test("SDK response without a text property resolves to an empty string", async () => {
+    process.env["GEMINI_API_KEY"] = "gemini-key";
+    geminiResponses = [{}];
+
+    const result = await callProvider(
+      {
+        name: "gemini",
+        spec: "gemini",
+        envVar: "GEMINI_API_KEY",
+      },
+      { apiKey: "gemini-key" },
+      "gemini-model",
+      "system prompt",
+      "user prompt",
+    );
+
+    expect(result).toBe("");
+    expect(geminiSdkCalls).toHaveLength(1);
   });
 });
