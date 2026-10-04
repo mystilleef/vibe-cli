@@ -39,7 +39,6 @@ import {
 } from "../src/utils/doctorMaintenance.js";
 import {
   type DoctorExecutor,
-  type DoctorSection,
   type DoctorSqlDiagnostics,
   openExistingDatabase,
   runDiagnose,
@@ -54,10 +53,14 @@ import {
 } from "../src/utils/doctorStorage.js";
 import { makeErrno } from "../src/utils/errors.js";
 import * as managedBackups from "../src/utils/managedBackups.js";
+import { FIXED_TIMESTAMP } from "./helpers/backupFixtures.js";
 import {
   createDoctorFixtures,
   managedBackupName,
+  sectionFail,
+  sectionOk,
 } from "./helpers/doctorFixtures.js";
+import { withMutatedEnv } from "./helpers/envFixtures.js";
 import { canEnforcePermissions } from "./helpers/permissions.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
@@ -102,14 +105,6 @@ async function writeManagedBackup(
   const filePath = join(backupsDir, managedBackupName(prefix, iso));
   await writeFile(filePath, content);
   return filePath;
-}
-
-function sectionOk<T>(value: T): DoctorSection<T> {
-  return { ok: true, value };
-}
-
-function sectionFail<T>(error: string): DoctorSection<T> {
-  return { ok: false, error };
 }
 
 function sqlSections(
@@ -587,19 +582,14 @@ describe("collectDoctorDiagnostics open failures", () => {
 
   test("propagates non-ENOENT stat errors without fabricating a report", async () => {
     await writeFile(join(home.home, "blocked"), "not a directory");
-    const previousHome = process.env["HOME"];
-    process.env["HOME"] = join(home.home, "blocked", "nested");
-    try {
-      await expect(collectDoctorDiagnostics({ retention: 5 })).rejects.toThrow(
-        /not a directory/,
-      );
-    } finally {
-      if (previousHome === undefined) {
-        delete process.env["HOME"];
-      } else {
-        process.env["HOME"] = previousHome;
-      }
-    }
+    await withMutatedEnv(
+      { HOME: join(home.home, "blocked", "nested") },
+      async () => {
+        await expect(
+          collectDoctorDiagnostics({ retention: 5 }),
+        ).rejects.toThrow(/not a directory/);
+      },
+    );
   });
 });
 
@@ -1375,7 +1365,6 @@ async function captureState(): Promise<CapturedStorageState> {
 
 // ── createDoctorDatabaseBackup: dispatch contract ────────────────────────
 
-const FIXED_TIMESTAMP = new Date("2026-01-02T03:04:05.678Z");
 const FIXED_LABEL = "2026-01-02T03-04-05-678Z";
 
 describe("createDoctorDatabaseBackup dispatch", () => {

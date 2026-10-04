@@ -25,16 +25,20 @@ import type {
 } from "../src/utils/doctorMaintenance.js";
 import type {
   DoctorExecutor,
-  DoctorSection,
   DoctorSqlDiagnostics,
 } from "../src/utils/doctorSql.js";
 import type { DoctorFindings } from "../src/utils/doctorStorage.js";
 import { makeErrno } from "../src/utils/errors.js";
-import { createDoctorFixtures } from "./helpers/doctorFixtures.js";
+import { FIXED_TIMESTAMP } from "./helpers/backupFixtures.js";
+import {
+  createDoctorFixtures,
+  sectionFail,
+  sectionOk,
+} from "./helpers/doctorFixtures.js";
 import { requireBackupPath } from "./helpers/requireBackupPath.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
-const FIXED_TIMESTAMP = new Date("2026-01-02T03:04:05.678Z");
+const FIXED_LABEL = FIXED_TIMESTAMP.toISOString().replace(/[.:]/g, "-");
 const NO_APPLIED = { vacuum: 0, purgeBackups: 0, purgeLegacy: 0 };
 const FAKE_RECLAIMED_PAGES = 3;
 
@@ -77,14 +81,6 @@ function readTable(table: string, path = databasePath()): unknown[] {
 }
 
 // ── Executor and filesystem fakes ─────────────────────────────────────────
-
-function sectionOk<T>(value: T): DoctorSection<T> {
-  return { ok: true, value };
-}
-
-function sectionFail<T>(error: string): DoctorSection<T> {
-  return { ok: false, error };
-}
 
 function tick(): Promise<void> {
   return new Promise((resolveTick) => setImmediate(resolveTick));
@@ -568,7 +564,7 @@ describe("runDoctor — safety backup and target execution", () => {
     const expectedBackupPath = join(
       home.dataRoot,
       "backups",
-      `vibe-doctor-${FIXED_TIMESTAMP.toISOString().replace(/[.:]/g, "-")}.db`,
+      `vibe-doctor-${FIXED_LABEL}.db`,
     );
 
     const doctorPromise = runDoctor(
@@ -735,7 +731,7 @@ describe("runDoctor — safety backup and target execution", () => {
     const expectedBackupFile = join(
       home.dataRoot,
       "backups",
-      `vibe-doctor-${FIXED_TIMESTAMP.toISOString().replace(/[.:]/g, "-")}.db`,
+      `vibe-doctor-${FIXED_LABEL}.db`,
     );
 
     const payload = await runDoctor(

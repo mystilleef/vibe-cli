@@ -5,6 +5,7 @@ import {
   formatDoctorReport,
   formatPruneReport,
 } from "../src/utils/doctorPruneFormatters.js";
+import { DAY_MS } from "./helpers/timeFixtures.js";
 
 const FINDINGS_HEADERS = [
   "integrity",
@@ -58,7 +59,6 @@ function makeUnavailablePayload(): DoctorSuccessPayload {
 const SAFETY_BACKUP_PATH = "/data/backups/safety.db";
 
 const FROZEN_CLOCK = { now: new Date("2026-01-01T00:00:00.000Z") };
-const DAY_MS = 24 * 60 * 60 * 1000;
 const OBSERVATION_PREVIEW_LENGTH = 50;
 
 type PruneCountOverrides = Partial<PruneSuccessPayload["candidateCounts"]>;

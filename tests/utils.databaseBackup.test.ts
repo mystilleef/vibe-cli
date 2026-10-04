@@ -26,10 +26,10 @@ import {
   executeDatabaseSnapshot,
 } from "../src/utils/databaseSnapshot";
 import { readManagedBackupEntries } from "../src/utils/managedBackups";
+import { FIXED_TIMESTAMP } from "./helpers/backupFixtures";
 import { insertLearningRows, seedLearningEntries } from "./helpers/storageSeed";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
-const FIXED_TIMESTAMP = new Date("2026-01-02T03:04:05.678Z");
 const FIXED_LABEL = formatBackupTimestampLabel(FIXED_TIMESTAMP.toISOString());
 const LATER_TIMESTAMP = new Date("2026-01-02T03:04:06.000Z");
 const LATER_LABEL = formatBackupTimestampLabel(LATER_TIMESTAMP.toISOString());
