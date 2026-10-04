@@ -14,6 +14,8 @@ import {
   SkillTargetError,
 } from "../src/utils/skills.js";
 import { runChild } from "./helpers/childProcess.js";
+import { withUnavailableHome } from "./helpers/envFixtures.js";
+import { failOnLstatSync, failOnReaddirSync } from "./helpers/failOnFsSync.js";
 import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
   cleanupTempDirs,
@@ -34,6 +36,78 @@ afterEach(async () => {
   process.chdir(originalCwd);
   await cleanupTempDirs(tempDirs);
 });
+
+/**
+ * Create `skill-a` under `parent` holding `SKILL.md`, plus a `childName`
+ * directory populated with `childFiles`, and return the child path.
+ */
+async function seedSkillWithChildDir(
+  parent: string,
+  childName: string,
+  childFiles: Record<string, string> = {},
+): Promise<string> {
+  const skillDir = await createSkillDir(parent, "skill-a", {
+    "SKILL.md": "# A",
+  });
+  const childDir = await createSkillDir(skillDir, childName, childFiles);
+  // createSkillDir materializes only directories that hold written files.
+  await mkdir(childDir, { recursive: true });
+  return childDir;
+}
+
+/** Run `fn` while lstatSync reports `entry` as both a directory and a symlink. */
+async function withHybridLstatEntry(
+  entry: string,
+  fn: () => void,
+): Promise<void> {
+  const fsModule = await import("node:fs");
+  const originalLstatSync = fsModule.lstatSync;
+  const spy = spyOn(fsModule, "lstatSync");
+  spy.mockImplementation(((p: PathLike) => {
+    if (String(p) === entry) {
+      return {
+        isDirectory: () => true,
+        isSymbolicLink: () => true,
+        isFile: () => false,
+      } as unknown as Stats;
+    }
+    return originalLstatSync(p);
+  }) as typeof fsModule.lstatSync);
+  try {
+    fn();
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/** Run `fn` while realpathSync for `entry` resolves through `resolvePath`. */
+async function withRealpathOverride(
+  entry: string,
+  resolvePath: (p: string) => string,
+  fn: () => void,
+): Promise<void> {
+  const fsModule = await import("node:fs");
+  const originalRealpathSync = fsModule.realpathSync;
+  const spy = spyOn(fsModule, "realpathSync");
+  spy.mockImplementation(((p: string) =>
+    p === entry
+      ? resolvePath(p)
+      : originalRealpathSync(p)) as typeof fsModule.realpathSync);
+  try {
+    fn();
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/** Throw the EIO realpath failure fault injection reports. */
+function throwRealpathEio(p: string): string {
+  const err = new Error(
+    `EIO: i/o error, realpath '${p}'`,
+  ) as NodeJS.ErrnoException;
+  err.code = "EIO";
+  throw err;
+}
 
 describe("discoverBundledSkills", () => {
   test("discovers skills with SKILL.md in direct children of skills/", async () => {
@@ -1097,19 +1171,10 @@ describe("readSkillTarget — non-directory and error paths", () => {
   test("throws SkillTargetError when lstat fails with non-ENOENT error on target entry", async () => {
     const targetRoot = await createTempDir(tempDirs);
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === join(targetRoot, "skill-a")) {
-        const err = new Error(
-          `EACCES: permission denied, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync(
+      (p) => p === join(targetRoot, "skill-a"),
+      "EACCES",
+    );
 
     try {
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
@@ -1119,7 +1184,7 @@ describe("readSkillTarget — non-directory and error paths", () => {
         /Failed to stat target/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -1218,21 +1283,10 @@ describe("walkSkillDirectory — file read failure", () => {
     const skillsDir = join(root, "skills");
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
-    const fsModule = await import("node:fs");
-    const originalReaddirSync = fsModule.readdirSync;
-    const spy = spyOn(fsModule, "readdirSync");
-    spy.mockImplementation(((p: PathLike) => {
-      // Fail on the skill-a directory itself, not on nested paths
-      const pathStr = String(p);
-      if (pathStr.endsWith("skill-a") && !pathStr.includes("nested")) {
-        const err = new Error(
-          `EACCES: permission denied, scandir '${pathStr}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalReaddirSync(p);
-    }) as typeof fsModule.readdirSync);
+    const restore = await failOnReaddirSync(
+      (p) => p.endsWith("skill-a") && !p.includes("nested"),
+      "EACCES",
+    );
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1242,7 +1296,7 @@ describe("walkSkillDirectory — file read failure", () => {
         /Failed to read directory/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -1386,143 +1440,70 @@ describe("walkSkillDirectory — escape detection is defensive", () => {
 
   test("rejects a source entry reporting both directory and symlink before traversal", async () => {
     const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    const skillDir = join(skillsDir, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const hybridDir = join(skillDir, "hybrid-dir");
-    await mkdir(hybridDir, { recursive: true });
+    const hybridDir = await seedSkillWithChildDir(
+      join(root, "skills"),
+      "hybrid-dir",
+    );
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: PathLike) => {
-      if (String(p) === hybridDir) {
-        return {
-          isDirectory: () => true,
-          isSymbolicLink: () => true,
-          isFile: () => false,
-        } as unknown as Stats;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
-
-    try {
+    await withHybridLstatEntry(hybridDir, () => {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
         SkillSourceError,
       );
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
         /is a symlink/i,
       );
-    } finally {
-      spy.mockRestore();
-    }
+    });
   });
 
   test("rejects a target entry reporting both directory and symlink before traversal", async () => {
     const targetRoot = await createTempDir(tempDirs);
-    const skillDir = join(targetRoot, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const hybridDir = join(skillDir, "hybrid-dir");
-    await mkdir(hybridDir, { recursive: true });
+    const hybridDir = await seedSkillWithChildDir(targetRoot, "hybrid-dir");
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: PathLike) => {
-      if (String(p) === hybridDir) {
-        return {
-          isDirectory: () => true,
-          isSymbolicLink: () => true,
-          isFile: () => false,
-        } as unknown as Stats;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
-
-    try {
+    await withHybridLstatEntry(hybridDir, () => {
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
         SkillTargetError,
       );
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
         /is a symlink/i,
       );
-    } finally {
-      spy.mockRestore();
-    }
+    });
   });
 });
 describe("walkSkillDirectory — realpathSync failure", () => {
   test("throws SkillSourceError when realpathSync fails on nested directory", async () => {
     const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    const skillDir = join(skillsDir, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const nestedDir = join(skillDir, "nested");
-    await mkdir(nestedDir, { recursive: true });
-    await writeFile(join(nestedDir, "nested.txt"), "data");
+    const nestedDir = await seedSkillWithChildDir(
+      join(root, "skills"),
+      "nested",
+      {
+        "nested.txt": "data",
+      },
+    );
 
-    const fsModule = await import("node:fs");
-    const originalRealpathSync = fsModule.realpathSync;
-    const spy = spyOn(fsModule, "realpathSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === nestedDir) {
-        const err = new Error(
-          `EIO: i/o error, realpath '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalRealpathSync(p);
-    }) as typeof fsModule.realpathSync);
-
-    try {
+    await withRealpathOverride(nestedDir, throwRealpathEio, () => {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
         SkillSourceError,
       );
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
         /Failed to resolve/i,
       );
-    } finally {
-      spy.mockRestore();
-    }
+    });
   });
 
   test("throws SkillTargetError when realpathSync fails on nested target directory", async () => {
     const targetRoot = await createTempDir(tempDirs);
-    const skillDir = join(targetRoot, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const nestedDir = join(skillDir, "nested");
-    await mkdir(nestedDir, { recursive: true });
-    await writeFile(join(nestedDir, "nested.txt"), "data");
+    const nestedDir = await seedSkillWithChildDir(targetRoot, "nested", {
+      "nested.txt": "data",
+    });
 
-    const fsModule = await import("node:fs");
-    const originalRealpathSync = fsModule.realpathSync;
-    const spy = spyOn(fsModule, "realpathSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === nestedDir) {
-        const err = new Error(
-          `EIO: i/o error, realpath '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalRealpathSync(p);
-    }) as typeof fsModule.realpathSync);
-
-    try {
+    await withRealpathOverride(nestedDir, throwRealpathEio, () => {
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
         SkillTargetError,
       );
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
         /Failed to resolve/i,
       );
-    } finally {
-      spy.mockRestore();
-    }
+    });
   });
 });
 
@@ -1534,19 +1515,7 @@ describe("assertEntryType — stat failure on root directory", () => {
     const skillsDir = join(root, "skills");
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === skillsDir) {
-        const err = new Error(
-          `EIO: i/o error, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync((p) => p === skillsDir, "EIO");
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1556,7 +1525,7 @@ describe("assertEntryType — stat failure on root directory", () => {
         /Failed to stat Skills directory/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });
@@ -1570,21 +1539,11 @@ describe("walkSkillDirectory — per-entry lstat failure on source side", () => 
       "script.sh": "echo hello",
     });
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      // Fail on script.sh inside skill-a, but only from within walkSkillDirectory
-      // We need to fail AFTER the SKILL.md check passes but DURING walk
-      if (p === join(skillsDir, "skill-a", "script.sh")) {
-        const err = new Error(
-          `EIO: i/o error, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    // Fail inside walkSkillDirectory, after the SKILL.md check passes.
+    const restore = await failOnLstatSync(
+      (p) => p === join(skillsDir, "skill-a", "script.sh"),
+      "EIO",
+    );
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1594,7 +1553,7 @@ describe("walkSkillDirectory — per-entry lstat failure on source side", () => 
         /Failed to stat/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });
@@ -1606,19 +1565,7 @@ describe("assertSafeRoot — non-ENOENT lstat failure", () => {
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
     const targetRoot = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === targetRoot) {
-        const err = new Error(
-          `EACCES: permission denied, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync((p) => p === targetRoot, "EACCES");
 
     try {
       expect(() =>
@@ -1628,7 +1575,7 @@ describe("assertSafeRoot — non-ENOENT lstat failure", () => {
         computeSkillsInventory(targetRoot, { packageRoot: root }),
       ).toThrow(/Failed to stat/i);
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -1638,19 +1585,7 @@ describe("assertSafeRoot — non-ENOENT lstat failure", () => {
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
     const targetRoot = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === targetRoot) {
-        const err = new Error(
-          `EIO: i/o error, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync((p) => p === targetRoot, "EIO");
 
     try {
       expect(() =>
@@ -1660,7 +1595,7 @@ describe("assertSafeRoot — non-ENOENT lstat failure", () => {
         computeSkillsInventory(targetRoot, { packageRoot: root }),
       ).toThrow(/Failed to stat/i);
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });
@@ -1672,19 +1607,10 @@ describe("discoverBundledSkills — lstatSync failure on entry", () => {
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
     await createSkillDir(skillsDir, "skill-b", { "SKILL.md": "# B" });
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === join(skillsDir, "skill-b")) {
-        const err = new Error(
-          `EIO: i/o error, lstat '${p}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync(
+      (p) => p === join(skillsDir, "skill-b"),
+      "EIO",
+    );
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1694,7 +1620,7 @@ describe("discoverBundledSkills — lstatSync failure on entry", () => {
         /Failed to stat/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });
@@ -1708,20 +1634,10 @@ describe("walkSkillDirectory — subdirectory readdir failure", () => {
       "nested/file.txt": "data",
     });
 
-    const fsModule = await import("node:fs");
-    const originalReaddirSync = fsModule.readdirSync;
-    const spy = spyOn(fsModule, "readdirSync");
-    spy.mockImplementation(((p: PathLike) => {
-      const pathStr = String(p);
-      if (pathStr.includes("nested")) {
-        const err = new Error(
-          `EACCES: permission denied, scandir '${pathStr}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalReaddirSync(p);
-    }) as typeof fsModule.readdirSync);
+    const restore = await failOnReaddirSync(
+      (p) => p.includes("nested"),
+      "EACCES",
+    );
 
     try {
       expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
@@ -1731,7 +1647,7 @@ describe("walkSkillDirectory — subdirectory readdir failure", () => {
         /Failed to read directory/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -1744,20 +1660,10 @@ describe("walkSkillDirectory — subdirectory readdir failure", () => {
     await mkdir(nestedDir, { recursive: true });
     await writeFile(join(nestedDir, "file.txt"), "data");
 
-    const fsModule = await import("node:fs");
-    const originalReaddirSync = fsModule.readdirSync;
-    const spy = spyOn(fsModule, "readdirSync");
-    spy.mockImplementation(((p: PathLike) => {
-      const pathStr = String(p);
-      if (pathStr.includes("nested")) {
-        const err = new Error(
-          `EACCES: permission denied, scandir '${pathStr}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalReaddirSync(p);
-    }) as typeof fsModule.readdirSync);
+    const restore = await failOnReaddirSync(
+      (p) => p.includes("nested"),
+      "EACCES",
+    );
 
     try {
       expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
@@ -1767,7 +1673,7 @@ describe("walkSkillDirectory — subdirectory readdir failure", () => {
         /Failed to read directory/i,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });
@@ -1775,111 +1681,70 @@ describe("walkSkillDirectory — subdirectory readdir failure", () => {
 describe("walkSkillDirectory — escape detection", () => {
   test("throws SkillSourceError when nested directory resolves outside skill root", async () => {
     const root = await createPackageRoot(tempDirs);
-    const skillsDir = join(root, "skills");
-    const skillDir = join(skillsDir, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const nestedDir = join(skillDir, "nested");
-    await mkdir(nestedDir, { recursive: true });
-    await writeFile(join(nestedDir, "file.txt"), "data");
+    const nestedDir = await seedSkillWithChildDir(
+      join(root, "skills"),
+      "nested",
+      {
+        "file.txt": "data",
+      },
+    );
 
     // Make realpathSync for the nested directory return a path outside the
     // skill root, simulating a bind-mount escape. The directory is real
     // (not a symlink), so the earlier isSymbolicLink check passes.
     const externalDir = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalRealpathSync = fsModule.realpathSync;
-    const spy = spyOn(fsModule, "realpathSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === nestedDir) return externalDir;
-      return originalRealpathSync(p);
-    }) as typeof fsModule.realpathSync);
-
-    try {
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        SkillSourceError,
-      );
-      expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
-        /escapes skill root/i,
-      );
-    } finally {
-      spy.mockRestore();
-    }
+    await withRealpathOverride(
+      nestedDir,
+      () => externalDir,
+      () => {
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          SkillSourceError,
+        );
+        expect(() => discoverBundledSkills({ packageRoot: root })).toThrow(
+          /escapes skill root/i,
+        );
+      },
+    );
   });
 
   test("throws SkillTargetError when nested target directory escapes target root", async () => {
     const targetRoot = await createTempDir(tempDirs);
-    const skillDir = join(targetRoot, "skill-a");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(join(skillDir, "SKILL.md"), "# A");
-    const nestedDir = join(skillDir, "nested");
-    await mkdir(nestedDir, { recursive: true });
-    await writeFile(join(nestedDir, "file.txt"), "data");
+    const nestedDir = await seedSkillWithChildDir(targetRoot, "nested", {
+      "file.txt": "data",
+    });
 
     const externalDir = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalRealpathSync = fsModule.realpathSync;
-    const spy = spyOn(fsModule, "realpathSync");
-    spy.mockImplementation(((p: string) => {
-      if (p === nestedDir) return externalDir;
-      return originalRealpathSync(p);
-    }) as typeof fsModule.realpathSync);
-
-    try {
-      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
-        SkillTargetError,
-      );
-      expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
-        /escapes skill root/i,
-      );
-    } finally {
-      spy.mockRestore();
-    }
+    await withRealpathOverride(
+      nestedDir,
+      () => externalDir,
+      () => {
+        expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+          SkillTargetError,
+        );
+        expect(() => readSkillTarget("skill-a", targetRoot)).toThrow(
+          /escapes skill root/i,
+        );
+      },
+    );
   });
 });
 
 // ── getSafeHomedir — error path when home cannot be determined ─────────
 
 describe("resolveTargetRoot — home detection failure", () => {
-  test("throws when home directory cannot be determined", async () => {
-    const savedHome = process.env["HOME"];
-    delete process.env["HOME"];
-
-    const osModule = await import("node:os");
-    const spy = spyOn(osModule, "homedir");
-    spy.mockReturnValue("");
-
-    try {
+  test("throws when home directory cannot be determined", () =>
+    withUnavailableHome(async () => {
       expect(() => resolveDefaultTargetRoot()).toThrow(
         /Unable to determine home directory/i,
       );
-    } finally {
-      spy.mockRestore();
-      if (savedHome !== undefined) {
-        process.env["HOME"] = savedHome;
-      }
-    }
-  });
+    }));
 
-  test("resolveTargetRoot throws when home cannot be determined with ~ expansion", async () => {
-    const savedHome = process.env["HOME"];
-    delete process.env["HOME"];
-
-    const osModule = await import("node:os");
-    const spy = spyOn(osModule, "homedir");
-    spy.mockReturnValue("");
-
-    try {
+  test("resolveTargetRoot throws when home cannot be determined with ~ expansion", () =>
+    withUnavailableHome(async () => {
       expect(() => resolveTargetRoot("~/some/path")).toThrow(
         /Unable to determine home directory/i,
       );
-    } finally {
-      spy.mockRestore();
-      if (savedHome !== undefined) {
-        process.env["HOME"] = savedHome;
-      }
-    }
-  });
+    }));
 });
 
 // ── assertSafeRoot — root-level readdir failure ────────────────────────
@@ -1891,20 +1756,7 @@ describe("assertSafeRoot — root readdir failure", () => {
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
     const targetRoot = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalReaddirSync = fsModule.readdirSync;
-    const spy = spyOn(fsModule, "readdirSync");
-    spy.mockImplementation(((p: PathLike) => {
-      const pathStr = String(p);
-      if (pathStr === targetRoot) {
-        const err = new Error(
-          `EACCES: permission denied, scandir '${pathStr}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalReaddirSync(p);
-    }) as typeof fsModule.readdirSync);
+    const restore = await failOnReaddirSync((p) => p === targetRoot, "EACCES");
 
     try {
       expect(() =>
@@ -1914,7 +1766,7 @@ describe("assertSafeRoot — root readdir failure", () => {
         computeSkillsInventory(targetRoot, { packageRoot: root }),
       ).toThrow(/Failed to read Target root/i);
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -1924,20 +1776,7 @@ describe("assertSafeRoot — root readdir failure", () => {
     await createSkillDir(skillsDir, "skill-a", { "SKILL.md": "# A" });
 
     const targetRoot = await createTempDir(tempDirs);
-    const fsModule = await import("node:fs");
-    const originalReaddirSync = fsModule.readdirSync;
-    const spy = spyOn(fsModule, "readdirSync");
-    spy.mockImplementation(((p: PathLike) => {
-      const pathStr = String(p);
-      if (pathStr === skillsDir) {
-        const err = new Error(
-          `EACCES: permission denied, scandir '${pathStr}'`,
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalReaddirSync(p);
-    }) as typeof fsModule.readdirSync);
+    const restore = await failOnReaddirSync((p) => p === skillsDir, "EACCES");
 
     try {
       expect(() =>
@@ -1947,7 +1786,7 @@ describe("assertSafeRoot — root readdir failure", () => {
         computeSkillsInventory(targetRoot, { packageRoot: root }),
       ).toThrow(/Failed to read Skills directory/i);
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 });

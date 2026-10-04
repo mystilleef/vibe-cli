@@ -9,6 +9,8 @@ import {
   resolveGuideSource,
   resolveGuideTarget,
 } from "../src/utils/guide.js";
+import { withUnavailableHome } from "./helpers/envFixtures.js";
+import { failOnLstatSync } from "./helpers/failOnFsSync.js";
 import { cleanupTempDirs, createTempDir } from "./helpers/skillsTestUtils.js";
 
 let tempDirs: string[] = [];
@@ -498,22 +500,10 @@ describe("inspectGuide", () => {
     const targetDir = join(root, "target");
     await mkdir(targetDir, { recursive: true });
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: Parameters<typeof fsModule.lstatSync>[0]) => {
-      if (
-        p === targetDir ||
-        (typeof p === "string" && p.startsWith(`${targetDir}/`))
-      ) {
-        const err = new Error(
-          "EACCES: permission denied",
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync(
+      (p) => p === targetDir || p.startsWith(`${targetDir}/`),
+      "EACCES",
+    );
 
     try {
       expect(() => inspectGuide(targetDir, root)).toThrow(GuideTargetError);
@@ -521,7 +511,7 @@ describe("inspectGuide", () => {
         /Failed to stat target directory/,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -571,19 +561,10 @@ describe("inspectGuide", () => {
     const intermediatePath = join(targetDir, "subdir");
     await mkdir(intermediatePath);
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: Parameters<typeof fsModule.lstatSync>[0]) => {
-      if (p === intermediatePath) {
-        const err = new Error(
-          "EACCES: permission denied",
-        ) as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync(
+      (p) => p === intermediatePath,
+      "EACCES",
+    );
 
     try {
       // Target a path that goes through intermediatePath
@@ -593,7 +574,7 @@ describe("inspectGuide", () => {
         /Failed to stat target path '.*subdir'/,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -606,17 +587,10 @@ describe("inspectGuide", () => {
 
     const targetDir = await createTempDir(tempDirs);
 
-    const fsModule = await import("node:fs");
-    const originalLstatSync = fsModule.lstatSync;
-    const spy = spyOn(fsModule, "lstatSync");
-    spy.mockImplementation(((p: Parameters<typeof fsModule.lstatSync>[0]) => {
-      if (typeof p === "string" && p.endsWith("vibe-guide.md")) {
-        const err = new Error("EIO: I/O error") as NodeJS.ErrnoException;
-        err.code = "EIO";
-        throw err;
-      }
-      return originalLstatSync(p);
-    }) as typeof fsModule.lstatSync);
+    const restore = await failOnLstatSync(
+      (p) => p.endsWith("vibe-guide.md"),
+      "EIO",
+    );
 
     try {
       expect(() => inspectGuide(targetDir, root)).toThrow(GuideTargetError);
@@ -624,7 +598,7 @@ describe("inspectGuide", () => {
         /Failed to stat guide destination/,
       );
     } finally {
-      spy.mockRestore();
+      restore();
     }
   });
 
@@ -716,26 +690,13 @@ describe("inspectGuide", () => {
 });
 
 describe("getSafeHomedir via resolveGuideTarget", () => {
-  test("resolveGuideTarget throws when HOME is empty and homedir() returns empty", async () => {
-    const originalHome = process.env["HOME"];
-    delete process.env["HOME"];
-
-    const osModule = await import("node:os");
-    const spy = spyOn(osModule, "homedir");
-    spy.mockImplementation(() => "");
-
-    try {
+  test("resolveGuideTarget throws when HOME is empty and homedir() returns empty", () =>
+    withUnavailableHome(async () => {
       expect(() => resolveGuideTarget("~")).toThrow(GuideTargetError);
       expect(() => resolveGuideTarget("~")).toThrow(
         /Unable to determine home directory/,
       );
-    } finally {
-      spy.mockRestore();
-      if (originalHome !== undefined) {
-        process.env["HOME"] = originalHome;
-      }
-    }
-  });
+    }));
 
   test("resolveGuideTarget with tilde-prefixed path resolves correctly", () => {
     const result = resolveGuideTarget("~/projects/test");
