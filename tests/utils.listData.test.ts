@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withDatabase } from "../src/utils/database";
@@ -36,6 +36,10 @@ import {
   truncateText,
 } from "../src/utils/listDataUtilsFormatting";
 import { parseCheckReason } from "../src/utils/listDataUtilsParsing";
+import {
+  DEEPSEEK_PROVIDER,
+  writeSettings as writeSettingsShared,
+} from "./helpers/mockSettings";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext;
@@ -43,24 +47,14 @@ let cwd: string;
 const originalCwd = process.cwd();
 
 async function writeSettings(value: unknown): Promise<void> {
-  await mkdir(home.dataRoot, { recursive: true });
-  await writeFile(
-    join(home.dataRoot, "settings.json"),
-    JSON.stringify(value, null, 2),
-  );
+  await writeSettingsShared(home, value);
 }
 
 function listSettings(overrides: Record<string, unknown> = {}) {
   return {
     provider: "deepseek",
     providers: [
-      {
-        name: "deepseek",
-        spec: "openai",
-        envVar: "DEEPSEEK_API_KEY",
-        baseUrl: "https://api.deepseek.com/v1",
-        defaultModel: "deepseek-v4-pro",
-      },
+      DEEPSEEK_PROVIDER,
       {
         name: "gemini",
         spec: "gemini",

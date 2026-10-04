@@ -1,18 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buildSchema } from "../src/utils/schema.js";
 import { SETTINGS_FILE_MISSING_ERROR } from "../src/utils/settings.js";
+import { writeSettings as writeSettingsShared } from "./helpers/mockSettings.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 let tempHome: TempHomeContext;
 
 async function writeSettings(value: unknown): Promise<void> {
-  await mkdir(tempHome.dataRoot, { recursive: true });
-  await writeFile(
-    join(tempHome.dataRoot, "settings.json"),
-    JSON.stringify(value),
-  );
+  await writeSettingsShared(tempHome, value);
 }
 
 function validSettings(overrides: Record<string, unknown> = {}) {
@@ -91,8 +86,7 @@ describe("buildSchema", () => {
   });
 
   test("reports error message when settings malformed", async () => {
-    await mkdir(tempHome.dataRoot, { recursive: true });
-    await writeFile(join(tempHome.dataRoot, "settings.json"), "{not-json");
+    await writeSettings("{not-json");
 
     const schema = buildSchema();
 

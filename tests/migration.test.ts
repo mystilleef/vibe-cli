@@ -14,6 +14,7 @@ import {
 import { getLearningEntries } from "../src/utils/storage";
 import { runChild } from "./helpers/childProcess";
 import { seedInitialMigration } from "./helpers/migrationSeed";
+import { deepseekSettings, writeSettings } from "./helpers/mockSettings";
 import { createTempHarness, type TempHomeContext } from "./helpers/tempHome";
 
 const harness = createTempHarness();
@@ -475,21 +476,7 @@ console.log(JSON.stringify({ ok: true, count: row.count }));
     db.close();
 
     // Write settings so provider-dependent list commands can resolve.
-    await writeFile(
-      join(home.dataRoot, "settings.json"),
-      JSON.stringify({
-        provider: "deepseek",
-        providers: [
-          {
-            name: "deepseek",
-            spec: "openai",
-            envVar: "DEEPSEEK_API_KEY",
-            baseUrl: "https://api.deepseek.com/v1",
-            defaultModel: "deepseek-v4-pro",
-          },
-        ],
-      }),
-    );
+    await writeSettings(home, deepseekSettings());
 
     const LIST_COMMANDS = [
       ["session"],
