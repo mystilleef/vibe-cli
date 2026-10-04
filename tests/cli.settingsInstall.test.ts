@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCliInProcess } from "../src/cli";
+import { withMutatedEnv } from "./helpers/envFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let tempHome: TempHomeContext;
@@ -28,12 +29,11 @@ async function runCli(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const savedCwd = process.cwd();
   process.chdir(options.cwd ?? originalCwd);
-  const savedHome = process.env["HOME"];
-  process.env["HOME"] = options.home ?? tempHome.home;
   try {
-    return await runCliInProcess(args);
+    return await withMutatedEnv({ HOME: options.home ?? tempHome.home }, () =>
+      runCliInProcess(args),
+    );
   } finally {
-    process.env["HOME"] = savedHome;
     process.chdir(savedCwd);
   }
 }

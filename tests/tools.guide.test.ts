@@ -15,8 +15,10 @@ import {
   installGuide,
 } from "../src/tools/guideInstaller.js";
 import { inspectGuide } from "../src/utils/guide.js";
+import { withMutatedEnv } from "./helpers/envFixtures.js";
 import {
   cleanupTempDirs,
+  createSymlinkAncestorTarget,
   createTempDir,
   dirExists,
   fileExists,
@@ -83,10 +85,8 @@ describe("installGuide - target resolution", () => {
   test("resolves tilde target", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
     const fakeHome = await createTempDir(tempDirs);
-    const originalHome = process.env["HOME"];
-    process.env["HOME"] = fakeHome;
 
-    try {
+    await withMutatedEnv({ HOME: fakeHome }, async () => {
       const result = await installGuide("~", {
         dryRun: true,
         anchorDir: getAnchorDir(packageRoot),
@@ -105,9 +105,7 @@ describe("installGuide - target resolution", () => {
 
       expect(nestedResult.target).toBe(nestedParent);
       expect(nestedResult.ok).toBe(true);
-    } finally {
-      process.env["HOME"] = originalHome;
-    }
+    });
   });
 
   test("rejects absent nested target path on dry-run when parent does not exist", async () => {
@@ -449,12 +447,8 @@ describe("installGuide - symlink failures", () => {
 
   test("rejects target path traversing a symlink ancestor directory on install", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
-    const realDir = await createTempDir(tempDirs);
-    const parentDir = await createTempDir(tempDirs);
-    const symlinkDir = join(parentDir, "symlinked-dir");
-    await symlink(realDir, symlinkDir, "dir");
-
-    const targetWithSymlinkAncestor = join(symlinkDir, "nested");
+    const { realDir, target: targetWithSymlinkAncestor } =
+      await createSymlinkAncestorTarget(tempDirs);
 
     await expect(
       installGuide(targetWithSymlinkAncestor, {
@@ -470,12 +464,8 @@ describe("installGuide - symlink failures", () => {
 
   test("rejects target path traversing a symlink ancestor directory on dry-run", async () => {
     const packageRoot = await createGuidePackageRoot(tempDirs);
-    const realDir = await createTempDir(tempDirs);
-    const parentDir = await createTempDir(tempDirs);
-    const symlinkDir = join(parentDir, "symlinked-dir");
-    await symlink(realDir, symlinkDir, "dir");
-
-    const targetWithSymlinkAncestor = join(symlinkDir, "nested");
+    const { target: targetWithSymlinkAncestor } =
+      await createSymlinkAncestorTarget(tempDirs);
 
     await expect(
       installGuide(targetWithSymlinkAncestor, {

@@ -17,6 +17,7 @@ import {
   type VibeDatabase,
   withDatabase,
 } from "../src/utils/database";
+import { withMutatedEnv } from "./helpers/envFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 const homes: TempHomeContext[] = [];
@@ -382,18 +383,12 @@ describe("openVibeDatabase", () => {
     expect(journalMode.journal_mode).toBe("wal");
   });
 
-  test("falls back to os.homedir() for the database path when HOME is unset", () => {
-    const previousHome = process.env["HOME"];
-    delete process.env["HOME"];
-    try {
+  test("falls back to os.homedir() for the database path when HOME is unset", () =>
+    withMutatedEnv({ HOME: undefined }, async () => {
       expect(getDatabasePath()).toBe(
         join(homedir(), ".vibe-cli", DATABASE_FILENAME),
       );
-    } finally {
-      if (previousHome === undefined) delete process.env["HOME"];
-      else process.env["HOME"] = previousHome;
-    }
-  });
+    }));
 
   test("supports isolated file databases", async () => {
     const first = openTracked(await tempDatabasePath("first"));

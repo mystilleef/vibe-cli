@@ -134,9 +134,11 @@ import {
   SettingsInstallError,
   SettingsInstallValidationError,
 } from "../src/tools/settingsInstaller.js";
+import { withMutatedEnv } from "./helpers/envFixtures.js";
 import { canEnforcePermissions } from "./helpers/permissions.js";
 import {
   cleanupTempDirs,
+  createSymlinkAncestorTarget,
   createTempDir,
   dirExists,
   fileExists,
@@ -220,10 +222,8 @@ describe("installSettings - target resolution", () => {
   test("resolves tilde target", async () => {
     const packageRoot = await createSettingsPackageRoot(tempDirs);
     const fakeHome = await createTempDir(tempDirs);
-    const originalHome = process.env["HOME"];
-    process.env["HOME"] = fakeHome;
 
-    try {
+    await withMutatedEnv({ HOME: fakeHome }, async () => {
       const result = await installSettings("~", {
         dryRun: true,
         sourceAnchor: packageRoot,
@@ -231,9 +231,7 @@ describe("installSettings - target resolution", () => {
 
       expect(result.destination).toBe(join(fakeHome, "settings.json"));
       expect(result.ok).toBe(true);
-    } finally {
-      process.env["HOME"] = originalHome;
-    }
+    });
   });
 
   test("rejects absent nested target path on dry-run when parent does not exist", async () => {
@@ -786,12 +784,8 @@ describe("installSettings - symlink failures", () => {
 
   test("rejects target path traversing a symlink ancestor directory on install", async () => {
     const packageRoot = await createSettingsPackageRoot(tempDirs);
-    const realDir = await createTempDir(tempDirs);
-    const parentDir = await createTempDir(tempDirs);
-    const symlinkDir = join(parentDir, "symlinked-dir");
-    await symlink(realDir, symlinkDir, "dir");
-
-    const targetWithSymlinkAncestor = join(symlinkDir, "nested");
+    const { realDir, target: targetWithSymlinkAncestor } =
+      await createSymlinkAncestorTarget(tempDirs);
 
     await expect(
       installSettings(targetWithSymlinkAncestor, {
@@ -807,12 +801,8 @@ describe("installSettings - symlink failures", () => {
 
   test("rejects target path traversing a symlink ancestor directory on dry-run", async () => {
     const packageRoot = await createSettingsPackageRoot(tempDirs);
-    const realDir = await createTempDir(tempDirs);
-    const parentDir = await createTempDir(tempDirs);
-    const symlinkDir = join(parentDir, "symlinked-dir");
-    await symlink(realDir, symlinkDir, "dir");
-
-    const targetWithSymlinkAncestor = join(symlinkDir, "nested");
+    const { target: targetWithSymlinkAncestor } =
+      await createSymlinkAncestorTarget(tempDirs);
 
     await expect(
       installSettings(targetWithSymlinkAncestor, {

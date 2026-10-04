@@ -19,6 +19,7 @@ import {
   configureAnthropicEnv,
   writeAnthropicSettings,
 } from "./helpers/anthropicFixtures";
+import { withMutatedEnv } from "./helpers/envFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
 
 let home: TempHomeContext | undefined;
@@ -181,9 +182,10 @@ describe("vibeCheckTool", () => {
   test("returns fallback questions when autosession state cannot be created", async () => {
     const blockedHome = join(cwd ?? ".", "home-file");
     await writeFile(blockedHome, "not a directory");
-    process.env["HOME"] = blockedHome;
 
-    const result = await vibeCheckTool({ goal: "g", plan: "p" });
+    const result = await withMutatedEnv({ HOME: blockedHome }, () =>
+      vibeCheckTool({ goal: "g", plan: "p" }),
+    );
 
     expect(result).toEqual({
       feedback: FALLBACK_FEEDBACK,

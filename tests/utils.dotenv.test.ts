@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { warnLegacyDotenv } from "../src/utils/dotenv.js";
+import { withMutatedEnv } from "./helpers/envFixtures.js";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome.js";
 
 let tempHome: TempHomeContext;
@@ -53,36 +54,29 @@ describe("warnLegacyDotenv", () => {
     const altHome = join(tempHome.home, "alt");
     await mkdir(join(altHome, ".vibe-cli"), { recursive: true });
     await writeFile(join(altHome, ".vibe-cli", ".env"), "KEY=value\n");
-    const originalHome = process.env["HOME"];
-    process.env["HOME"] = altHome;
 
-    try {
+    await withMutatedEnv({ HOME: altHome }, async () => {
       warnLegacyDotenv();
 
       expect(stderrOutput).toContain("Deprecated");
-    } finally {
-      if (originalHome !== undefined) process.env["HOME"] = originalHome;
-      else delete process.env["HOME"];
-    }
+    });
   });
 
   test("scans os.homedir() fallback when HOME is unset", async () => {
     await mkdir(join(tempHome.home, ".vibe-cli"), { recursive: true });
     await writeFile(join(tempHome.home, ".vibe-cli", ".env"), "KEY=value\n");
-    const originalHome = process.env["HOME"];
-    delete process.env["HOME"];
-    const osModule = await import("node:os");
-    const spy = spyOn(osModule, "homedir");
-    spy.mockReturnValue(tempHome.home);
+    await withMutatedEnv({ HOME: undefined }, async () => {
+      const osModule = await import("node:os");
+      const spy = spyOn(osModule, "homedir");
+      spy.mockReturnValue(tempHome.home);
 
-    try {
-      warnLegacyDotenv();
+      try {
+        warnLegacyDotenv();
 
-      expect(stderrOutput).toContain("Deprecated ~/.vibe-cli/.env ignored");
-    } finally {
-      spy.mockRestore();
-      if (originalHome !== undefined) process.env["HOME"] = originalHome;
-      else delete process.env["HOME"];
-    }
+        expect(stderrOutput).toContain("Deprecated ~/.vibe-cli/.env ignored");
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
