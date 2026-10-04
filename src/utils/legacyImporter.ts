@@ -242,18 +242,19 @@ export function validateLegacyLearningEntry(
   entry: unknown,
 ): ValidatedLegacyLearningEntry | null {
   if (!entry || typeof entry !== "object") return null;
-  const e = entry as LegacyLearningEntry;
+  const legacyEntry = entry as LegacyLearningEntry;
   if (
-    typeof e.mistake !== "string" ||
-    typeof e.timestamp !== "number" ||
-    (e.type !== undefined &&
-      !LEARNING_TYPES.some((candidate) => candidate === e.type)) ||
-    (e.solution !== undefined && typeof e.solution !== "string") ||
-    (e.demoId !== undefined && typeof e.demoId !== "string")
+    typeof legacyEntry.mistake !== "string" ||
+    typeof legacyEntry.timestamp !== "number" ||
+    (legacyEntry.type !== undefined &&
+      !LEARNING_TYPES.some((candidate) => candidate === legacyEntry.type)) ||
+    (legacyEntry.solution !== undefined &&
+      typeof legacyEntry.solution !== "string") ||
+    (legacyEntry.demoId !== undefined && typeof legacyEntry.demoId !== "string")
   ) {
     return null;
   }
-  return e as ValidatedLegacyLearningEntry;
+  return legacyEntry as ValidatedLegacyLearningEntry;
 }
 
 export function mapLegacyEntry(
