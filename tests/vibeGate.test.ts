@@ -19,6 +19,7 @@ import { FALLBACK_FEEDBACK } from "../src/utils/llm";
 import {
   type AnthropicBody,
   configureAnthropicEnv,
+  gateDecision,
   writeAnthropicSettings,
 } from "./helpers/anthropicFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
@@ -54,10 +55,6 @@ function input(overrides: Partial<VibeCheckInput> = {}): VibeCheckInput {
     plan: "run focused tests",
     ...overrides,
   };
-}
-
-function gateDecision(proceed: boolean, confidence: number, reason: string) {
-  return JSON.stringify({ proceed, confidence, reason });
 }
 
 beforeEach(async () => {

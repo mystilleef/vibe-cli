@@ -12,6 +12,7 @@ import {
 import {
   type AnthropicBody,
   configureAnthropicEnv,
+  gateDecision,
   writeAnthropicSettings,
 } from "./helpers/anthropicFixtures";
 import { createTempHome, type TempHomeContext } from "./helpers/tempHome";
@@ -33,10 +34,6 @@ const requests: AnthropicBody[] = [];
 const responseQueue: string[] = [];
 let onFetchRequest: ((requestCount: number) => void) | undefined;
 let stdout = "";
-
-function gateDecision(proceed: boolean, confidence: number, reason: string) {
-  return JSON.stringify({ proceed, confidence, reason });
-}
 
 function installAnthropicFetch(): void {
   globalThis.fetch = (async (_input, init) => {
