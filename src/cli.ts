@@ -4,9 +4,10 @@
  *
  * Human-facing commands (`list`, `skills`, `guide`, `settings install`,
  * `prune`, `doctor`, `tldr`) print readable text by default and emit JSON under
- * `--json`; agent-loop commands always emit JSON. Operational failures route
- * through `fatal` as one stderr JSON error line so agents can parse errors
- * without scraping text.
+ * `--json`; agent-loop commands always emit JSON. Help output — bare, implicit,
+ * or explicit — prints the complete command page to stdout and exits 0.
+ * Operational failures route through `fatal` as one stderr JSON error line so
+ * agents can parse errors without scraping text.
  */
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
@@ -102,6 +103,20 @@ function emit(data: unknown): void {
 function fatal(message: string): never {
   process.stderr.write(`${JSON.stringify({ error: message })}\n`);
   process.exit(1);
+}
+
+/**
+ * True when a thrown Commander termination is successful help or version
+ * output already written to stdout. Implicit help carries a nonzero exit code
+ * with Commander's `(outputHelp)` placeholder message, so a successful page
+ * must not be judged by exit code alone.
+ */
+function isSuccessfulOutputTermination(e: unknown): boolean {
+  const err = e as Error & { exitCode?: number };
+  return (
+    err instanceof Error &&
+    (err.exitCode === 0 || /^\(output/.test(err.message))
+  );
 }
 
 /**
@@ -278,10 +293,22 @@ program
   .description("Metacognitive AI agent oversight CLI")
   .version(packageJson.version)
   .exitOverride((error) => {
-    if (error.exitCode === 0) process.exit(0);
+    // Throw rather than fall through to Commander's process.exit fallback,
+    // which can truncate queued stdout. Boundaries classify the throw and
+    // terminate after the output drains.
     throw error;
   })
-  .configureOutput({ writeErr: () => {} });
+  .configureOutput({
+    // Commander routes implicit help through writeErr; help pages belong on
+    // stdout. The writer resolves stdout at call time so in-process capture
+    // sees the page instead of a cached baseline stream handler.
+    writeErr: (str) => {
+      process.stdout.write(str);
+    },
+    // Parse-error text stays suppressed: the fatal JSON error contract owns
+    // failure reporting.
+    outputError: () => {},
+  });
 
 program.addHelpText("after", "\nRun `vibe tldr` for quick examples.\n");
 
@@ -683,15 +710,11 @@ export async function runCliInProcess(
       await program.parseAsync(["node", "bun", ...args]);
     } catch (e: unknown) {
       // Commander throws on --help/--version or validation errors
-      const err = e as Error & { exitCode?: number };
-      if (
-        err instanceof Error &&
-        (err.exitCode === 0 || /^\(output/.test(err.message))
-      ) {
+      if (isSuccessfulOutputTermination(e)) {
         // Help/version output — stdout already captured
         setExitCode(0);
-      } else if (err instanceof Error) {
-        capture.appendStderr(`${JSON.stringify({ error: err.message })}\n`);
+      } else if (e instanceof Error) {
+        capture.appendStderr(`${JSON.stringify({ error: e.message })}\n`);
         setExitCode(1);
       } else {
         capture.appendStderr(`${JSON.stringify({ error: String(e) })}\n`);
@@ -726,5 +749,14 @@ export function isDirectCliEntry(
 
 // Only run CLI when executed directly, not when imported.
 if (isDirectCliEntry(process.argv[1], import.meta.url)) {
-  program.parseAsync(process.argv).catch((e: Error) => fatal(e.message));
+  program.parseAsync(process.argv).catch((e: Error) => {
+    // Successful help/version output already reached stdout; terminate after
+    // it drains instead of truncating it. Parse rejections keep the fatal
+    // JSON contract with their original error message.
+    if (isSuccessfulOutputTermination(e)) {
+      setExitCode(0);
+      return;
+    }
+    fatal(e.message);
+  });
 }

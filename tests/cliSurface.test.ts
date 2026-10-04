@@ -26,11 +26,13 @@ import { pathToFileURL } from "node:url";
 import { isDirectCliEntry, runCliInProcess } from "../src/cli";
 import { getCwdKey } from "../src/utils/autosession";
 import { getMigrationIds, initializeSchema } from "../src/utils/database";
-import { runChild } from "./helpers/childProcess";
+import { type ChildProcessResult, runChild } from "./helpers/childProcess";
+import { withMutatedEnv } from "./helpers/envFixtures";
 import {
   seedInitialMigration,
   seedSchemaMigrations,
 } from "./helpers/migrationSeed";
+import { DEEPSEEK_PROVIDER, writeSettings } from "./helpers/mockSettings";
 import { packAndExtract } from "./helpers/packedPackage.js";
 import { dirExists, fileExists, readDirTree } from "./helpers/skillsTestUtils";
 import {
@@ -76,28 +78,13 @@ const EMPTY_CLI_HOME = join(tmpdir(), "vibe-cli-empty-home");
 const LEGACY_DOTENV_WARNING =
   "Deprecated ~/.vibe-cli/.env ignored. Move provider settings to ~/.vibe-cli/settings.json and provide secrets through the parent process environment.";
 
-interface CliResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+type CliResult = ChildProcessResult;
 
 afterEach(async () => {
   await harness.cleanup();
 });
 
 const createCwd = (): Promise<string> => harness.createCwd("surface");
-
-async function writeSettings(
-  home: TempHomeContext,
-  value: unknown,
-): Promise<void> {
-  await mkdir(home.dataRoot, { recursive: true });
-  await writeFile(
-    join(home.dataRoot, "settings.json"),
-    JSON.stringify(value, null, 2),
-  );
-}
 
 function listSettings(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,13 +96,7 @@ function listSettings(overrides: Record<string, unknown> = {}) {
         envVar: "ANTHROPIC_API_KEY",
         defaultModel: "claude-haiku-4-5-20251001",
       },
-      {
-        name: "deepseek",
-        spec: "openai",
-        envVar: "DEEPSEEK_API_KEY",
-        baseUrl: "https://api.deepseek.com/v1",
-        defaultModel: "deepseek-v4-pro",
-      },
+      DEEPSEEK_PROVIDER,
       {
         name: "gemini",
         spec: "gemini",
@@ -208,30 +189,6 @@ function cliSpawnCmd(args: string[], options: CliRunOptions): string[] {
 }
 
 /**
- * Temporarily apply env var overrides (delete on `undefined`), run `fn`, then
- * restore exactly the touched keys to their prior values.
- */
-async function withMutatedEnv<T>(
-  overrides: Record<string, string | undefined>,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const saved = new Map<string, string | undefined>();
-  for (const key of Object.keys(overrides)) saved.set(key, process.env[key]);
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
-
-/**
  * Run the CLI. `preload`-less calls run in-process via `runCliInProcess`
  * (no OS process spawn, immune to harness concurrency). Calls that need a
  * `--preload` module mock (fetch interception, fault injection) still spawn
@@ -317,6 +274,14 @@ async function runCliBatchIsolated(
     }),
   );
 }
+
+/**
+ * Coordination callback for in-process capture tests: yield one macrotask
+ * so captured markers must survive an AsyncLocalStorage await boundary.
+ */
+const yieldOnce = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
 
 async function expectHelpWithoutSession(command: string[]): Promise<void> {
   const result = await runCli([...command, "--help"]);
@@ -4616,6 +4581,25 @@ describe("CLI autosession surface", () => {
     expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
+  test("version output short-circuits unknown options and help-command flags", async () => {
+    // Commander evaluates -V/--version during option processing before
+    // unknown-option validation, so the successful-termination
+    // classification must hold for every option ordering and for the help
+    // command's inherited version flag.
+    const combos: string[][] = [
+      ["--version", "--bogus"],
+      ["--bogus", "--version"],
+      ["-V"],
+      ["help", "-V"],
+    ];
+    for (const args of combos) {
+      const result = await runCliInProcess(args);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    }
+  });
+
   test("throw and termination cleanup leave no active capture state", async () => {
     // After a failing invocation, a subsequent call must still capture correctly.
     const failing = await runCliInProcess(["unknown-command"]);
@@ -4769,10 +4753,6 @@ describe("CLI autosession surface", () => {
     const markerFailure = "post-await-failure-marker-unique-222";
     const markerHelp = "post-await-help-marker-unique-333";
 
-    const yieldOnce = async () => {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    };
-
     const [session, error, help] = await Promise.all([
       runCliInProcess(["session"], markerSuccess, yieldOnce),
       runCliInProcess(["unknown-command"], markerFailure, yieldOnce),
@@ -4803,10 +4783,6 @@ describe("CLI autosession surface", () => {
 
   test("post-await divergent exits retain expected exit codes and streams without cross-talk", async () => {
     // Concurrent success, parser-failure, and help calls with deferred synchronization.
-    const yieldOnce = async () => {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    };
-
     const [success, failure, help] = await Promise.all([
       runCliInProcess(["session"], undefined, yieldOnce),
       runCliInProcess(["check"], undefined, yieldOnce),
@@ -4837,9 +4813,6 @@ describe("CLI autosession surface", () => {
   test("post-await later capture contains no prior marker, stale stderr, or exit code", async () => {
     // First capture: with coordination callback and marker.
     const marker = "post-await-prior-marker-unique-444";
-    const yieldOnce = async () => {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    };
 
     const priorResult = await runCliInProcess(["session"], marker, yieldOnce);
 
@@ -5106,42 +5079,28 @@ describe("emitTestErrorMarker", () => {
   test("emitTestErrorMarker writes marker to captured stderr when VIBE_TEST_ERROR_MARKER is set", async () => {
     const home = await useTempHome();
 
-    const savedHome = process.env["HOME"];
-    process.env["HOME"] = home.home;
-    try {
-      const result = await runCliInProcess(["session"], "MARKER_TEXT_12345");
+    const result = await withMutatedEnv({ HOME: home.home }, () =>
+      runCliInProcess(["session"], "MARKER_TEXT_12345"),
+    );
 
-      expect(result.stderr).toContain("MARKER_TEXT_12345");
-      expect(JSON.parse(result.stdout)).toEqual({
-        session: expect.any(String),
-      });
-    } finally {
-      process.env["HOME"] = savedHome;
-    }
+    expect(result.stderr).toContain("MARKER_TEXT_12345");
+    expect(JSON.parse(result.stdout)).toEqual({
+      session: expect.any(String),
+    });
   });
 
   test("emitTestErrorMarker via env var when no testErrorMarker param is passed", async () => {
     const home = await useTempHome();
 
-    const savedHome = process.env["HOME"];
-    const savedMarker = process.env["VIBE_TEST_ERROR_MARKER"];
-    process.env["HOME"] = home.home;
-    process.env["VIBE_TEST_ERROR_MARKER"] = "ENV_MARKER_67890";
-    try {
-      const result = await runCliInProcess(["session"]);
+    const result = await withMutatedEnv(
+      { HOME: home.home, VIBE_TEST_ERROR_MARKER: "ENV_MARKER_67890" },
+      () => runCliInProcess(["session"]),
+    );
 
-      expect(result.stderr).toContain("ENV_MARKER_67890");
-      expect(JSON.parse(result.stdout)).toEqual({
-        session: expect.any(String),
-      });
-    } finally {
-      process.env["HOME"] = savedHome;
-      if (savedMarker !== undefined) {
-        process.env["VIBE_TEST_ERROR_MARKER"] = savedMarker;
-      } else {
-        delete process.env["VIBE_TEST_ERROR_MARKER"];
-      }
-    }
+    expect(result.stderr).toContain("ENV_MARKER_67890");
+    expect(JSON.parse(result.stdout)).toEqual({
+      session: expect.any(String),
+    });
   });
 });
 
