@@ -37,6 +37,25 @@ const { databasePath, seedDatabase } = createDoctorFixtures(
   () => home.dataRoot,
 );
 
+/** Let every query through except the freelist probe, which returns no row. */
+function mockFreelistNoRow(): void {
+  const realQuery = Database.prototype.query;
+  spyOn(Database.prototype, "query").mockImplementation(function (
+    this: Database,
+    sql: string,
+    ...rest: unknown[]
+  ) {
+    if (sql === "PRAGMA freelist_count") {
+      return {
+        get: () => null,
+      } as unknown as ReturnType<Database["query"]>;
+    }
+    return (
+      realQuery as unknown as (sql: string, ...rest: unknown[]) => unknown
+    ).apply(this, [sql, ...rest]) as ReturnType<Database["query"]>;
+  } as typeof Database.prototype.query);
+}
+
 // ── openExistingDatabase: partial initialization failure ──────────────────
 
 describe("openExistingDatabase pragma failure", () => {
@@ -87,21 +106,7 @@ describe("runDiagnose section independence", () => {
 
   test("isolates a freelist probe returning no row into its own failed section", async () => {
     await seedDatabase();
-    const realQuery = Database.prototype.query;
-    spyOn(Database.prototype, "query").mockImplementation(function (
-      this: Database,
-      sql: string,
-      ...rest: unknown[]
-    ) {
-      if (sql === "PRAGMA freelist_count") {
-        return {
-          get: () => null,
-        } as unknown as ReturnType<Database["query"]>;
-      }
-      return (
-        realQuery as unknown as (sql: string, ...rest: unknown[]) => unknown
-      ).apply(this, [sql, ...rest]) as ReturnType<Database["query"]>;
-    } as typeof Database.prototype.query);
+    mockFreelistNoRow();
 
     const payload = await runDiagnose(databasePath());
 
@@ -116,21 +121,7 @@ describe("runDiagnose section independence", () => {
 
   test("propagates a freelist probe returning no row from vacuum", async () => {
     await seedDatabase();
-    const realQuery = Database.prototype.query;
-    spyOn(Database.prototype, "query").mockImplementation(function (
-      this: Database,
-      sql: string,
-      ...rest: unknown[]
-    ) {
-      if (sql === "PRAGMA freelist_count") {
-        return {
-          get: () => null,
-        } as unknown as ReturnType<Database["query"]>;
-      }
-      return (
-        realQuery as unknown as (sql: string, ...rest: unknown[]) => unknown
-      ).apply(this, [sql, ...rest]) as ReturnType<Database["query"]>;
-    } as typeof Database.prototype.query);
+    mockFreelistNoRow();
 
     await expect(runVacuum(databasePath())).rejects.toThrow(
       "freelist_count returned no row",
