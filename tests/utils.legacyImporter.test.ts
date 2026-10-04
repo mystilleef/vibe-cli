@@ -450,4 +450,137 @@ describe("importAllLegacyData session record validation", () => {
       db.close();
     }
   });
+
+  const VALID_DATES = {
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastAccessedAt: "2026-01-02T00:00:00.000Z",
+  };
+
+  test.each([
+    ["s-non-object.json", "plain string"],
+    ["s-null.json", null],
+    ["s-missing-id.json", { ...VALID_DATES }],
+    ["s-empty-id.json", { id: "", ...VALID_DATES }],
+    ["s-numeric-id.json", { id: 42, ...VALID_DATES }],
+    [
+      "s-missing-created.json",
+      { id: "s", lastAccessedAt: VALID_DATES.lastAccessedAt },
+    ],
+    [
+      "s-numeric-created.json",
+      { id: "s", createdAt: 123, lastAccessedAt: VALID_DATES.lastAccessedAt },
+    ],
+    [
+      "s-unparseable-created.json",
+      {
+        id: "s",
+        createdAt: "not-a-date",
+        lastAccessedAt: VALID_DATES.lastAccessedAt,
+      },
+    ],
+  ])(
+    "skips record shape %s untouched and unmarked",
+    async (fileName, record) => {
+      const filePath = seedLegacySession(fileName, record);
+      const db = openSeededDatabase();
+
+      try {
+        importAllLegacyData(db);
+
+        expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({
+          c: 0,
+        });
+        expect(
+          db.query("SELECT COUNT(*) AS c FROM legacy_imports").get(),
+        ).toEqual({ c: 0 });
+      } finally {
+        db.close();
+      }
+      // Unparsable artifacts are skipped untouched, never renamed to a backup.
+      expect(existsSync(filePath)).toBe(true);
+    },
+  );
+});
+
+describe("importAllLegacyData artifact shape validation", () => {
+  function seedLegacyArtifact(fileName: string, record: unknown): string {
+    mkdirSync(home.dataRoot, { recursive: true });
+    const filePath = join(home.dataRoot, fileName);
+    writeFileSync(filePath, JSON.stringify(record));
+    return filePath;
+  }
+
+  function expectSkippedUntouched(
+    db: Database,
+    filePath: string,
+    table: string,
+  ): void {
+    expect(db.query(`SELECT COUNT(*) AS c FROM ${table}`).get()).toEqual({
+      c: 0,
+    });
+    expect(db.query("SELECT COUNT(*) AS c FROM legacy_imports").get()).toEqual({
+      c: 0,
+    });
+    expect(existsSync(filePath)).toBe(true);
+  }
+
+  describe("constitution.json", () => {
+    const ARTIFACT = "constitution.json";
+
+    test.each([
+      ["a non-object record", "plain string"],
+      ["a null record", null],
+      ["non-array rules", { s: "not-an-array" }],
+      ["a non-string rule", { s: [123] }],
+      ["an array record", ["array record"]],
+    ])("skips %s untouched and unmarked", async (_label, record) => {
+      const filePath = seedLegacyArtifact(ARTIFACT, record);
+      const db = openSeededDatabase();
+
+      try {
+        importAllLegacyData(db);
+
+        expectSkippedUntouched(db, filePath, "constitution_rules");
+      } finally {
+        db.close();
+      }
+    });
+  });
+
+  describe("history.json", () => {
+    const ARTIFACT = "history.json";
+
+    test.each([
+      ["a non-object record", "plain string"],
+      ["a null record", null],
+      ["non-array interactions", { s: "not-an-array" }],
+      ["a null interaction", { s: [null] }],
+      [
+        "a non-string goal",
+        { s: [{ input: { goal: 123 }, output: "o", timestamp: 1 }] },
+      ],
+      ["a missing goal", { s: [{ input: {}, output: "o", timestamp: 1 }] }],
+      [
+        "a non-string output",
+        { s: [{ input: { goal: "g" }, output: 123, timestamp: 1 }] },
+      ],
+      ["a missing timestamp", { s: [{ input: { goal: "g" }, output: "o" }] }],
+      [
+        "a non-number timestamp",
+        { s: [{ input: { goal: "g" }, output: "o", timestamp: "1" }] },
+      ],
+      ["a non-object interaction", { s: ["plain string interaction"] }],
+    ])("skips %s untouched and unmarked", async (_label, record) => {
+      const filePath = seedLegacyArtifact(ARTIFACT, record);
+      const db = openSeededDatabase();
+
+      try {
+        importAllLegacyData(db);
+
+        expectSkippedUntouched(db, filePath, "interactions");
+      } finally {
+        db.close();
+      }
+    });
+  });
 });
