@@ -46,87 +46,53 @@ describe("extractErrorMessage", () => {
   });
 });
 
-describe("isEnoent", () => {
-  test("returns true for ENOENT ErrnoException", () => {
-    const err = new Error("file not found") as NodeJS.ErrnoException;
-    err.code = "ENOENT";
-    expect(isEnoent(err)).toBe(true);
-  });
+const errnoCases = [
+  { subject: "isEnoent", predicate: isEnoent, code: "ENOENT" },
+  { subject: "isEexist", predicate: isEexist, code: "EEXIST" },
+] as const;
 
-  test("returns false for non-ENOENT code", () => {
-    const err = new Error("permission denied") as NodeJS.ErrnoException;
-    err.code = "EACCES";
-    expect(isEnoent(err)).toBe(false);
-  });
+for (const { subject, predicate, code } of errnoCases) {
+  describe(subject, () => {
+    test("returns true for an ErrnoException carrying the matching code", () => {
+      const err = new Error("operation failed") as NodeJS.ErrnoException;
+      err.code = code;
+      expect(predicate(err)).toBe(true);
+    });
 
-  test("returns false for Error without code", () => {
-    expect(isEnoent(new Error("generic"))).toBe(false);
-  });
+    test("returns false for a non-matching errno code", () => {
+      const err = new Error("permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      expect(predicate(err)).toBe(false);
+    });
 
-  test("returns false for non-Error values that have a code property", () => {
-    expect(isEnoent("ENOENT")).toBe(false);
-    expect(isEnoent(42)).toBe(false);
-  });
+    test("returns false for Error without code", () => {
+      expect(predicate(new Error("generic"))).toBe(false);
+    });
 
-  test("returns true for any object with code 'ENOENT' (cast is compile-time only)", () => {
-    // The `as NodeJS.ErrnoException` cast is compile-time only; at runtime
-    // any object with a `.code` of "ENOENT" passes.
-    expect(isEnoent({ code: "ENOENT" })).toBe(true);
-  });
+    test("returns false for non-object values", () => {
+      expect(predicate(code)).toBe(false);
+      expect(predicate(42)).toBe(false);
+    });
 
-  test("returns false for plain object with different code", () => {
-    expect(isEnoent({ code: "EACCES" })).toBe(false);
-  });
+    test("returns true for any object with the matching code (cast is compile-time only)", () => {
+      // The `as NodeJS.ErrnoException` cast is compile-time only; at runtime
+      // any object with a matching `.code` passes.
+      expect(predicate({ code })).toBe(true);
+    });
 
-  test("throws TypeError for null input", () => {
-    expect(() => isEnoent(null)).toThrow(TypeError);
-  });
+    test("returns false for plain object with different code", () => {
+      expect(predicate({ code: "EACCES" })).toBe(false);
+    });
 
-  test("throws TypeError for undefined input", () => {
-    expect(() => isEnoent(undefined)).toThrow(TypeError);
-  });
-});
+    test("throws TypeError for null input", () => {
+      expect(() => predicate(null)).toThrow(TypeError);
+    });
 
-describe("isEexist", () => {
-  test("returns true for EEXIST ErrnoException", () => {
-    const err = new Error("file already exists") as NodeJS.ErrnoException;
-    err.code = "EEXIST";
-    expect(isEexist(err)).toBe(true);
+    test("throws TypeError for undefined input", () => {
+      expect(() => predicate(undefined)).toThrow(TypeError);
+    });
   });
-
-  test("returns false for non-EEXIST code", () => {
-    const err = new Error("permission denied") as NodeJS.ErrnoException;
-    err.code = "EACCES";
-    expect(isEexist(err)).toBe(false);
-  });
-
-  test("returns false for Error without code", () => {
-    expect(isEexist(new Error("generic"))).toBe(false);
-  });
-
-  test("returns false for non-Error values that have a code property", () => {
-    expect(isEexist("EEXIST")).toBe(false);
-    expect(isEexist(42)).toBe(false);
-  });
-
-  test("returns true for any object with code 'EEXIST' (cast is compile-time only)", () => {
-    // The `as NodeJS.ErrnoException` cast is compile-time only; at runtime
-    // any object with a `.code` of "EEXIST" passes.
-    expect(isEexist({ code: "EEXIST" })).toBe(true);
-  });
-
-  test("returns false for plain object with different code", () => {
-    expect(isEexist({ code: "EACCES" })).toBe(false);
-  });
-
-  test("throws TypeError for null input", () => {
-    expect(() => isEexist(null)).toThrow(TypeError);
-  });
-
-  test("throws TypeError for undefined input", () => {
-    expect(() => isEexist(undefined)).toThrow(TypeError);
-  });
-});
+}
 
 describe("makeErrno", () => {
   test("creates ErrnoException with given code and message", () => {
