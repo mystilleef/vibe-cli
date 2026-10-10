@@ -9,12 +9,14 @@
  * against ambiguous completion.
  */
 
+import type { ChildSignal } from "../../src/utils/databaseSnapshot.js";
+
 /** Raw completion record of one child process. */
 export interface ChildCompletion {
   stdout: string;
   stderr: string;
   status: number | null;
-  signal: NodeJS.Signals | null;
+  signal: ChildSignal;
   error?: Error;
 }
 

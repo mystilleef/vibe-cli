@@ -23,10 +23,13 @@ export interface DatabaseSnapshotBoundary {
   readonly hrtime?: number | undefined;
 }
 
+/** Termination signal of a Bun child; numeric when the name is unknown. */
+export type ChildSignal = NodeJS.Signals | number | null;
+
 /** Information about a reaped child snapshot process. */
 export interface DatabaseSnapshotReaped {
   readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
+  readonly signal: ChildSignal;
 }
 
 /** Control object provided to `DatabaseSnapshotObserver.onReady`. */
@@ -424,7 +427,7 @@ async function runSnapshotProtocolLoop(params: {
 interface SnapshotOutcome {
   readonly failureError: unknown;
   readonly timedOut: boolean;
-  readonly signal: NodeJS.Signals | null;
+  readonly signal: ChildSignal;
   readonly exitCode: number | null;
   readonly protocolIndex: number;
   readonly stderr: string;
@@ -622,7 +625,7 @@ async function settleSnapshotChild(params: {
 async function dispatchSnapshotReaped(params: {
   observer: DatabaseSnapshotObserver | undefined;
   exitCode: number | null;
-  signal: NodeJS.Signals | null;
+  signal: ChildSignal;
   failureError: unknown;
   timedOut: boolean;
   deadline: Promise<void>;
