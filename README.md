@@ -7,6 +7,8 @@ _Metacognitive_ oversight infrastructure for `AI` agents. Equips `LLM`
 coding harnesses with skills to consult mentor models, store persistent
 memory, and enforce constitutional rules.
 
+![How Vibe Check Works](https://raw.githubusercontent.com/mystilleef/vibe-cli/main/assets/vibe-check.svg)
+
 ## Requirements
 
 - `Bun` >=1.0.0. The binary uses `bun:sqlite` and requires `Bun`.

@@ -1,0 +1,504 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" width="100%" height="100%" role="img" aria-labelledby="vibe-check-title vibe-check-desc">
+  <title id="vibe-check-title">vibe check Architecture</title>
+  <desc id="vibe-check-desc">How metacognitive oversight, blast-radius scanning, persistent memory, and fail-safe gating guard AI agent plans.</desc>
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#070a12" />
+      <stop offset="50%" stop-color="#0b1120" />
+      <stop offset="100%" stop-color="#060911" />
+    </linearGradient>
+
+    <!-- Card Background Gradients -->
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#0c1322" />
+    </linearGradient>
+    <linearGradient id="card-inner-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#090e1a" />
+      <stop offset="100%" stop-color="#060912" />
+    </linearGradient>
+
+    <!-- Accent Gradients -->
+    <linearGradient id="cyan-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="violet-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+    <linearGradient id="emerald-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="amber-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="rose-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fb7185" />
+      <stop offset="100%" stop-color="#e11d48" />
+    </linearGradient>
+    <linearGradient id="loop-grad" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#f43f5e" />
+      <stop offset="50%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+
+    <!-- Subtle Grid Pattern -->
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#334155" opacity="0.18" />
+    </pattern>
+
+    <!-- Drop Shadows and Glow Filters -->
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+    <filter id="glow-violet" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Arrow Markers -->
+    <marker id="arr-cyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arr-violet" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#c084fc" />
+    </marker>
+    <marker id="arr-rose" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#f43f5e" />
+    </marker>
+    <marker id="arr-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#34d399" />
+    </marker>
+    <marker id="arr-feed" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#818cf8" />
+    </marker>
+  </defs>
+
+  <style>
+    .font-sans { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Inter', Helvetica, Arial, sans-serif; }
+    .font-mono { font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace; }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1000" height="680" rx="16" fill="url(#bg-grad)" stroke="#1e293b" stroke-width="1.5" />
+  <rect width="1000" height="680" rx="16" fill="url(#grid)" />
+
+  <!-- Ambient Light Accents -->
+  <circle cx="500" cy="180" r="160" fill="#7c3aed" opacity="0.08" filter="url(#glow-violet)" />
+  <circle cx="850" cy="270" r="130" fill="#059669" opacity="0.06" />
+  <circle cx="150" cy="270" r="130" fill="#0284c7" opacity="0.06" />
+
+  <!-- ========================================== -->
+  <!-- HEADER SECTION                             -->
+  <!-- ========================================== -->
+  <g transform="translate(45, 25)">
+    <!-- Logo Icon / Shield Spark -->
+    <rect x="0" y="0" width="34" height="34" rx="8" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5" />
+    <path d="M 17 6 L 25 10 L 25 18 C 25 23 21 26 17 28 C 13 26 9 23 9 18 L 9 10 Z" fill="none" stroke="#a855f7" stroke-width="1.8" />
+    <path d="M 14 17 L 16 19 L 20 15" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+
+    <!-- Title & Subtitle -->
+    <text x="44" y="21" class="font-sans" font-size="20" font-weight="700" fill="#f8fafc" letter-spacing="-0.02em">
+      <tspan fill="#38bdf8">vibe</tspan> <tspan fill="#c084fc">check</tspan> Architecture
+    </text>
+    <rect x="310" y="7" width="168" height="20" rx="10" fill="#1e293b" />
+    <text x="394" y="21" class="font-mono" font-size="9.5" font-weight="600" fill="#94a3b8" text-anchor="middle" letter-spacing="0.05em">
+      METACOGNITIVE OVERSIGHT
+    </text>
+
+    <text x="44" y="38" class="font-sans" font-size="11.5" fill="#94a3b8">
+      Pre-flight plan verification, blast-radius scanning, persistent memory &amp; auto-revision loop
+    </text>
+
+    <!-- Top Status Badges -->
+    <g transform="translate(630, 6)">
+      <!-- Badge 1 -->
+      <rect x="0" y="0" width="88" height="22" rx="11" fill="#0c1c2e" stroke="#0284c7" stroke-width="1" />
+      <circle cx="10" cy="11" r="3" fill="#38bdf8" />
+      <text x="18" y="14.5" class="font-sans" font-size="9.5" font-weight="600" fill="#bae6fd">Local-First</text>
+
+      <!-- Badge 2 -->
+      <rect x="96" y="0" width="102" height="22" rx="11" fill="#1e1530" stroke="#7c3aed" stroke-width="1" />
+      <circle cx="106" cy="11" r="3" fill="#c084fc" />
+      <text x="114" y="14.5" class="font-sans" font-size="9.5" font-weight="600" fill="#e9d5ff">Blast-Radius</text>
+
+      <!-- Badge 3 -->
+      <rect x="206" y="0" width="90" height="22" rx="11" fill="#062118" stroke="#059669" stroke-width="1" />
+      <circle cx="216" cy="11" r="3" fill="#34d399" />
+      <text x="224" y="14.5" class="font-sans" font-size="9.5" font-weight="600" fill="#a7f3d0">Fail-Safe</text>
+    </g>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- TOP REVISION LOOP (Clean Perimeter Route)  -->
+  <!-- ========================================== -->
+  <!-- Clean geometric routing: exits Blocked, runs along right gutter, across top, enters Phase 1 center -->
+  <path d="M 919 400 H 968 Q 978 400 978 390 V 92 Q 978 82 968 82 H 190 Q 180 82 180 92 V 111"
+        fill="none" stroke="url(#loop-grad)" stroke-width="2.2" stroke-dasharray="6 4"
+        marker-end="url(#arr-rose)" />
+
+  <!-- Surgical Plan Reviser Node (Pill Box) in Loop -->
+  <g transform="translate(470, 68)">
+    <rect x="0" y="0" width="260" height="28" rx="14" fill="#201121" stroke="#f43f5e" stroke-width="1.4" filter="url(#glow-rose)" />
+    <!-- Loop refresh icon -->
+    <path d="M 16 14 A 5 5 0 1 1 20 18" fill="none" stroke="#fb7185" stroke-width="1.6" stroke-linecap="round" />
+    <path d="M 20 15 L 20 18 L 17 18" fill="none" stroke="#fb7185" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="32" y="18" class="font-sans" font-size="10.5" font-weight="700" fill="#ffe4e6">
+      Surgical Plan Reviser
+    </text>
+    <rect x="164" y="5" width="86" height="18" rx="9" fill="#38101e" />
+    <text x="207" y="17.5" class="font-mono" font-size="8.5" font-weight="600" fill="#fda4af" text-anchor="middle">
+      attempt &lt; max
+    </text>
+  </g>
+
+
+  <!-- ========================================== -->
+  <!-- MAIN PIPELINE COLUMNS                      -->
+  <!-- ========================================== -->
+
+  <!-- COLUMN 1: AGENT PROPOSAL & CONTEXT -->
+  <g transform="translate(45, 115)" filter="url(#shadow)">
+    <!-- Outer Card -->
+    <rect width="270" height="345" rx="12" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1.2" />
+    <rect width="270" height="3" rx="1.5" fill="url(#cyan-grad)" />
+
+    <!-- Card Header -->
+    <g transform="translate(18, 16)">
+      <rect x="0" y="0" width="72" height="18" rx="4" fill="#082f49" />
+      <text x="36" y="12.5" class="font-mono" font-size="8.5" font-weight="700" fill="#38bdf8" text-anchor="middle">PHASE 01</text>
+      <text x="0" y="38" class="font-sans" font-size="15" font-weight="700" fill="#f8fafc">Agent Plan Proposal</text>
+      <text x="0" y="54" class="font-sans" font-size="10.5" fill="#94a3b8">Coding harness triggers verification</text>
+    </g>
+
+    <!-- Trigger Policy Pills -->
+    <g transform="translate(18, 86)">
+      <text x="0" y="0" class="font-sans" font-size="9.5" font-weight="600" fill="#64748b" letter-spacing="0.04em">TRIGGER CRITERIA</text>
+      <g transform="translate(0, 8)">
+        <rect x="0" y="0" width="112" height="18" rx="4" fill="#0f172a" stroke="#1e293b" />
+        <text x="6" y="12.5" class="font-sans" font-size="8.5" fill="#94a3b8">⚡ Irreversible Ops</text>
+        <rect x="120" y="0" width="114" height="18" rx="4" fill="#0f172a" stroke="#1e293b" />
+        <text x="126" y="12.5" class="font-sans" font-size="8.5" fill="#94a3b8">🌐 External Effects</text>
+      </g>
+      <g transform="translate(0, 30)">
+        <rect x="0" y="0" width="112" height="18" rx="4" fill="#0f172a" stroke="#1e293b" />
+        <text x="6" y="12.5" class="font-sans" font-size="8.5" fill="#94a3b8">❓ Ambiguous Scope</text>
+        <rect x="120" y="0" width="114" height="18" rx="4" fill="#0f172a" stroke="#1e293b" />
+        <text x="126" y="12.5" class="font-sans" font-size="8.5" fill="#94a3b8">⛓️ Multi-Step Chain</text>
+      </g>
+    </g>
+
+    <!-- Context Payload Box -->
+    <g transform="translate(18, 155)">
+      <rect width="234" height="132" rx="8" fill="url(#card-inner-grad)" stroke="#1e293b" stroke-width="1" />
+      <!-- Terminal dots -->
+      <circle cx="12" cy="12" r="3" fill="#ef4444" opacity="0.7" />
+      <circle cx="22" cy="12" r="3" fill="#f59e0b" opacity="0.7" />
+      <circle cx="32" cy="12" r="3" fill="#10b981" opacity="0.7" />
+      <text x="46" y="14.5" class="font-mono" font-size="8" fill="#64748b">vibe check payload</text>
+
+      <g transform="translate(12, 32)">
+        <text x="0" y="0" class="font-mono" font-size="8.5" fill="#38bdf8">--goal</text>
+        <text x="0" y="11" class="font-sans" font-size="9" fill="#cbd5e1">"Run prod migration &amp; sync ORM"</text>
+
+        <text x="0" y="27" class="font-mono" font-size="8.5" fill="#38bdf8">--plan</text>
+        <text x="0" y="38" class="font-sans" font-size="9" fill="#cbd5e1">"Drop stale tables, migrate schema"</text>
+
+        <text x="0" y="54" class="font-mono" font-size="8.5" fill="#f59e0b">--uncertainty</text>
+        <text x="0" y="65" class="font-sans" font-size="9" fill="#cbd5e1">"No snapshot backup confirmed"</text>
+
+        <text x="0" y="81" class="font-mono" font-size="8.5" fill="#94a3b8">--progress</text>
+        <text x="0" y="92" class="font-sans" font-size="9" fill="#94a3b8">"Drafted migration script &amp; models"</text>
+      </g>
+    </g>
+
+    <!-- Invocation Footer -->
+    <g transform="translate(18, 302)">
+      <rect width="234" height="28" rx="6" fill="#0c1a2e" stroke="#0284c7" stroke-width="1" />
+      <text x="14" y="18" class="font-mono" font-size="9.5" font-weight="600" fill="#7dd3fc">vibe check</text>
+      <text x="86" y="18" class="font-sans" font-size="9" fill="#94a3b8">invoked by agent</text>
+    </g>
+  </g>
+
+  <!-- Flow Connector 1 -> 2 -->
+  <g transform="translate(315, 275)">
+    <line x1="0" y1="0" x2="35" y2="0" stroke="url(#cyan-grad)" stroke-width="2.5" marker-end="url(#arr-cyan)" />
+    <rect x="2" y="-18" width="31" height="14" rx="3" fill="#0b1728" />
+    <text x="17.5" y="-8" class="font-mono" font-size="7.5" font-weight="600" fill="#38bdf8" text-anchor="middle">INPUT</text>
+  </g>
+
+
+  <!-- COLUMN 2: METARATIONAL MENTOR EVALUATION -->
+  <g transform="translate(355, 115)" filter="url(#shadow)">
+    <!-- Outer Card -->
+    <rect width="300" height="345" rx="12" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1.2" />
+    <rect width="300" height="3" rx="1.5" fill="url(#violet-grad)" />
+
+    <!-- Card Header -->
+    <g transform="translate(18, 16)">
+      <rect x="0" y="0" width="76" height="18" rx="4" fill="#2e1065" />
+      <text x="38" y="12.5" class="font-mono" font-size="8.5" font-weight="700" fill="#c084fc" text-anchor="middle">PHASE 02</text>
+      <text x="0" y="38" class="font-sans" font-size="15" font-weight="700" fill="#f8fafc">Mentor Deep Review</text>
+      <text x="0" y="54" class="font-sans" font-size="10.5" fill="#94a3b8">Context assembly &amp; blast-radius scan</text>
+    </g>
+
+    <!-- Context Assembly Bar -->
+    <g transform="translate(18, 86)">
+      <rect width="264" height="26" rx="6" fill="#17122b" stroke="#7c3aed" stroke-width="1" />
+      <text x="10" y="17" class="font-sans" font-size="9" font-weight="600" fill="#d8b4fe">
+        Context Assembly: <tspan font-weight="400" fill="#cbd5e1">Plan + Memory + Rules</tspan>
+      </text>
+    </g>
+
+    <!-- Blast Radius Scan Matrix -->
+    <g transform="translate(18, 124)">
+      <rect width="264" height="135" rx="8" fill="url(#card-inner-grad)" stroke="#1e293b" stroke-width="1" />
+      <text x="12" y="18" class="font-sans" font-size="9" font-weight="700" fill="#94a3b8" letter-spacing="0.04em">
+        BLAST-RADIUS SCAN VECTORS
+      </text>
+
+      <!-- Scan Vector Rows -->
+      <g transform="translate(12, 28)">
+        <!-- Vector 1 -->
+        <circle cx="5" cy="5" r="3" fill="#a855f7" />
+        <text x="15" y="8" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Constitution:</text>
+        <text x="80" y="8" class="font-sans" font-size="9" fill="#94a3b8">Active rules &amp; constraints check</text>
+
+        <!-- Vector 2 -->
+        <circle cx="5" cy="23" r="3" fill="#f43f5e" />
+        <text x="15" y="26" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Irreversibility:</text>
+        <text x="84" y="26" class="font-sans" font-size="9" fill="#94a3b8">Real blast radius &amp; rollback safety</text>
+
+        <!-- Vector 3 -->
+        <circle cx="5" cy="41" r="3" fill="#fbbf24" />
+        <text x="15" y="44" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Misalignment:</text>
+        <text x="88" y="44" class="font-sans" font-size="9" fill="#94a3b8">Serving true user intent vs drift</text>
+
+        <!-- Vector 4 -->
+        <circle cx="5" cy="59" r="3" fill="#38bdf8" />
+        <text x="15" y="62" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Assumptions:</text>
+        <text x="84" y="62" class="font-sans" font-size="9" fill="#94a3b8">Unverified premises locked-in</text>
+
+        <!-- Vector 5 -->
+        <circle cx="5" cy="77" r="3" fill="#cbd5e1" />
+        <text x="15" y="80" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Overreach:</text>
+        <text x="75" y="80" class="font-sans" font-size="9" fill="#94a3b8">Unneeded scope, bloat, or tooling</text>
+
+        <!-- Vector 6 -->
+        <circle cx="5" cy="95" r="3" fill="#a855f7" />
+        <text x="15" y="98" class="font-sans" font-size="9" font-weight="600" fill="#f8fafc">Mistake Patterns:</text>
+        <text x="104" y="98" class="font-sans" font-size="9" fill="#94a3b8">Repeat of known errors</text>
+      </g>
+    </g>
+
+    <!-- Mentor Finding Output Box -->
+    <g transform="translate(18, 271)">
+      <rect width="264" height="60" rx="6" fill="#1a102e" stroke="#7c3aed" stroke-width="1.2" />
+      <text x="12" y="18" class="font-sans" font-size="9.5" font-weight="700" fill="#e9d5ff">
+        1 Highest-Weight Actionable Finding
+      </text>
+      <text x="12" y="34" class="font-sans" font-size="9" fill="#c084fc">
+        "Minimum words. Maximum signal."
+      </text>
+      <text x="12" y="49" class="font-sans" font-size="8.5" fill="#94a3b8">
+        Appended to autosession history for review continuity
+      </text>
+    </g>
+  </g>
+
+  <!-- Flow Connector 2 -> 3 -->
+  <g transform="translate(655, 275)">
+    <line x1="0" y1="0" x2="35" y2="0" stroke="url(#violet-grad)" stroke-width="2.5" marker-end="url(#arr-violet)" />
+    <rect x="0" y="-18" width="35" height="14" rx="3" fill="#141124" />
+    <text x="17.5" y="-8" class="font-mono" font-size="7.5" font-weight="600" fill="#c084fc" text-anchor="middle">REPORT</text>
+  </g>
+
+
+  <!-- COLUMN 3: VIBE GATE & VERDICT -->
+  <g transform="translate(695, 115)" filter="url(#shadow)">
+    <!-- Outer Card -->
+    <rect width="260" height="345" rx="12" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1.2" />
+    <rect width="260" height="3" rx="1.5" fill="url(#emerald-grad)" />
+
+    <!-- Card Header -->
+    <g transform="translate(18, 16)">
+      <rect x="0" y="0" width="72" height="18" rx="4" fill="#064e3b" />
+      <text x="36" y="12.5" class="font-mono" font-size="8.5" font-weight="700" fill="#34d399" text-anchor="middle">PHASE 03</text>
+      <text x="0" y="38" class="font-sans" font-size="15" font-weight="700" fill="#f8fafc">Vibe Gate Decision</text>
+      <text x="0" y="54" class="font-sans" font-size="10.5" fill="#94a3b8">Go / No-Go policy engine</text>
+    </g>
+
+    <!-- Gate Schema Preview -->
+    <g transform="translate(18, 86)">
+      <rect width="224" height="48" rx="6" fill="url(#card-inner-grad)" stroke="#1e293b" stroke-width="1" />
+      <text x="10" y="16" class="font-mono" font-size="8.5" fill="#cbd5e1">
+        {"<tspan fill="#34d399">proceed</tspan>": <tspan fill="#f59e0b">bool</tspan>, "<tspan fill="#38bdf8">confidence</tspan>": 0..1,
+      </text>
+      <text x="10" y="30" class="font-mono" font-size="8.5" fill="#cbd5e1">
+        &#160;"<tspan fill="#94a3b8">reason</tspan>": "...", "<tspan fill="#c084fc">plan</tspan>": "..."}
+      </text>
+      <text x="10" y="42" class="font-sans" font-size="7.5" fill="#f87171">
+        * Malformed or faulted verdict defaults to BLOCK
+      </text>
+    </g>
+
+    <!-- Branch A: PROCEED (Approved) -->
+    <g transform="translate(18, 144)">
+      <rect width="224" height="88" rx="8" fill="#06281e" stroke="#10b981" stroke-width="1.5" />
+      <circle cx="16" cy="18" r="6" fill="#10b981" />
+      <path d="M 13 18 L 15 20 L 19 15" fill="none" stroke="#041f17" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      <text x="28" y="21" class="font-sans" font-size="11" font-weight="700" fill="#34d399">
+        PROCEED: TRUE
+      </text>
+      <g transform="translate(12, 34)">
+        <text x="0" y="8" class="font-sans" font-size="8.5" fill="#a7f3d0">• Plan verified sound &amp; safely scoped</text>
+        <text x="0" y="21" class="font-sans" font-size="8.5" fill="#a7f3d0">• Blast radius contained / safe-stop present</text>
+        <rect x="0" y="28" width="200" height="18" rx="4" fill="#034430" />
+        <text x="100" y="40.5" class="font-sans" font-size="8.5" font-weight="700" fill="#6ee7b7" text-anchor="middle">
+          Agent executes finalized approved plan
+        </text>
+      </g>
+    </g>
+
+    <!-- Branch B: BLOCKED (Retry or Abort) -->
+    <g transform="translate(18, 242)">
+      <rect width="224" height="90" rx="8" fill="#251016" stroke="#f43f5e" stroke-width="1.5" />
+      <circle cx="16" cy="18" r="6" fill="#f43f5e" />
+      <path d="M 13 15 L 19 21 M 19 15 L 13 21" stroke="#350b14" stroke-width="1.8" stroke-linecap="round" />
+      <text x="28" y="21" class="font-sans" font-size="11" font-weight="700" fill="#fb7185">
+        PROCEED: FALSE
+      </text>
+      <g transform="translate(12, 34)">
+        <text x="0" y="8" class="font-sans" font-size="8.5" fill="#fecdd3">• Hard risk or missing safety check found</text>
+        <!-- Retry Loop Indicator -->
+        <rect x="0" y="16" width="200" height="18" rx="4" fill="#3f121d" />
+        <text x="100" y="28.5" class="font-sans" font-size="8.5" font-weight="700" fill="#fda4af" text-anchor="middle">
+          attempts &lt; max: Triggers Auto-Revision ↺
+        </text>
+        <text x="0" y="46" class="font-sans" font-size="8" fill="#fda4af">
+          attempts exhausted: Safe abort (Exit code 2)
+        </text>
+      </g>
+    </g>
+  </g>
+
+
+  <!-- ========================================== -->
+  <!-- BOTTOM SECTION: PERSISTENT STATE & STORAGE -->
+  <!-- ========================================== -->
+  <g transform="translate(45, 490)" filter="url(#shadow)">
+    <!-- Container Card -->
+    <rect width="910" height="165" rx="12" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1.2" />
+
+    <!-- Section Header -->
+    <g transform="translate(20, 14)">
+      <!-- SQLite database icon -->
+      <rect x="0" y="2" width="28" height="28" rx="6" fill="#0f1f38" stroke="#38bdf8" stroke-width="1.2" />
+      <path d="M 7 11 C 7 9.5 10 8 14 8 C 18 8 21 9.5 21 11 C 21 12.5 18 14 14 14 C 10 14 7 12.5 7 11 Z" fill="none" stroke="#38bdf8" stroke-width="1.3" />
+      <path d="M 7 11 L 7 21 C 7 22.5 10 24 14 24 C 18 24 21 22.5 21 21 L 21 11" fill="none" stroke="#38bdf8" stroke-width="1.3" />
+      <path d="M 7 16 C 7 17.5 10 19 14 19 C 18 19 21 17.5 21 16" fill="none" stroke="#38bdf8" stroke-width="1.3" />
+
+      <text x="36" y="16" class="font-sans" font-size="13" font-weight="700" fill="#f8fafc">
+        Persistent Metacognitive State &amp; Local Governance
+      </text>
+      <rect x="365" y="5" width="186" height="16" rx="4" fill="#0c2340" stroke="#0284c7" stroke-width="1" />
+      <text x="458" y="16.5" class="font-mono" font-size="8" fill="#38bdf8" text-anchor="middle">~/.vibe-cli/vibe.db (SQLite WAL)</text>
+
+      <text x="36" y="30" class="font-sans" font-size="9.5" fill="#94a3b8">
+        Local-first, zero-telemetry persistent memory power-steering review context across sessions
+      </text>
+    </g>
+
+    <!-- Sub-Cards -->
+    <!-- SUB-CARD A: CONSTITUTION -->
+    <g transform="translate(20, 56)">
+      <rect width="275" height="94" rx="8" fill="#0d182b" stroke="#1e3a5f" stroke-width="1" />
+      <rect x="12" y="10" width="94" height="16" rx="4" fill="#0c2340" />
+      <text x="59" y="21.5" class="font-mono" font-size="8" font-weight="700" fill="#38bdf8" text-anchor="middle">CONSTITUTION</text>
+      <text x="114" y="22" class="font-mono" font-size="8.5" fill="#7dd3fc">vibe constitution</text>
+
+      <text x="12" y="44" class="font-sans" font-size="11" font-weight="700" fill="#f8fafc">
+        Active Session Rules
+      </text>
+      <text x="12" y="59" class="font-sans" font-size="9" fill="#94a3b8">
+        • Non-negotiable boundaries &amp; directives
+      </text>
+      <text x="12" y="72" class="font-sans" font-size="9" fill="#94a3b8">
+        • Persistent constraints across checks
+      </text>
+      <text x="12" y="85" class="font-sans" font-size="9" fill="#94a3b8">
+        • Evaluated on every plan before gating
+      </text>
+    </g>
+
+    <!-- SUB-CARD B: ADAPTIVE LEARNING -->
+    <g transform="translate(315, 56)">
+      <rect width="275" height="94" rx="8" fill="#181329" stroke="#3b2463" stroke-width="1" />
+      <rect x="12" y="10" width="80" height="16" rx="4" fill="#251240" />
+      <text x="52" y="21.5" class="font-mono" font-size="8" font-weight="700" fill="#c084fc" text-anchor="middle">LEARNING</text>
+      <text x="100" y="22" class="font-mono" font-size="8.5" fill="#d8b4fe">vibe learn</text>
+
+      <text x="12" y="44" class="font-sans" font-size="11" font-weight="700" fill="#f8fafc">
+        Cross-Session Memory
+      </text>
+      <text x="12" y="59" class="font-sans" font-size="9" fill="#94a3b8">
+        • <tspan font-weight="600" fill="#fb7185">mistake</tspan>: failure patterns to prevent
+      </text>
+      <text x="12" y="72" class="font-sans" font-size="9" fill="#94a3b8">
+        • <tspan font-weight="600" fill="#34d399">success</tspan>: approaches to repeat
+      </text>
+      <text x="12" y="85" class="font-sans" font-size="9" fill="#94a3b8">
+        • <tspan font-weight="600" fill="#38bdf8">preference</tspan>: durable user conventions
+      </text>
+    </g>
+
+    <!-- SUB-CARD C: AUTOSESSIONS & HISTORY -->
+    <g transform="translate(610, 56)">
+      <rect width="280" height="94" rx="8" fill="#121b29" stroke="#1d3557" stroke-width="1" />
+      <rect x="12" y="10" width="94" height="16" rx="4" fill="#132742" />
+      <text x="59" y="21.5" class="font-mono" font-size="8" font-weight="700" fill="#38bdf8" text-anchor="middle">AUTOSESSIONS</text>
+      <text x="114" y="22" class="font-mono" font-size="8.5" fill="#7dd3fc">vibe session</text>
+
+      <text x="12" y="44" class="font-sans" font-size="11" font-weight="700" fill="#f8fafc">
+        Directory-Scoped Context
+      </text>
+      <text x="12" y="59" class="font-sans" font-size="9" fill="#94a3b8">
+        • Automatic 4-hour working session window
+      </text>
+      <text x="12" y="72" class="font-sans" font-size="9" fill="#94a3b8">
+        • Records interaction history &amp; mentor advice
+      </text>
+      <text x="12" y="85" class="font-sans" font-size="9" fill="#94a3b8">
+        • Tracks retry attempts &amp; avoids repeat loops
+      </text>
+    </g>
+  </g>
+
+  <!-- Feed Upward Connectors from Storage to Context Assembly -->
+  <path d="M 158 490 C 158 472, 440 475, 470 460" fill="none" stroke="#6366f1" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#arr-feed)" opacity="0.8" />
+  <path d="M 452 490 C 452 475, 500 475, 505 460" fill="none" stroke="#a855f7" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#arr-feed)" opacity="0.8" />
+  <path d="M 750 490 C 750 472, 570 475, 540 460" fill="none" stroke="#6366f1" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#arr-feed)" opacity="0.8" />
+
+  <!-- Feeder Label Pill -->
+  <g transform="translate(425, 467)">
+    <rect width="160" height="18" rx="9" fill="#1e1b4b" stroke="#6366f1" stroke-width="1" />
+    <text x="80" y="12.5" class="font-mono" font-size="8" font-weight="600" fill="#c7d2fe" text-anchor="middle">
+      ▲ Active Context Injection
+    </text>
+  </g>
+
+</svg>
