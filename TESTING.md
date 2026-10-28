@@ -1,367 +1,352 @@
 # Testing
 
-`Bun` provides a built-in test runner via the `bun:test` module. The
-runner delivers high-performance execution, `Jest`-compatible `APIs`,
-native `TypeScript` support, snapshot testing, mocking, fake timers, and
-`DOM` integration.
+`Bun` ships a built-in test runner, `bun:test`, with `Jest`-compatible
+`APIs`, native `TypeScript`, snapshots, mocks, and fake timers.
 
-## Test execution
+## Requirements
 
-Run test suites using the `Bun` `CLI`:
+- `Bun` 1.4.3 or later; check with `bun --version`.
+  - Older releases accept `--check` but silently skip type checking;
+    upgrade or run `tsc --noEmit` instead.
+- `bun:test` exports `jest` and `vi` as built-in compatibility objects;
+  never install `jest`, `vitest`, or `@types/jest`.
+  - `@testing-library/jest-dom` runs without them.
+
+## Scope
+
+- Prefer unit tests.
+- Escalate to integration tests only when behavior crosses a system
+  boundary.
+- Reserve end-to-end tests for critical user flows.
+
+## Commands
 
 ```bash
-bun test                          # Run all tests
-bun test --only                   # Run tests marked with .only
-bun test --todo                   # Run tests marked with .todo
-bun test --update-snapshots       # Update stored snapshots
-bun test --preload ./setup.ts     # Preload setup scripts
-TZ=America/Los_Angeles bun test   # Set suite timezone
+bun test                        # Run every discovered test file
+bun test src/parser             # Run files whose paths match a filter
+bun test -t "parses ports"      # Run tests whose names match a regex
+bun test --check                # Type-check tests and imports, then run
+bun test --isolate              # Give each file fresh globals and modules
+bun test --parallel             # Run files across workers; implies --isolate
+bun test --randomize            # Shuffle test order; prints the seed
+bun test --randomize --seed=42  # Replay a shuffled order
+bun test --rerun-each=20        # Rerun each file to expose flakiness
+bun test --coverage             # Report coverage
+bun test --update-snapshots     # Rewrite stored snapshots (-u)
 ```
 
-Configure default test options in `bunfig.toml`:
+- Discovery: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*`.
+- A `-t` pattern matching zero tests fails the run.
+- `--check` requires `@types/bun` and `"types": ["bun"]` in
+  `tsconfig.json`; type errors stop the run.
+- `CI=true` fails runs containing `.only` or unrecorded snapshots.
+
+## Configuration
 
 ```toml
+# bunfig.toml
 [test]
-preload = ["./setup.ts"]
+preload = ["./test/setup.ts"] # Runs before every test file
+coverageThreshold = 0.9       # Fails --coverage runs below 90%
 ```
 
-## Test definition
+Restore shared state after every test from the preload file:
 
-Import test primitives directly from `bun:test`:
+```ts
+// test/setup.ts
+import {afterEach, jest, mock, setSystemTime} from "bun:test";
+
+afterEach(() => {
+  mock.restore(); // Restores spied methods
+  mock.clearAllMocks(); // Clears recorded calls on every mock
+  jest.useRealTimers();
+  setSystemTime();
+});
+```
+
+## Structure
+
+- Name tests `verb + subject + condition + outcome`.
+- Group related cases with `describe`.
+- Extract repeated setup into helpers or hooks; keep bodies lean.
+- Extend existing suites for established units; add files only for new
+  modules or distinct boundaries.
+- Use `test.each` for input tables sharing one invariant; never
+  copy-paste test bodies.
 
 ```ts
 import {describe, expect, test} from "bun:test";
+import {parsePort} from "./config.ts";
 
-test("adds numbers", () => {
-  expect(2 + 2).toBe(4);
-});
+describe("parsePort", () => {
+  test.each([
+    ["80", 80],
+    ["65535", 65535]
+  ])("parses %p as port %p", (input, port) => {
+    expect(parsePort(input)).toBe(port);
+  });
 
-describe("math operations", () => {
-  test("multiplies numbers", () => {
-    expect(2 * 3).toBe(6);
+  test.each(["0", "65536", "-1"])("throws RangeError for %p", input => {
+    expect(() => parsePort(input)).toThrow(RangeError);
   });
 });
 ```
 
-### Asynchronous tests
+| Token  | Interpolates           |
+| :----- | :--------------------- |
+| `%p`   | Pretty-formatted value |
+| `%s`   | String                 |
+| `%d`   | Number                 |
+| `%i`   | Integer                |
+| `%f`   | Float                  |
+| `%j`   | `JSON`                 |
+| `%o`   | Object                 |
+| `%#`   | Case index             |
+| `%%`   | Literal `%`            |
+| `$key` | Object row property    |
 
-Return a `Promise` or use `async`/`await`:
+## Modifiers
+
+| Modifier                                | Rule                                             |
+| :-------------------------------------- | :----------------------------------------------- |
+| `test.only`, `describe.only`            | Local focus only; never commit                   |
+| `test.skip`, `describe.skip`            | Never commit                                     |
+| `test.todo`                             | Planned coverage; `bun test --todo` runs it      |
+| `test.failing`                          | Known bug; fails once fixed, prompting removal   |
+| `test.if`, `test.skipIf`, `test.todoIf` | Environment guards; `describe` supports them too |
+
+Guard tests needing optional environment:
 
 ```ts
-test("fetches user data", async () => {
-  const data = await Promise.resolve({id: 1});
-  expect(data.id).toBe(1);
+const databaseUrl = process.env["DATABASE_URL"];
+
+describe.skipIf(!databaseUrl)("OrderRepository", () => {
+  // Integration tests against a real database
 });
 ```
 
-Or invoke the `done` callback upon completion:
+## Isolation
+
+- Each test passes alone and in any order; verify with `--randomize`.
+- `bun test` shares one process across files by default; globals, the
+  module cache, and `mock.module()` replacements leak between files.
+  - Run with `--isolate` or `--parallel` for fresh globals and modules
+    per file.
+- Reset shared registries and stores in `beforeEach`.
+- Restore mutated globals (`process.env`, `globalThis`) in `afterEach`.
+
+## CI parity
+
+| Hazard                           | Remedy                                                       |
+| :------------------------------- | :----------------------------------------------------------- |
+| Absolute paths                   | `join(import.meta.dir, "fixtures", "input.json")`            |
+| Read-only working directory      | Temp directories under `tmpdir()`                            |
+| Undeclared environment variables | Defaults or `skipIf` guards; `bun test` sets `NODE_ENV=test` |
+| Running services                 | Mock in unit tests; skip-guard integration tests             |
+| Live network                     | Mock `fetch` and `node:dns`; bind `Bun.serve({port: 0})`     |
+| Timezone                         | Runs in `UTC` unless `TZ` overrides; freeze time             |
+| Locale                           | Pass explicit locales: `toLocaleString("en-US")`             |
+| OS commands, separators          | `node:path` helpers; spawn `process.execPath`                |
+| Case sensitivity                 | Normalize paths and filenames explicitly                     |
+
+Create and remove temp directories per test:
 
 ```ts
-test("callback completes", done => {
-  setTimeout(() => {
-    expect(true).toBe(true);
-    done();
-  }, 10);
+import {afterEach, beforeEach} from "bun:test";
+import {mkdtemp, rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+
+let workDir: string;
+
+beforeEach(async () => {
+  workDir = await mkdtemp(join(tmpdir(), "app-test-"));
+});
+
+afterEach(async () => {
+  await rm(workDir, {recursive: true, force: true});
 });
 ```
 
-### Timeouts
+Never assume runner privilege; root and `CAP_DAC_OVERRIDE` bypass mode
+bits in containers:
 
-Pass a duration in milliseconds as the third parameter (default:
-`5000ms`). Expiring timeouts throw an `uncatchable` exception and cancel
-child processes:
+- Simulate `EACCES`/`EPERM` in unit tests with stubs; never via `chmod`.
+- Never assert mode-bit denial in integration or end-to-end tests.
+- Assert permission-setting behavior through `stat` mode values.
+
+## Asynchronous
+
+- Use `async`/`await`; avoid `done` callbacks.
+- Always `await` `.resolves` and `.rejects` assertions.
+- Await events through promises; never poll or sleep:
 
 ```ts
-test("slow query completes within threshold", async () => {
-  const result = await slowOperation();
-  expect(result).toBeDefined();
-}, 500);
+test("emits drained after the last job completes", async () => {
+  const queue = new JobQueue();
+  const {promise: drained, resolve} = Promise.withResolvers<void>();
+  queue.once("drained", resolve);
+
+  queue.push(async () => {});
+  await drained;
+
+  expect(queue.size).toBe(0);
+});
 ```
 
-### Retries and repeats
-
-Supply execution options via the options argument. `retry` and `repeats`
-conflict—never combine them in one test:
+- Drive cancellation with `AbortController`; never rely on real
+  timeouts:
 
 ```ts
-// Retries on failure up to N times; passes on first success
+test("rejects with AbortError when the caller aborts", async () => {
+  const controller = new AbortController();
+  const pending = exportReport({signal: controller.signal});
+
+  controller.abort();
+
+  await expect(pending).rejects.toMatchObject({name: "AbortError"});
+});
+```
+
+### Timeouts, retries, and repeats
+
+- Set timeouts via the third argument (milliseconds) or `--timeout`;
+  default `5000`.
+- Never mask flakiness with `retry` (`{retry: n}`, `--retry`); fix the
+  root cause.
+- Expose flakiness with `{repeats: n}` (runs `n + 1` times) or
+  `--rerun-each=n`.
+- `retry` and `repeats` conflict; setting both fails the file.
+
+```ts
 test(
-  "unstable network query",
+  "drains every job under concurrent pushes",
   async () => {
-    const response = await fetch("https://example.com");
-    expect(response.ok).toBe(true);
-  },
-  {retry: 3}
-);
+    const queue = new JobQueue();
+    const {promise: drained, resolve} = Promise.withResolvers<void>();
+    queue.once("drained", resolve);
 
-// Executes N + 1 times; fails if any run fails
-test(
-  "verifies deterministic output",
-  () => {
-    expect(Math.random()).toBeLessThan(1);
+    queue.push(async () => {});
+    queue.push(async () => {});
+    await drained;
+
+    expect(queue.completed).toBe(2);
   },
-  {repeats: 5}
+  {repeats: 50}
 );
 ```
 
-## Modifiers and conditionals
+## Time and timers
 
-Control test execution through chaining modifiers:
+Use fake timers for time-dependent logic; never introduce real delays:
 
 ```ts
-test.skip("skipped test", () => {});
-test.todo("unimplemented test", () => {});
-test.only("exclusive test", () => {});
-test.failing("known failure", () => {
-  expect(1 + 1).toBe(3); // Inverts outcome: failure counts as pass
+import {expect, jest, mock, test} from "bun:test";
+
+test("retries the request after one second of backoff", () => {
+  jest.useFakeTimers({now: new Date("2026-01-01T00:00:00.000Z")});
+  const send = mock();
+
+  scheduleRetry(send, 1000);
+  jest.advanceTimersByTime(999);
+  expect(send).not.toHaveBeenCalled();
+
+  jest.advanceTimersByTime(1);
+  expect(send).toHaveBeenCalledTimes(1);
 });
 ```
 
-Apply conditional predicates to tests or `describe` blocks:
+- `jest.useFakeTimers()` controls `setTimeout`, `setInterval`, and
+  `Date`; `{now}` sets the starting clock.
+- Advance with `advanceTimersByTime`, `runOnlyPendingTimers`, or
+  `runAllTimers`.
+- `setSystemTime(date)` moves `Date` and `Intl` clocks without faking
+  timers; `setSystemTime()` restores real time.
+- Bun lacks `advanceTimersByTimeAsync` and `vi.setSystemTime`; use
+  `jest.setSystemTime` or `setSystemTime`.
+- Zone-specific cases set `process.env.TZ` at runtime and restore it in
+  `afterEach`.
+
+## Mocking
+
+- Unit tests: mock every external process, I/O call, network request,
+  and event source.
+- Integration and end-to-end tests: use real dependencies; never mix in
+  mocks.
+- Prefer fakes over spies, spies over stubs.
+- Restore every mock after each test; see `test/setup.ts`.
+
+### Fakes
+
+Inject collaborators; pass working in-memory implementations:
 
 ```ts
-const darwin = process.platform === "darwin";
+class MemoryStore implements Store {
+  readonly #items = new Map<string, string>();
 
-test.if(darwin)("runs only on macOS", () => {});
-test.skipIf(!darwin)("skips on non-macOS", () => {});
-test.todoIf(darwin)("tracks planned macOS support", () => {});
+  async get(key: string) {
+    return this.#items.get(key);
+  }
 
-describe.if(darwin)("macOS suite", () => {
-  test("feature a", () => {});
+  async set(key: string, value: string) {
+    this.#items.set(key, value);
+  }
+}
+
+test("returns the stored value on lookup", async () => {
+  const cache = new Cache(new MemoryStore());
+
+  await cache.set("user:1", "Ada");
+
+  expect(await cache.get("user:1")).toBe("Ada");
 });
-```
-
-## Parametrized tests
-
-Generate parameterized test suites via `test.each` and `describe.each`:
-
-```ts
-// Array rows supply positional arguments
-test.each([
-  [1, 2, 3],
-  [4, 5, 9]
-])("%i + %i yields %i", (a, b, expected) => {
-  expect(a + b).toBe(expected);
-});
-
-// Object rows pass an object argument
-test.each([
-  {a: 1, b: 2, sum: 3},
-  {a: 4, b: 5, sum: 9}
-])("$a + $b yields $sum", ({a, b, sum}) => {
-  expect(a + b).toBe(sum);
-});
-```
-
-### Format specifiers
-
-| Token | Interpolated value type |
-| :---- | :---------------------- |
-| `%p`  | Pretty-format           |
-| `%s`  | String                  |
-| `%d`  | Number                  |
-| `%i`  | Integer                 |
-| `%f`  | Floating point          |
-| `%j`  | `JSON`                  |
-| `%o`  | Object                  |
-| `%#`  | Test case index         |
-| `%%`  | Literal percent sign    |
-
-## Lifecycle hooks
-
-Manage setup and teardown at file, `describe`, or test level:
-
-```ts
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  onTestFinished,
-  test
-} from "bun:test";
-
-beforeAll(async () => {
-  // Runs once before all tests in scope
-});
-
-beforeEach(() => {
-  // Runs before each test in scope
-});
-
-afterEach(() => {
-  // Runs after each test in scope
-});
-
-afterAll(async () => {
-  // Runs once after all tests in scope
-});
-
-test("registers scoped cleanup", () => {
-  onTestFinished(() => {
-    // Executes after afterEach hooks for this test
-  });
-});
-```
-
-- **Execution order**: outer `beforeAll` → inner `beforeAll` → outer
-  `beforeEach` → inner `beforeEach` → test → inner `afterEach` → outer
-  `afterEach` → inner `afterAll` → outer `afterAll`.
-- **Error isolation**: hook exceptions skip remaining tests within the
-  affected scope.
-- **Concurrency restriction**: `onTestFinished` requires serial
-  execution (`test.serial`).
-
-## Assertions and types
-
-### Assertion counts
-
-Enforce assertion execution within tests containing asynchronous or
-conditional branches:
-
-```ts
-test("executes expected assertions", async () => {
-  expect.hasAssertions(); // Requires at least one assertion
-  expect.assertions(2); // Requires exactly two assertions
-
-  const data = await fetchData();
-  expect(data).toBeDefined();
-  expect(data.valid).toBe(true);
-});
-```
-
-### Static type assertions
-
-Verify `TypeScript` compile-time types with `expectTypeOf`. The runner
-treats calls as runtime no-ops. Check types via `tsc --noEmit`:
-
-```ts
-import {expectTypeOf, test} from "bun:test";
-
-test("validates types statically", () => {
-  expectTypeOf("hello").toBeString();
-  expectTypeOf(123).toBeNumber();
-  expectTypeOf([1, 2, 3]).items.toBeNumber();
-  expectTypeOf(Promise.resolve("value")).resolves.toBeString();
-  expectTypeOf({id: "abc", role: "admin"}).toMatchObjectType<{
-    id: string;
-  }>();
-});
-```
-
-## Matchers catalog
-
-`Bun` supports extensive `Jest`-compatible matchers.
-
-### Basic equality and identity
-
-| Matcher            | Verification target                           |
-| :----------------- | :-------------------------------------------- |
-| `.toBe(val)`       | Strict equality (`Object.is`)                 |
-| `.toEqual(val)`    | Deep recursive equality                       |
-| `.toStrictEqual()` | Strict equality including types and undefined |
-| `.toBeDefined()`   | Value distinguishes from `undefined`          |
-| `.toBeUndefined()` | Value equals `undefined`                      |
-| `.toBeNull()`      | Value equals `null`                           |
-| `.toBeNaN()`       | Value evaluates as `NaN`                      |
-| `.toBeTruthy()`    | Value casts to boolean `true`                 |
-| `.toBeFalsy()`     | Value casts to boolean `false`                |
-
-### Strings and collections
-
-| Matcher                     | Verification target                |
-| :-------------------------- | :--------------------------------- |
-| `.toHaveLength(len)`        | Collection matches length          |
-| `.toContain(item)`          | Array or string contains substring |
-| `.toContainEqual(item)`     | Array contains deep matching item  |
-| `.toMatch(pattern)`         | String matches regular expression  |
-| `expect.stringContaining()` | Asymmetric substring match         |
-| `expect.stringMatching()`   | Asymmetric regular expression      |
-| `expect.arrayContaining()`  | Asymmetric array subset match      |
-
-### Objects and properties
-
-| Matcher                     | Verification target             |
-| :-------------------------- | :------------------------------ |
-| `.toHaveProperty(path)`     | Object contains property path   |
-| `.toMatchObject(shape)`     | Object matches partial subset   |
-| `.toContainAllKeys(keys)`   | Object contains specified keys  |
-| `.toContainValue(val)`      | Object contains specific value  |
-| `.toContainValues(vals)`    | Object contains value set       |
-| `expect.objectContaining()` | Asymmetric object partial match |
-
-### Numbers and ranges
-
-| Matcher                      | Verification target         |
-| :--------------------------- | :-------------------------- |
-| `.toBeGreaterThan(n)`        | Value exceeds threshold     |
-| `.toBeGreaterThanOrEqual(n)` | Value equals or exceeds     |
-| `.toBeLessThan(n)`           | Value stays below threshold |
-| `.toBeLessThanOrEqual(n)`    | Value equals or stays below |
-| `.toBeCloseTo(n, digits?)`   | Floating point proximity    |
-
-### Exceptions, promises, and utilities
-
-| Matcher                   | Verification target        |
-| :------------------------ | :------------------------- |
-| `.toThrow(error?)`        | Function throws error      |
-| `.toBeInstanceOf(cls)`    | Value inherits prototype   |
-| `.resolves`               | Unwraps resolved `Promise` |
-| `.rejects`                | Unwraps rejected `Promise` |
-| `expect.any(Constructor)` | Matches instance type      |
-| `expect.anything()`       | Matches non-nullish value  |
-
-## Mocks and spies
-
-Create mocked functions using `mock()` or the `jest.fn()` alias:
-
-```ts
-import {expect, jest, mock, spyOn, test} from "bun:test";
-
-const add = mock((a: number, b: number) => a + b);
-add(2, 3);
-
-expect(add).toHaveBeenCalledTimes(1);
-expect(add).toHaveBeenCalledWith(2, 3);
-expect(add.mock.calls).toEqual([[2, 3]]);
-expect(add.mock.results).toEqual([{type: "return", value: 5}]);
-```
-
-### Mock implementations
-
-```ts
-const mockedService = mock();
-
-mockedService.mockReturnValue(100);
-mockedService.mockReturnValueOnce(50);
-mockedService.mockResolvedValue({status: "ok"});
-mockedService.mockResolvedValueOnce({status: "queued"});
-mockedService.mockRejectedValue(new Error("Network failed"));
-mockedService.mockImplementation((x: number) => x * 2);
-mockedService.mockImplementationOnce(() => 0);
 ```
 
 ### Spies
 
-Track target method invocations while preserving original behavior:
+`spyOn` records calls on an existing method; chain a stub to block side
+effects:
 
 ```ts
-const user = {
-  getName() {
-    return "Alex";
-  }
-};
+test("fetches each profile once across repeated lookups", async () => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({id: 1, name: "Ada"})
+  );
+  const profiles = createProfileClient();
 
-const spy = spyOn(user, "getName");
-user.getName();
+  await profiles.get(1);
+  await profiles.get(1);
 
-expect(spy).toHaveBeenCalledTimes(1);
-spy.mockRestore(); // Restores original behavior
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+});
 ```
 
-### Module mocking
+### Stubs
 
-Override module exports across `ESM` and `CommonJS`:
+`mock(impl)` creates a tracked function; program results with
+`mockReturnValue`, `mockResolvedValue`, `mockRejectedValue`,
+`mockImplementation`, and their `Once` variants:
+
+```ts
+test("reports unreadable config when the read fails with EACCES", async () => {
+  const denied = Object.assign(new Error("permission denied"), {
+    code: "EACCES"
+  });
+  const readFile = mock().mockRejectedValue(denied);
+
+  await expect(loadConfig("app.json", {readFile})).rejects.toThrow(
+    "unreadable config"
+  );
+  expect(readFile).toHaveBeenCalledWith("app.json", "utf8");
+});
+```
+
+`jest.fn`, `vi.fn`, and `vi.spyOn` alias the native `APIs` for
+migrations; prefer `mock` and `spyOn`.
+
+### Module mocks
+
+Reserve `mock.module()` for modules lacking an injection seam:
 
 ```ts
 mock.module("./client.ts", () => ({
@@ -369,151 +354,188 @@ mock.module("./client.ts", () => ({
 }));
 ```
 
-- **Live bindings**: `mock.module` recursively patches live `ESM`
-  exports. Later calls update existing references.
-- **Hoisting via preload**: to intercept side-effecting top-level module
-  code, mock modules within a `--preload` script.
+- Updates live `ESM` bindings, including existing imports.
+- Survives `mock.restore()` and leaks into later files; run with
+  `--isolate`.
+- Register in a preload file to intercept modules with import-time side
+  effects.
 
-### Mock cleanup
+## Assertions
 
-Reset or restore mock states in `afterEach` hooks:
+- Assert observable behavior—return values, output, state—never
+  internals.
+- Cover the happy path plus every distinct failure and cancellation
+  path.
+- Never duplicate existing coverage or assertions.
+- Fail loudly on bad state:
+  - `expect.assertions(n)` or `expect.hasAssertions()` in tests with
+    callbacks or branches.
+  - `expect.unreachable(message)` on paths that must never run.
+  - Throw on missing fixtures; never return early.
+
+### Matcher selection
+
+| Intent               | Matcher                                                   |
+| :------------------- | :-------------------------------------------------------- |
+| Primitives, identity | `toBe`                                                    |
+| Structural equality  | `toEqual`; `toStrictEqual` also checks `undefined`, class |
+| Partial objects      | `toMatchObject`, `expect.objectContaining`                |
+| Dynamic values       | `expect.any(Type)`, `expect.stringMatching(pattern)`      |
+| Errors               | `toThrow(ErrorClass)` or `toThrow("message")`             |
+| Promises             | `await expect(promise).resolves` or `.rejects`            |
+| Mock calls           | `toHaveBeenCalledWith(...)` over `toHaveBeenCalled()`     |
+| Floats               | `toBeCloseTo(value, digits)`                              |
+| Object keys, values  | `toContainAllKeys`, `toContainValue`, `toContainValues`   |
+
+Avoid `toBeTruthy` and `toBeDefined` when a precise expected value
+exists.
+
+### Static types
+
+`expectTypeOf` does nothing at runtime; `bun test --check` enforces it:
 
 ```ts
-afterEach(() => {
-  mock.clearAllMocks(); // Resets calls, results, and instances
-  mock.restore(); // Restores original implementations on spies
+test("infers the normalized config shape", () => {
+  expectTypeOf(normalizeConfig({port: 80})).toMatchObjectType<{
+    port: number;
+  }>();
 });
-```
-
-### Vitest compatibility
-
-The `vi` namespace aliases common mocking utilities:
-
-```ts
-import {vi} from "bun:test";
-
-const fn = vi.fn();
-const spy = vi.spyOn(console, "log");
-vi.restoreAllMocks();
 ```
 
 ## Snapshots
 
-Serialize values and verify regression over time:
+- Snapshot large, stable serialized output; assert small values
+  explicitly.
+- Mask dynamic fields with asymmetric matchers:
 
 ```ts
-import {expect, test} from "bun:test";
-
-test("matches file snapshot", () => {
-  expect({env: "production", port: 8080}).toMatchSnapshot();
-});
-
-test("matches inline snapshot", () => {
-  expect("config-output").toMatchInlineSnapshot(`"config-output"`);
-});
-
-test("matches error snapshot", () => {
-  expect(() => {
-    throw new Error("Invalid schema");
-  }).toThrowErrorMatchingSnapshot();
-});
-```
-
-### Dynamic masking
-
-Mask variable data (such as timestamps and generated identifiers) using
-asymmetric property matchers:
-
-```ts
-test("snapshot with dynamic fields", () => {
-  const payload = {
-    id: Math.random(),
-    createdAt: new Date().toISOString(),
-    status: "active"
-  };
-
-  expect(payload).toMatchSnapshot({
-    id: expect.any(Number),
-    createdAt: expect.any(String)
+test("serializes a new session with masked dynamic fields", () => {
+  expect(createSession("ada")).toMatchSnapshot({
+    id: expect.any(String),
+    createdAt: expect.any(Date)
   });
 });
 ```
 
-Update snapshot baselines via the `CLI`:
+- Review every diff before `bun test -u`; commit `__snapshots__/`
+  alongside tests.
+- `CI=true` rejects new file and inline snapshots; record them locally.
 
-```bash
-bun test --update-snapshots
-```
+## Lifecycle hooks
 
-## Time and timers
+| Placement        | Scope                  |
+| :--------------- | :--------------------- |
+| Preload file     | Every test in the run  |
+| File top level   | Every test in the file |
+| `describe` block | Tests in that block    |
 
-Mock the system clock for `Date.now()`, `new Date()`, and `Intl`:
+Order: outer `beforeAll` → inner `beforeAll` → outer `beforeEach` →
+inner `beforeEach` → test → inner `afterEach` → outer `afterEach` →
+`onTestFinished` → inner `afterAll` → outer `afterAll`.
+
+- A throwing `beforeAll` skips every test in its scope.
+- A throwing `beforeEach` fails each test in its scope.
+- `onTestFinished(fn)` registers cleanup for the current test;
+  concurrent tests reject it—use `test.serial`.
+
+## Concurrency
+
+- `test.concurrent`, `describe.concurrent`, or `--concurrent` run tests
+  concurrently within a file; `--max-concurrency` caps them (default
+  `20`).
+- Concurrent tests never share mutable state.
+- `test.serial` opts a test out of concurrency.
+
+## Output hygiene
+
+- Never commit `console.*` calls or `debugger` statements in tests;
+  assert instead of printing.
+- Capture intended output and assert on it:
 
 ```ts
-import {expect, jest, setSystemTime, test} from "bun:test";
+test("warns when the config omits the port", () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
 
-test("manipulates system time", () => {
-  setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-  expect(new Date().getFullYear()).toBe(2026);
+  normalizeConfig({});
 
-  expect(Date.now()).toBe(1767225600000);
-  expect(jest.now()).toBe(1767225600000);
-
-  // Calling setSystemTime without parameters restores real time
-  setSystemTime();
-  expect(new Date().getFullYear()).toBeGreaterThan(2025);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("port"));
 });
 ```
 
-- **Timers restriction**: system clock mocking excludes timer scheduling
-  (`setTimeout`, `setInterval`).
-- **Timezone control**: configure time zones per run using
-  `TZ=<timezone> bun test` or assign `process.env["TZ"]` dynamically at
-  runtime.
+- Spawn CLIs with `Bun.spawnSync([process.execPath, "src/cli.ts"])`;
+  assert on `stdout` and `exitCode`.
+- Silence expected logs from code under test; a clean run prints only
+  the test report.
 
-## Browser and `DOM` environments
-
-Emulate browser `APIs` using `happy-dom`:
+## `DOM` testing
 
 ```bash
-bun add -d @happy-dom/global-registrator @testing-library/react @testing-library/jest-dom
+bun add -d @happy-dom/global-registrator @testing-library/dom @testing-library/react @testing-library/jest-dom
 ```
 
-Register globals in a preload file (`setup.ts`):
+```toml
+# bunfig.toml
+[test]
+preload = ["./test/happydom.ts", "./test/setup.ts"]
+```
 
 ```ts
+// test/happydom.ts
 import {GlobalRegistrator} from "@happy-dom/global-registrator";
-import "@testing-library/jest-dom";
 
 GlobalRegistrator.register();
 ```
 
-Configure `bunfig.toml`:
+Register `jest-dom` matchers in `test/setup.ts`:
 
-```toml
-[test]
-preload = ["./setup.ts"]
+```ts
+import {expect} from "bun:test";
+import * as matchers from "@testing-library/jest-dom/matchers";
+
+expect.extend(matchers);
 ```
 
-Inject `DOM` types into test files using the triple-slash directive:
+Type the matchers:
+
+```ts
+// test/matchers.d.ts
+import type {TestingLibraryMatchers} from "@testing-library/jest-dom/matchers";
+import type {expect} from "bun:test";
+
+declare module "bun:test" {
+  interface Matchers<T> extends TestingLibraryMatchers<
+    ReturnType<typeof expect.stringContaining>,
+    T
+  > {}
+}
+```
+
+Scope `DOM` types per file with a triple-slash directive:
 
 ```tsx
 /// <reference lib="dom" />
 
-import {afterEach, expect, test} from "bun:test";
-import {cleanup, render, screen} from "@testing-library/react";
+import {expect, test} from "bun:test";
+import {render, screen} from "@testing-library/react";
+import {Welcome} from "./welcome.tsx";
 
-afterEach(() => {
-  cleanup();
-  document.body.innerHTML = "";
-});
+test("renders the greeting heading with the user name", () => {
+  render(<Welcome name="Ada" />);
 
-function Welcome({name}: {name: string}) {
-  return <h1>Hello {name}</h1>;
-}
-
-test("renders heading", () => {
-  render(<Welcome name="World" />);
-  expect(screen.getByRole("heading")).toHaveTextContent("Hello World");
+  expect(screen.getByRole("heading")).toHaveTextContent("Hello Ada");
 });
 ```
+
+Testing Library registers `cleanup` in `afterEach` automatically.
+
+## Verification
+
+Before writing tests, confirm their dependencies appear in
+`devDependencies`. Before declaring a task done:
+
+1. `bun test <file>` passes.
+2. `bun test <file> -t "<name>"` runs each new or updated test.
+3. `bun test --check` reports zero type errors.
+4. `CI=true bun test --isolate --randomize` shows zero new failures.
+5. Changed test files contain no `console.*`, `debugger`, `.only`, or
+   `.skip`.
