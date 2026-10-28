@@ -9,8 +9,7 @@
 
 ### Testing
 
-- Read guides in `./docs/bun/testing` before writing tests. The agent
-  file indexes each guide.
+- Read `TESTING.md` before writing tests.
 
 ## Gotchas
 
@@ -18,9 +17,9 @@
 
 ## Commands
 
-- `bun check` — type-check, auto-fix trivial lint
-- `bun coverage` — full test suite
-- `bun verify` — comprehensive verification
+- `bun check`—type-check, auto-fix trivial lint
+- `bun coverage`—full test suite
+- `bun verify`—comprehensive verification
 
 ### Constraints
 
