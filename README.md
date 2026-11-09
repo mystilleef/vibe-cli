@@ -132,7 +132,13 @@ vibe check \
 
 - Returns `JSON` with `proceed`, `confidence`, `reason`, `feedback`,
   `plan`, and `attempts`.
-- Exit code `2` indicates non-proceeding verdict.
+- Optional fields:
+  - `exhausted`: attempt budget spent without approval.
+  - `feedbackFault`: mentor feedback generation failed, also setting
+    `exhausted`.
+  - `diagnostic`: provider error behind a feedback fault.
+- Exit code `2` signals `proceed: false`—blocked verdict, exhausted
+  attempts, or feedback fault.
 
 ### Record lesson
 
@@ -184,8 +190,8 @@ vibe guide install --json
 ### Query and maintenance
 
 `prune` and `doctor` print readable text by default. Pass `--json` to
-emit the machine-readable payload for automation. Existing stdout-parsing
-callers must add `--json` to both `prune` and `doctor`.
+emit the machine-readable payload for automation. Existing
+stdout-parsing callers must add `--json` to both `prune` and `doctor`.
 
 ```sh
 vibe list all --json
@@ -218,14 +224,16 @@ vibe doctor --vacuum --purge-backups --keep-backups 3 --yes
   one safety backup.
 - `--json`: emit the machine-readable payload instead of readable text.
 
-Maintenance applies only with `--yes` (bare `--yes` applies every target). One
-safety backup precedes every apply and lands at `backupPath` under `--json`.
+Maintenance applies only with `--yes` (bare `--yes` applies every
+target). One safety backup precedes every apply and lands at
+`backupPath` under `--json`.
 
-- Under `--json`, findings (`integrityCheck`, `foreignKeyCheck`, `freelistCount`,
-  `excessBackups`, `latestBackupPath`, `legacyBackups`,
-  `strandedOriginals`) keep pre-application values.
+- Under `--json`, findings (`integrityCheck`, `foreignKeyCheck`,
+  `freelistCount`, `excessBackups`, `latestBackupPath`, `legacyBackups`,
+  `strandedOriginals`) keep pre-apply values.
 - When `targets` include `purgeBackups`, even without `--yes`,
-  `excessBackups` counts the pending safety backup, predicting the purge.
+  `excessBackups` counts the pending safety backup, predicting the
+  purge.
 - Under `--json`, `appliedCounts` reports actual results: reclaimed free
   pages for `vacuum`, deleted files for each purge.
 - `skippedTargets` lists unselected targets; `failedTargets` entries
