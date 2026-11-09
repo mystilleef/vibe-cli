@@ -54,6 +54,9 @@ const COMMANDS = {
       plan: "str (final approved or last plan)",
       attempts: "int",
       exhausted: "bool?",
+      feedbackFault:
+        "bool? (mentor feedback generation faulted; exhausted also true)",
+      diagnostic: "str? (provider error on feedback fault)",
     },
     exit: {
       "0": "proceed=true",

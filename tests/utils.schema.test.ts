@@ -339,7 +339,7 @@ describe("buildSchema", () => {
     expect(prune.out.failedTargets).toBe("[{target:str,message:str}]");
   });
 
-  test("check command schema defines expected output fields", async () => {
+  test("check command schema documents complete feedback-fault output fields", async () => {
     await writeSettings(validSettings());
 
     const schema = buildSchema();
@@ -349,9 +349,22 @@ describe("buildSchema", () => {
     expect(check.req["--goal"]).toBe("str");
     expect(check.req["--plan"]).toBe("str");
     expect(check.opt["--provider"]).toBe("settings provider entry name");
-    expect(check.out).toHaveProperty("proceed");
-    expect(check.out).toHaveProperty("confidence");
-    expect(check.exit).toHaveProperty("0");
-    expect(check.exit).toHaveProperty("2");
+    expect(check.out).toEqual({
+      proceed: "bool",
+      confidence: "float",
+      reason: "str",
+      feedback: "str",
+      plan: "str (final approved or last plan)",
+      attempts: "int",
+      exhausted: "bool?",
+      feedbackFault:
+        "bool? (mentor feedback generation faulted; exhausted also true)",
+      diagnostic: "str? (provider error on feedback fault)",
+    });
+    expect(check.exit).toEqual({
+      "0": "proceed=true",
+      "2": "proceed=false or exhausted",
+      "1": "error",
+    });
   });
 });
