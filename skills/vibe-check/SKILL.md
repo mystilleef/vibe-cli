@@ -24,11 +24,15 @@ coverage, local renames, or changes reversible via `git revert`.
 
 - Check assumptions, missing constraints, partial-failure risks, and plan
   quality before action as a pre-execution validation gate.
-- Send goal and plan to `vibe check`, then execute the returned plan exactly.
+- Send goal and plan to `vibe check`; adopt mentor changes aligned with the user
+  requirement, then execute the adopted plan.
+- Final discretion rests with the calling agent: the mentor advises; the user
+  requirement decides.
 
 ## Input
 
 - One-sentence goal.
+- User requirement: acceptance criteria and fixed constraints.
 - Ordered, concrete plan.
 - Known risks, assumptions, uncertainties, and relevant context.
 - Progress completed when resuming mid-task.
@@ -38,17 +42,21 @@ coverage, local renames, or changes reversible via `git revert`.
 1. **GATE**—Guard preconditions; make no changes:
    - Run `vibe schema` once per session; treat output as authoritative for
      commands, options, outputs, and exit codes.
-   - Run `vibe constitution get`; resolve missing, stale, or contradictory
-     rules before proceeding.
+   - Run `vibe constitution get`; resolve missing, stale, or contradictory rules
+     before proceeding.
 
 2. **ORIENT**—Anchor goal before execution:
-   - Goal: confirm plan safety and quality before execution.
-   - Immutable state: original user goal and completed progress.
+   - Goal: confirm plan safety, quality, and requirement alignment before
+     execution.
+   - Immutable state: original user requirement and completed progress.
+   - Authority order: user requirement and constitution, then mentor, then
+     original plan.
 
 3. **PLAN**—Construct compact validation request:
    - `--goal`: one sentence.
    - `--plan`: ordered, concrete, execution-ready steps.
    - `--uncertainty`: material risks, assumptions, or open concerns.
+   - `--prompt`: user requirement, verbatim.
    - `--context`: scope boundaries, limitations, and constraints; pass text
      verbatim without file paths or unresolved references.
    - `--progress`: include when resuming after partial work.
@@ -56,18 +64,26 @@ coverage, local renames, or changes reversible via `git revert`.
 4. **ACT**—Run `vibe check` with constructed flags.
 
 5. **VERIFY**—Evaluate returned CLI JSON verdict (`vibeGateLoop` outcome):
-   - `proceed=true`: execute the returned `plan` payload exactly (contains
-     mentor-approved refinements).
+   - `proceed=true`: adjudicate each mentor change—each difference between the
+     returned and submitted `plan`—weighing `reason` and `feedback`:
+     - Adopt by default, including safety additions and neutral edits.
+     - Reject or adjust a change only on a cited conflict with the user
+       requirement, constitution, or repository evidence.
+     - Treat any step absent from both plans as a new decision point.
+     - Execute the adopted plan.
    - `proceed=false` / `exhausted=true`: halt execution; report that mentor
      review exhausted attempt limits without reaching approval.
    - `feedbackFault=true`: halt execution; report feedback generation failure
      diagnostic.
 
-6. **PERSIST**—Run `vibe learn` when work reveals a mistake, reusable success, or
-   durable correction.
+6. **PERSIST**—Run `vibe learn` when work reveals a mistake, reusable success,
+   or durable correction, including a mentor change rejected for requirement
+   conflict.
 
-7. **REPORT**—Surface the mentor's verdict and approved plan to the calling
-   agent unchanged.
+7. **REPORT**—Surface to the calling agent:
+   - Mentor verdict and adopted plan.
+   - Ledger: each mentor change, its disposition (adopted, adjusted, rejected),
+     and cited ground.
 
 ## Directives
 
@@ -82,7 +98,7 @@ coverage, local renames, or changes reversible via `git revert`.
   this skill.
 - Never substitute `vibe check` for required user approval.
 - Never ignore `proceed=false`, `feedbackFault=true`, or `exhausted=true`.
-- Never execute original plan text when `vibe check` returns a revised `plan`.
+- Never reject a mentor change on preference, effort, or cost.
 - Never tamper with `--max-attempts` unless the user requests explicit bounds.
 - Abort execution rather than guessing when mentor attempts run out.
 - Exclude file paths, URLs, or external references from `--context`.
@@ -95,4 +111,5 @@ coverage, local renames, or changes reversible via `git revert`.
 - `vibe constitution get` ran before invoking `vibe check`.
 - Request payload contained goal, concrete plan, and material uncertainties.
 - Returned verdict received explicit handling (`proceed=true` or halt).
-- Executed steps match returned approved plan text.
+- Executed steps match the adopted plan; each deviation from the returned `plan`
+  carries a cited ground in the ledger.

@@ -8,7 +8,10 @@
 - multi-step chains with partial-failure risk
 
 - Skip for reversible, single-step work
-- Execute only the final approved returned `plan`; never the original
+- Execute only after `proceed=true`; never override a halt
+- Adopt mentor changes by default; reject or adjust one only on a cited
+  conflict with the user requirement, constitution, or repository
+  evidence
 
 **`vibe-learn`**—Invoke after any concrete outcome; classify as one of:
 

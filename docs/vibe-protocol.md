@@ -35,28 +35,37 @@ Rules apply to every check in the session. Set before the first check.
 ## Check
 
 ```sh
-vibe check --goal "<goal>" --plan "<plan>" [--uncertainty "<concern>" ...]
+vibe check --goal "<goal>" --plan "<plan>" [--prompt "<user requirement>"] [--uncertainty "<concern>" ...]
 ```
 
-| field       | type  | action                                             |
-| ----------- | ----- | -------------------------------------------------- |
-| `proceed`   | bool  | execute iff true                                   |
-| `plan`      | str   | execute this — never your original                 |
-| `exhausted` | bool? | true → abort; report task cannot be safely planned |
-| `reason`    | str   | rationale                                          |
-| `feedback`  | str?  | feedback to address before resubmitting            |
+`vibe check` revises and rechecks internally until approval or attempt
+exhaustion; never resubmit a blocked plan.
 
-- If `proceed=true`, execute the returned `plan`.
-- If `proceed=false` and `exhausted!=true`:
-  - revise from:
-    - `reason`
-    - `feedback`
-    - returned `plan`
-  - resubmit
-  - repeat until:
-    - `proceed=true`
-    - or `exhausted=true`
-- Execute only the final approved returned `plan`.
+| field           | type  | action                                               |
+| --------------- | ----- | ---------------------------------------------------- |
+| `proceed`       | bool  | execute iff true                                     |
+| `plan`          | str   | final reviewed plan; adopt mentor changes by default |
+| `reason`        | str   | rationale                                            |
+| `feedback`      | str   | mentor feedback; weigh when adjudicating changes     |
+| `exhausted`     | bool? | true → abort; report task cannot reach safe approval |
+| `feedbackFault` | true? | true → abort; report `diagnostic`                    |
+
+### Adjudicate on `proceed=true`
+
+The calling agent holds final discretion; the user requirement outranks
+the mentor.
+
+- Compare the returned `plan` with the submitted plan.
+- For each mentor change:
+  - Adopt by default, including safety additions and neutral edits.
+  - Reject or adjust only on a cited conflict with:
+    - user requirement
+    - constitution
+    - repository evidence
+  - Never reject on preference, effort, or cost.
+- Treat any step absent from both plans as a new decision point.
+- Record each change's disposition and cited ground.
+- Execute the adopted plan.
 
 Exit codes: `0` proceed · `2` blocked/exhausted · `1` error
 
