@@ -57,6 +57,11 @@ function input(overrides: Partial<VibeCheckInput> = {}): VibeCheckInput {
   };
 }
 
+/** User message content of the captured request at `index`. */
+function promptAt(index: number): string | undefined {
+  return requests[index]?.messages?.[0]?.content;
+}
+
 beforeEach(async () => {
   originalFetch = globalThis.fetch;
   savedEnv = {
@@ -255,18 +260,54 @@ describe("vibeGateLoop", () => {
       attempts: 2,
     });
     expect(requests).toHaveLength(5);
-    expect(requests[2]?.messages?.[0]?.content).toContain(
-      "Blocked plan: run focused tests",
+    expect([promptAt(1), promptAt(2), promptAt(4)]).toEqual([
+      "Goal: ship safely\nPlan: run focused tests\nFeedback: questions:first",
+      "Goal: ship safely\nBlocked plan: run focused tests\nSafety feedback: questions:first\nBlock reason: missing rollback",
+      "Goal: ship safely\nPlan: add rollback and smoke tests\nFeedback: questions:second",
+    ]);
+    expect(promptAt(3)).toContain("Plan: add rollback and smoke tests");
+  });
+
+  test("forwards caller context and model override to every gate decision and revision including retries", async () => {
+    responseQueue.push(
+      "questions:first",
+      gateDecision(false, 0.3, "missing rollback"),
+      "revision 1",
+      "questions:second",
+      gateDecision(false, 0.4, "still risky"),
+      "revision 2",
+      "questions:third",
+      gateDecision(true, 0.9, "ok"),
     );
-    expect(requests[2]?.messages?.[0]?.content).toContain(
-      "Block reason: missing rollback",
+
+    const caller = input({
+      userPrompt: "do it carefully",
+      uncertainties: ["rate limits", "auth scope"],
+      taskContext: "working on auth",
+      modelOverride: { provider: "anthropic", model: "mock-gate" },
+    });
+    const result = await vibeGateLoop(caller, 3);
+
+    expect(result.proceed).toBe(true);
+    expect(result.attempts).toBe(3);
+    expect(requests).toHaveLength(8);
+    expect(requests.map((request) => request.model)).toEqual(
+      Array.from({ length: 8 }, () => "mock-gate"),
     );
-    expect(requests[2]?.messages?.[0]?.content).toContain(
-      "Safety feedback: questions:first",
-    );
-    expect(requests[3]?.messages?.[0]?.content).toContain(
-      "Plan: add rollback and smoke tests",
-    );
+    const callerLines = [
+      "User Prompt: do it carefully",
+      "Uncertainties: rate limits, auth scope",
+      "Task Context: working on auth",
+    ].join("\n");
+    expect([promptAt(1), promptAt(4), promptAt(7)]).toEqual([
+      `Goal: ship safely\nPlan: run focused tests\nFeedback: questions:first\n${callerLines}`,
+      `Goal: ship safely\nPlan: revision 1\nFeedback: questions:second\n${callerLines}`,
+      `Goal: ship safely\nPlan: revision 2\nFeedback: questions:third\n${callerLines}`,
+    ]);
+    expect([promptAt(2), promptAt(5)]).toEqual([
+      `Goal: ship safely\nBlocked plan: run focused tests\nSafety feedback: questions:first\nBlock reason: missing rollback\n${callerLines}`,
+      `Goal: ship safely\nBlocked plan: revision 1\nSafety feedback: questions:second\nBlock reason: still risky\n${callerLines}`,
+    ]);
   });
 
   test("marks the last blocked attempt exhausted without revising after maxAttempts", async () => {
@@ -352,33 +393,6 @@ describe("vibeGateLoop", () => {
     expect(result.reason).toBe("block 3");
     // 3 checks + 3 gates + 2 revisions = 8 requests
     expect(requests).toHaveLength(8);
-  });
-
-  test("propagates modelOverride through revisePlan calls", async () => {
-    responseQueue.push(
-      "questions:first",
-      gateDecision(false, 0.3, "missing rollback"),
-      "revision with model",
-      "questions:second",
-      gateDecision(true, 0.9, "ok"),
-    );
-
-    const result = await vibeGateLoop(
-      input({
-        modelOverride: { provider: "anthropic", model: "custom-model" },
-      }),
-      2,
-    );
-
-    expect(result.proceed).toBe(true);
-    expect(result.plan).toBe("revision with model");
-    // Verify plan revision call used the overridden model
-    const reviseCall = requests[2];
-    expect(reviseCall?.model).toBe("custom-model");
-    expect(reviseCall?.system).toContain("plan reviser");
-    expect(reviseCall?.messages?.[0]?.content).toContain(
-      "Block reason: missing rollback",
-    );
   });
 
   test("propagates error when revisePlan throws mid-loop", async () => {

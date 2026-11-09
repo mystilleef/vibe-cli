@@ -48,6 +48,31 @@ interface ReviewOutput {
   error?: string;
 }
 
+/** Caller fields that carry the requirement into reviser and gate calls. */
+type CallerContext = Pick<
+  ReviewInput,
+  "userPrompt" | "uncertainties" | "taskContext"
+>;
+
+/** Build optional line if value is truthy. */
+function optionalLine(label: string, value: string | undefined): string {
+  return value ? `${label}: ${value}` : "";
+}
+
+/** Labeled caller-context lines in mentor order; absent or empty values omitted. */
+function callerContextLines(
+  input: CallerContext & Pick<ReviewInput, "progress">,
+): string[] {
+  return [
+    optionalLine("User Prompt", input.userPrompt),
+    optionalLine("Progress", input.progress),
+    input.uncertainties?.length
+      ? `Uncertainties: ${input.uncertainties.join(", ")}`
+      : "",
+    optionalLine("Task Context", input.taskContext),
+  ].filter(Boolean);
+}
+
 /**
  * Assemble the full context block sent to the metacognitive LLM.
  *
@@ -55,11 +80,6 @@ interface ReviewOutput {
  * rules, prior session history, and learning-pattern history. Learning context is
  * controlled by the `useLearningHistory` setting (default: true).
  */
-/** Build optional line if value is truthy. */
-function optionalLine(label: string, value: string | undefined | null): string {
-  return value ? `${label}: ${value}` : "";
-}
-
 function buildContextSection(input: ReviewInput): string {
   const settings = loadProviderSettings();
   const useLearning = settings.useLearningHistory ?? true;
@@ -69,12 +89,7 @@ function buildContextSection(input: ReviewInput): string {
     "CONTEXT:",
     `Goal: ${input.goal}`,
     `Plan: ${input.plan}`,
-    optionalLine("User Prompt", input.userPrompt),
-    optionalLine("Progress", input.progress),
-    input.uncertainties?.length
-      ? `Uncertainties: ${input.uncertainties.join(", ")}`
-      : "",
-    optionalLine("Task Context", input.taskContext),
+    ...callerContextLines(input),
     rules.length
       ? `Constitution:\n${rules.map((r) => `- ${r}`).join("\n")}`
       : "",
@@ -101,7 +116,7 @@ async function generateResponse(input: ReviewInput): Promise<ReviewOutput> {
 /** System prompt for the plan-revision LLM call. */
 const PLAN_REVISION_SYSTEM_PROMPT = `AI agent plan reviser.
 
-Address the safety concern in the feedback with the smallest change that resolves it; preserve everything else. Do not add scope, abstraction, tooling, or process beyond what the concern requires. Prioritize goal alignment when feedback conflicts.
+Address the safety concern in the feedback with the smallest change that resolves it; preserve everything else. Do not add scope, abstraction, tooling, or process beyond what the concern requires. Preserve every requirement the goal, user prompt, or task context states; change or drop one only when feedback explicitly directs it.
 The revised plan returns for re-evaluation — resolve the concern completely, minimally, so the gate approves.
 Output ONLY the revised plan — no preamble, no extra text. One paragraph or short numbered list.`;
 
@@ -111,13 +126,15 @@ Output ONLY the revised plan — no preamble, no extra text. One paragraph or sh
  * Returns only the revised plan text. Called by `vibeGateTool` when the gate blocks
  * and a retry with revision is warranted.
  */
-export async function revisePlan(input: {
-  goal: string;
-  plan: string;
-  feedback: string;
-  blockReason?: string;
-  modelOverride?: { provider?: string; model?: string };
-}): Promise<string> {
+export async function revisePlan(
+  input: {
+    goal: string;
+    plan: string;
+    feedback: string;
+    blockReason?: string;
+    modelOverride?: { provider?: string; model?: string };
+  } & CallerContext,
+): Promise<string> {
   const { provider, model, credentials } = resolveProviderAndModel(
     input.modelOverride,
   );
@@ -126,6 +143,7 @@ export async function revisePlan(input: {
     `Blocked plan: ${input.plan}`,
     `Safety feedback: ${input.feedback}`,
     ...(input.blockReason ? [`Block reason: ${input.blockReason}`] : []),
+    ...callerContextLines(input),
   ].join("\n");
   return callProvider(
     provider,
@@ -142,10 +160,10 @@ const GATE_SYSTEM_PROMPT = `Go/no-go decision engine for AI agent plans.
 Output ONLY one line of valid JSON — no markdown, no extra text:
 {"proceed":<bool>,"confidence":<0.0-1.0>,"reason":"<one sentence, 20 words max>"}
 
-- proceed true: plan safe, scoped, goal-aligned; feedback confirms sound or raises only minor/irrelevant concerns
+- proceed true: plan safe, scoped, aligned with goal (plus user prompt and task context when supplied); feedback confirms sound or raises only minor/irrelevant concerns
 - proceed true: low-blast-radius irreversible op (recoverable via re-run, redeploy, or version control; no data/user/prod impact) — rollback machinery not required
 - proceed false: unresolved hard risk — constitution violation, or an irreversible op with real blast radius (data loss, prod impact, unrecoverable state) lacking rollback or safe-stop
-- proceed false: unverified premise critical to safety; goal misalignment
+- proceed false: unverified premise critical to safety; misalignment with goal, user prompt, or task context
 - confidence: 0.5 = uncertain, ≥0.8 = clear, 1.0 = certain`;
 
 /**
@@ -154,16 +172,23 @@ Output ONLY one line of valid JSON — no markdown, no extra text:
  * The returned `GateDecision` always has valid fields — `parseGateDecision` applies
  * a blocking default on parse failure.
  */
-export async function getGateDecision(input: {
-  goal: string;
-  plan: string;
-  feedback: string;
-  modelOverride?: { provider?: string; model?: string };
-}): Promise<GateDecision> {
+export async function getGateDecision(
+  input: {
+    goal: string;
+    plan: string;
+    feedback: string;
+    modelOverride?: { provider?: string; model?: string };
+  } & CallerContext,
+): Promise<GateDecision> {
   const { provider, model, credentials } = resolveProviderAndModel(
     input.modelOverride,
   );
-  const userContent = `Goal: ${input.goal}\nPlan: ${input.plan}\nFeedback: ${input.feedback}`;
+  const userContent = [
+    `Goal: ${input.goal}`,
+    `Plan: ${input.plan}`,
+    `Feedback: ${input.feedback}`,
+    ...callerContextLines(input),
+  ].join("\n");
   const raw = await callProvider(
     provider,
     credentials,

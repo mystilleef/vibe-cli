@@ -1,5 +1,9 @@
 import { getGateDecision, revisePlan } from "../utils/llm.js";
-import { type VibeCheckInput, vibeCheckTool } from "./vibeCheck.js";
+import {
+  forwardedInput,
+  type VibeCheckInput,
+  vibeCheckTool,
+} from "./vibeCheck.js";
 
 export type { VibeCheckInput };
 
@@ -54,9 +58,7 @@ export async function vibeGateTool(
     goal: input.goal,
     plan: input.plan,
     feedback: checkResult.feedback,
-    ...(input.modelOverride !== undefined && {
-      modelOverride: input.modelOverride,
-    }),
+    ...forwardedInput(input),
   });
   return {
     proceed: decision.proceed,
@@ -110,9 +112,7 @@ export async function vibeGateLoop(
       plan,
       feedback: toolResult.feedback,
       blockReason: toolResult.reason,
-      ...(input.modelOverride !== undefined && {
-        modelOverride: input.modelOverride,
-      }),
+      ...forwardedInput(input),
     });
   }
 

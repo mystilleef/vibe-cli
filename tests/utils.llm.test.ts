@@ -15,6 +15,7 @@ import {
   mapThinkingLevel,
   SETTINGS_FILE_MISSING_ERROR,
 } from "../src/utils/settings";
+import { addLearningEntry } from "../src/utils/storage";
 import {
   mockSettings,
   writeSettings as writeSettingsShared,
@@ -403,7 +404,12 @@ describe("LLM call surfaces", () => {
     expect(result.proceed).toBe(true);
     const request = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(request.request.temperature).toBe(0.1);
-    expect(request.request.messages[0]?.content).toContain("Go/no-go");
+    const system = request.request.messages[0]?.content as string;
+    expect(system).toContain("Go/no-go");
+    expect(system).toContain("user prompt");
+    expect(system).toContain("task context");
+    expect(system).toContain('{"proceed"');
+    expect(system).toContain("confidence");
     expect(request.request.messages[1]?.content).toContain("Goal: goal");
   });
 
@@ -422,12 +428,112 @@ describe("LLM call surfaces", () => {
     expect(result).toBe("revised plan");
     const request = requireValue(openAiRequests[0], "OpenAI request 0");
     expect(request.request.temperature).toBe(0.1);
-    expect(request.request.messages[0]?.content).toContain("plan reviser");
+    const system = request.request.messages[0]?.content as string;
+    expect(system).toContain("plan reviser");
+    expect(system).toContain(
+      "Preserve every requirement the goal, user prompt, or task context states",
+    );
+    expect(system).toContain("only when feedback explicitly directs");
+    expect(system).toContain("smallest change");
+    expect(system).toContain("ONLY the revised plan");
     expect(request.request.messages[1]?.content).toContain(
       "Blocked plan: old plan",
     );
     expect(request.request.messages[1]?.content).toContain(
       "Block reason: irreversible op",
+    );
+  });
+
+  test("getGateDecision appends only caller context in order after feedback", async () => {
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = JSON.stringify({
+      proceed: true,
+      confidence: 0.9,
+      reason: "ok",
+    });
+    resetConstitution(["always verify inputs"]);
+
+    await getGateDecision({
+      goal: "goal",
+      plan: "plan",
+      feedback: "feedback",
+      userPrompt: "do it carefully",
+      uncertainties: ["rate limits", "auth scope"],
+      taskContext: "working on auth",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    const content = request.request.messages[1]?.content as string;
+    expect(content).toBe(
+      "Goal: goal\nPlan: plan\nFeedback: feedback\nUser Prompt: do it carefully\nUncertainties: rate limits, auth scope\nTask Context: working on auth",
+    );
+  });
+
+  test("getGateDecision omits absent and empty caller context with exact prior bytes", async () => {
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = JSON.stringify({
+      proceed: true,
+      confidence: 0.8,
+      reason: "ok",
+    });
+
+    await getGateDecision({
+      goal: "goal",
+      plan: "plan",
+      feedback: "feedback",
+      userPrompt: "",
+      uncertainties: [],
+      taskContext: "",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toBe(
+      "Goal: goal\nPlan: plan\nFeedback: feedback",
+    );
+  });
+
+  test("revisePlan appends only caller context after block reason in order", async () => {
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "revised plan";
+    resetConstitution(["always verify inputs"]);
+
+    await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      blockReason: "irreversible op",
+      userPrompt: "do it carefully",
+      uncertainties: ["rate limits", "auth scope"],
+      taskContext: "working on auth",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toBe(
+      "Goal: goal\nBlocked plan: old plan\nSafety feedback: missing rollback\nBlock reason: irreversible op\nUser Prompt: do it carefully\nUncertainties: rate limits, auth scope\nTask Context: working on auth",
+    );
+  });
+
+  test("revisePlan omits empty caller context with exact prior bytes and block reason", async () => {
+    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+    openAiResponseText = "revised plan";
+
+    await revisePlan({
+      goal: "goal",
+      plan: "old plan",
+      feedback: "missing rollback",
+      blockReason: "irreversible op",
+      userPrompt: "",
+      uncertainties: [],
+      taskContext: "",
+      modelOverride: { provider: "custom-openai" },
+    });
+
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toBe(
+      "Goal: goal\nBlocked plan: old plan\nSafety feedback: missing rollback\nBlock reason: irreversible op",
     );
   });
 
@@ -688,99 +794,18 @@ describe("extractContent edge cases", () => {
 });
 
 describe("buildContextSection through getMentorFeedback", () => {
-  test("includes userPrompt in context when provided", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "response with user prompt";
-
-    const result = await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      userPrompt: "do it carefully",
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    expect(result.feedback).toBe("response with user prompt");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).toContain(
-      "User Prompt: do it carefully",
+  test("assembles full mentor context with constitution history and learning blocks", async () => {
+    await writeSettings(
+      mockSettings({ provider: "custom-openai", useLearningHistory: true }),
     );
-  });
-
-  test("includes progress in context when provided", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "response with progress";
-
-    const result = await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      progress: "50% complete",
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    expect(result.feedback).toBe("response with progress");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).toContain(
-      "Progress: 50% complete",
-    );
-  });
-
-  test("includes uncertainties in context when provided", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "response with uncertainties";
-
-    const result = await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      uncertainties: ["rate limits", "auth scope"],
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    expect(result.feedback).toBe("response with uncertainties");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).toContain(
-      "Uncertainties: rate limits, auth scope",
-    );
-  });
-
-  test("includes taskContext in context when provided", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "response with task context";
-
-    const result = await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      taskContext: "working on auth module",
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    expect(result.feedback).toBe("response with task context");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).toContain(
-      "Task Context: working on auth module",
-    );
-  });
-
-  test("includes historySummary in context when provided", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "response with history";
-
-    const result = await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      historySummary: "previously fixed auth bug",
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    expect(result.feedback).toBe("response with history");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).toContain(
-      "History Context: previously fixed auth bug",
-    );
-  });
-
-  test("includes all optional fields together", async () => {
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
     openAiResponseText = "full context response";
+    resetConstitution(["always verify inputs", "log errors"]);
+    addLearningEntry(
+      "redeploy without a canary",
+      "deploys",
+      "add a canary step",
+    );
 
     const result = await getMentorFeedback({
       goal: "deploy service",
@@ -795,68 +820,45 @@ describe("buildContextSection through getMentorFeedback", () => {
 
     expect(result.feedback).toBe("full context response");
     const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    const content = request.request.messages[1]?.content as string;
-    expect(content).toContain("Goal: deploy service");
-    expect(content).toContain("Plan: build and test");
-    expect(content).toContain("User Prompt: be thorough");
-    expect(content).toContain("Progress: 80%");
-    expect(content).toContain("Uncertainties: network latency");
-    expect(content).toContain("Task Context: production deploy");
-    expect(content).toContain("History Context: last deploy succeeded");
-  });
-
-  test("excludes empty uncertainties array from context", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "no uncertainties";
-
-    await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      uncertainties: [],
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).not.toContain("Uncertainties");
-  });
-
-  test("includes constitution rules when set", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "with rules";
-    resetConstitution(["always verify inputs", "log errors"]);
-
-    await getMentorFeedback({
-      goal: "test goal",
-      plan: "test plan",
-      modelOverride: { provider: "custom-openai" },
-    });
-
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    const content = request.request.messages[1]?.content as string;
-    expect(content).toContain("Constitution:");
-    expect(content).toContain("- always verify inputs");
-    expect(content).toContain("- log errors");
-  });
-
-  test("includes learning context when useLearningHistory is true", async () => {
-    await writeSettings(
-      mockSettings({
-        provider: "custom-openai",
-        useLearningHistory: true,
-      }),
+    expect(request.request.messages[1]?.content).toBe(
+      [
+        "CONTEXT:",
+        "Goal: deploy service",
+        "Plan: build and test",
+        "User Prompt: be thorough",
+        "Progress: 80%",
+        "Uncertainties: network latency",
+        "Task Context: production deploy",
+        "Constitution:",
+        "- always verify inputs",
+        "- log errors",
+        "History Context: last deploy succeeded",
+        "Learning Context:",
+        "Category: deploys (count: 1)",
+        "- [Mistake] redeploy without a canary | Solution: add a canary step",
+      ].join("\n"),
     );
+  });
+
+  test("assembles minimal mentor context with omitted blocks in exact prior bytes", async () => {
     process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "learning response";
+    openAiResponseText = "minimal context response";
 
     const result = await getMentorFeedback({
       goal: "test goal",
       plan: "test plan",
+      userPrompt: "",
+      progress: "",
+      uncertainties: [],
+      taskContext: "",
       modelOverride: { provider: "custom-openai" },
     });
 
-    // With useLearningHistory: true, the call succeeds even if the
-    // learning store is empty (the empty section gets filtered out).
-    expect(result.feedback).toBe("learning response");
+    expect(result.feedback).toBe("minimal context response");
+    const request = requireValue(openAiRequests[0], "OpenAI request 0");
+    expect(request.request.messages[1]?.content).toBe(
+      "CONTEXT:\nGoal: test goal\nPlan: test plan",
+    );
   });
 
   test("excludes learning context when useLearningHistory is false", async () => {
@@ -906,24 +908,30 @@ describe("buildContextSection through getMentorFeedback", () => {
 });
 
 describe("revisePlan edge cases", () => {
-  test("omits block reason line from prompt when blockReason absent", async () => {
-    process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
-    openAiResponseText = "revised plan";
+  test.each([
+    { label: "absent", blockReason: undefined },
+    { label: "empty", blockReason: "" },
+  ])(
+    "omits $label block reason with exact prior bytes",
+    async ({ blockReason }) => {
+      process.env["CUSTOM_OPENAI_KEY"] = "custom-key";
+      openAiResponseText = "revised plan";
 
-    const result = await revisePlan({
-      goal: "goal",
-      plan: "old plan",
-      feedback: "missing rollback",
-      modelOverride: { provider: "custom-openai" },
-    });
+      const result = await revisePlan({
+        goal: "goal",
+        plan: "old plan",
+        feedback: "missing rollback",
+        modelOverride: { provider: "custom-openai" },
+        ...(blockReason !== undefined && { blockReason }),
+      });
 
-    expect(result).toBe("revised plan");
-    const request = requireValue(openAiRequests[0], "OpenAI request 0");
-    expect(request.request.messages[1]?.content).not.toContain("Block reason");
-    expect(request.request.messages[1]?.content).toContain(
-      "Safety feedback: missing rollback",
-    );
-  });
+      expect(result).toBe("revised plan");
+      const request = requireValue(openAiRequests[0], "OpenAI request 0");
+      expect(request.request.messages[1]?.content).toBe(
+        "Goal: goal\nBlocked plan: old plan\nSafety feedback: missing rollback",
+      );
+    },
+  );
 });
 
 describe("verifyConnection edge cases", () => {

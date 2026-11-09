@@ -21,6 +21,22 @@ export interface VibeCheckInput {
   taskContext?: string;
 }
 
+/** Optional caller input forwarded unchanged to mentor, gate, and reviser calls. */
+export function forwardedInput(input: VibeCheckInput) {
+  return {
+    ...(input.modelOverride !== undefined && {
+      modelOverride: input.modelOverride,
+    }),
+    ...(input.userPrompt !== undefined && { userPrompt: input.userPrompt }),
+    ...(input.uncertainties !== undefined && {
+      uncertainties: input.uncertainties,
+    }),
+    ...(input.taskContext !== undefined && {
+      taskContext: input.taskContext,
+    }),
+  };
+}
+
 /** Contains the mentor feedback returned to the caller. */
 export interface VibeCheckOutput {
   /** Mentor feedback from the configured LLM, or fallback feedback on failure. */
@@ -48,17 +64,8 @@ export async function vibeCheckTool(
     const response = await getMentorFeedback({
       goal: input.goal,
       plan: input.plan,
-      ...(input.modelOverride !== undefined && {
-        modelOverride: input.modelOverride,
-      }),
-      ...(input.userPrompt !== undefined && { userPrompt: input.userPrompt }),
+      ...forwardedInput(input),
       ...(input.progress !== undefined && { progress: input.progress }),
-      ...(input.uncertainties !== undefined && {
-        uncertainties: input.uncertainties,
-      }),
-      ...(input.taskContext !== undefined && {
-        taskContext: input.taskContext,
-      }),
       sessionId,
       historySummary,
     });
