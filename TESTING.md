@@ -107,22 +107,26 @@ describe("parsePort", () => {
 
 ## Modifiers
 
-| Modifier                                | Rule                                             |
-| :-------------------------------------- | :----------------------------------------------- |
-| `test.only`, `describe.only`            | Local focus only; never commit                   |
-| `test.skip`, `describe.skip`            | Never commit                                     |
-| `test.todo`                             | Planned coverage; `bun test --todo` runs it      |
-| `test.failing`                          | Known bug; fails once fixed, prompting removal   |
-| `test.if`, `test.skipIf`, `test.todoIf` | Environment guards; `describe` supports them too |
+| Modifier                                | Rule                                                        |
+| :-------------------------------------- | :---------------------------------------------------------- |
+| `test.only`, `describe.only`            | Local focus only; never commit                              |
+| `test.skip`, `describe.skip`            | Never commit                                                |
+| `test.todo`                             | Planned coverage; `bun test --todo` fails it once it passes |
+| `test.failing`                          | Known bug; fails once fixed, prompting removal              |
+| `test.if`, `test.skipIf`, `test.todoIf` | Environment guards; `describe` supports them too            |
 
-Guard tests needing optional environment:
+Guard tests needing optional environment; `skipIf` takes no reason, so
+name the missing prerequisite in the title:
 
 ```ts
 const databaseUrl = process.env["DATABASE_URL"];
 
-describe.skipIf(!databaseUrl)("OrderRepository", () => {
-  // Integration tests against a real database
-});
+describe.skipIf(!databaseUrl)(
+  "OrderRepository (requires DATABASE_URL)",
+  () => {
+    // Integration tests against a real database
+  }
+);
 ```
 
 ## Isolation
@@ -134,22 +138,10 @@ describe.skipIf(!databaseUrl)("OrderRepository", () => {
     per file.
 - Reset shared registries and stores in `beforeEach`.
 - Restore mutated globals (`process.env`, `globalThis`) in `afterEach`.
-
-## CI parity
-
-| Hazard                           | Remedy                                                       |
-| :------------------------------- | :----------------------------------------------------------- |
-| Absolute paths                   | `join(import.meta.dir, "fixtures", "input.json")`            |
-| Read-only working directory      | Temp directories under `tmpdir()`                            |
-| Undeclared environment variables | Defaults or `skipIf` guards; `bun test` sets `NODE_ENV=test` |
-| Running services                 | Mock in unit tests; skip-guard integration tests             |
-| Live network                     | Mock `fetch` and `node:dns`; bind `Bun.serve({port: 0})`     |
-| Timezone                         | Runs in `UTC` unless `TZ` overrides; freeze time             |
-| Locale                           | Pass explicit locales: `toLocaleString("en-US")`             |
-| OS commands, separators          | `node:path` helpers; spawn `process.execPath`                |
-| Case sensitivity                 | Normalize paths and filenames explicitly                     |
-
-Create and remove temp directories per test:
+- Seed or inject every random source (`Math.random`,
+  `crypto.randomUUID`); never let outcomes hinge on unseeded randomness.
+- Never share files, ports, or sockets across tests; bind servers with
+  `Bun.serve({port: 0})` and give each test its own temp directory:
 
 ```ts
 import {afterEach, beforeEach} from "bun:test";
@@ -167,6 +159,20 @@ afterEach(async () => {
   await rm(workDir, {recursive: true, force: true});
 });
 ```
+
+## CI parity
+
+| Hazard                           | Remedy                                                       |
+| :------------------------------- | :----------------------------------------------------------- |
+| Absolute paths                   | `join(import.meta.dir, "fixtures", "input.json")`            |
+| Read-only working directory      | Temp directories under `tmpdir()`                            |
+| Undeclared environment variables | Defaults or `skipIf` guards; `bun test` sets `NODE_ENV=test` |
+| Running services                 | Mock in unit tests; skip-guard integration tests             |
+| Live network                     | Mock `fetch` and `node:dns`                                  |
+| Timezone                         | Runs in `UTC` unless `TZ` overrides; freeze time             |
+| Locale                           | Pass explicit locales: `toLocaleString("en-US")`             |
+| OS commands, separators          | `node:path` helpers; spawn `process.execPath`                |
+| Case sensitivity                 | Normalize paths and filenames explicitly                     |
 
 Never assume runner privilege; root and `CAP_DAC_OVERRIDE` bypass mode
 bits in containers:
@@ -375,17 +381,18 @@ mock.module("./client.ts", () => ({
 
 ### Matcher selection
 
-| Intent               | Matcher                                                   |
-| :------------------- | :-------------------------------------------------------- |
-| Primitives, identity | `toBe`                                                    |
-| Structural equality  | `toEqual`; `toStrictEqual` also checks `undefined`, class |
-| Partial objects      | `toMatchObject`, `expect.objectContaining`                |
-| Dynamic values       | `expect.any(Type)`, `expect.stringMatching(pattern)`      |
-| Errors               | `toThrow(ErrorClass)` or `toThrow("message")`             |
-| Promises             | `await expect(promise).resolves` or `.rejects`            |
-| Mock calls           | `toHaveBeenCalledWith(...)` over `toHaveBeenCalled()`     |
-| Floats               | `toBeCloseTo(value, digits)`                              |
-| Object keys, values  | `toContainAllKeys`, `toContainValue`, `toContainValues`   |
+| Intent               | Matcher                                                         |
+| :------------------- | :-------------------------------------------------------------- |
+| Primitives, identity | `toBe`                                                          |
+| Structural equality  | `toEqual`; `toStrictEqual` also checks `undefined`, class       |
+| Partial objects      | `toMatchObject`, `expect.objectContaining`                      |
+| Dynamic values       | `expect.any(Type)`, `expect.stringMatching(pattern)`            |
+| Errors               | `toThrow(ErrorClass)` or `toThrow("message")`                   |
+| Promises             | `await expect(promise).resolves` or `.rejects`                  |
+| Mock calls           | `toHaveBeenCalledWith(...)` over `toHaveBeenCalled()`           |
+| Floats               | `toBeCloseTo(value, digits)`                                    |
+| Object keys, values  | `toContainAllKeys`, `toContainValue`, `toContainValues`         |
+| Unordered arrays     | `toHaveLength(n)` plus `toEqual(expect.arrayContaining(items))` |
 
 Avoid `toBeTruthy` and `toBeDefined` when a precise expected value
 exists.
@@ -533,7 +540,7 @@ Testing Library registers `cleanup` in `afterEach` automatically.
 Before writing tests, confirm their dependencies appear in
 `devDependencies`. Before declaring a task done:
 
-1. `bun test <file>` passes.
+1. `bun test <file> --randomize --rerun-each=3` passes every run.
 2. `bun test <file> -t "<name>"` runs each new or updated test.
 3. `bun test --check` reports zero type errors.
 4. `CI=true bun test --isolate --randomize` shows zero new failures.
