@@ -2,9 +2,10 @@
 name: vibe-constitution
 description: >-
   Manages persistent vibe constitution rules for constraints, safety
-  requirements, and preferences surviving across vibe checks. Use when a user
-  states a standing rule, a task carries persistent risk boundaries, a session
-  resumes with stale rules, or existing rules conflict with new directives.
+  requirements, and preferences surviving across vibe checks. Use when a
+  user states a standing rule, a task carries persistent risk
+  boundaries, a session resumes with stale rules, or existing rules
+  conflict with new directives.
 user-invocable: true
 argument-hint: "<rule intent, constraint, or reset reason>"
 ---
@@ -15,9 +16,11 @@ argument-hint: "<rule intent, constraint, or reset reason>"
 
 - User states a constraint, safety rule, or preference persisting across
   `vibe check` calls.
-- Task includes an irreversible operation or risk boundary guiding later checks.
+- Task includes an irreversible operation or risk boundary guiding later
+  checks.
 - Session resumes requiring rule inspection, refresh, or removal.
-- Existing rules conflict with current task requirements or user direction.
+- Existing rules conflict with current task requirements or user
+  direction.
 
 Skip when no concrete rule-management need exists.
 
@@ -33,8 +36,10 @@ Skip when no concrete rule-management need exists.
 
 ## Workflow
 
-1. **GATE**—Guard preconditions; execute only for concrete rule changes:
-   - Run `vibe schema` once per session; treat output as authoritative.
+1. **GATE**—Guard preconditions, executing only for concrete rule
+   changes:
+   - Run `vibe schema` once per session, treating its output as
+     authoritative.
 
 2. **ORIENT**—Anchor goal before execution:
    - Goal: align active constitution rules with target user constraints.
@@ -44,14 +49,15 @@ Skip when no concrete rule-management need exists.
    - Run `vibe constitution get` to retrieve active rules.
    - Compare active rules against target constraints.
    - Classify required action:
-     - Match: requires no mutation; skip execution.
+     - Match: requires no mutation, so skip execution.
      - Absent: requires `vibe constitution set --rule <text>`.
      - Stale or conflicting: requires `vibe constitution reset`.
 
-4. **ACT**—Execute classified command (`vibe constitution set` or `reset`).
+4. **ACT**—Execute classified command (`vibe constitution set` or
+   `reset`).
 
-5. **VERIFY**—Run `vibe constitution get` to confirm active rules match target
-   constraints.
+5. **VERIFY**—Run `vibe constitution get` to confirm active rules match
+   target constraints.
 
 6. **PERSIST**—Confirm state update in local session store.
 
@@ -60,14 +66,15 @@ Skip when no concrete rule-management need exists.
 ## Directives
 
 - Limit rules to durable constraints only.
-- Phrase rules clearly for subsequent agent consumption.
+- Phrase rules unambiguously for later agent consumption.
+- **IMPORTANT:** Return the result to the caller.
 
 ## Constraints
 
 - Exclude duplicate schema output from this skill.
 - Inspect existing rules before applying mutations.
-- Use `reset` to clear or replace rules; avoid stacking replacement rules via
-  `set`.
+- Use `reset` to clear or replace rules instead of stacking replacement
+  rules via `set`.
 - Keep rules atomic (one constraint per rule flag).
 - Exclude transient task instructions.
 - Avoid invoking `vibe check` or `vibe learn` inside this skill.
