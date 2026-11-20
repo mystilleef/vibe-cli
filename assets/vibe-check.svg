@@ -374,7 +374,7 @@
       </g>
     </g>
 
-    <!-- Branch B: BLOCKED (Retry or Abort) -->
+    <!-- Branch B: BLOCKED (Retry or Return) -->
     <g transform="translate(18, 242)">
       <rect width="224" height="90" rx="8" fill="#251016" stroke="#f43f5e" stroke-width="1.5" />
       <circle cx="16" cy="18" r="6" fill="#f43f5e" />
@@ -390,7 +390,7 @@
           attempts &lt; max: Triggers Auto-Revision ↺
         </text>
         <text x="0" y="46" class="font-sans" font-size="8" fill="#fda4af">
-          attempts exhausted: Safe abort (Exit code 2)
+          attempts exhausted: Caller decides (Exit 2)
         </text>
       </g>
     </g>

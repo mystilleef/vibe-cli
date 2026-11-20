@@ -34,7 +34,7 @@ function resolveSchemaConfig(): { provider: string; model: string } {
 /** Declarative command surface: per-command usage, options, and outputs. */
 const COMMANDS = {
   check: {
-    when: "before any action — especially risky or irreversible ones; halt if proceed is false",
+    when: "before any action — especially risky or irreversible ones; treat the verdict as a second opinion, never a halt",
     req: { "--goal": "str", "--plan": "str" },
     opt: {
       "--progress": "str",

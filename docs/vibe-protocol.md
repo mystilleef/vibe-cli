@@ -43,31 +43,29 @@ exhaustion; never resubmit a blocked plan.
 
 | field           | type  | action                                               |
 | --------------- | ----- | ---------------------------------------------------- |
-| `proceed`       | bool  | execute iff true                                     |
-| `plan`          | str   | final reviewed plan; adopt mentor changes by default |
+| `proceed`       | bool  | mentor verdict; advice, never a halt                 |
+| `plan`          | str   | final reviewed plan; weigh each change on its merits |
 | `reason`        | str   | rationale                                            |
 | `feedback`      | str   | mentor feedback; weigh when adjudicating changes     |
-| `exhausted`     | bool? | true → abort; report task cannot reach safe approval |
-| `feedbackFault` | true? | true → abort; report `diagnostic`                    |
+| `exhausted`     | bool? | true → mentor still objects; weigh `reason`          |
+| `feedbackFault` | true? | true → no mentor input; report `diagnostic`          |
 
-### Adjudicate on `proceed=true`
+### Adjudicate every outcome
 
-The calling agent holds final discretion; the user requirement outranks
-the mentor.
+The mentor gives a second opinion; the calling agent decides, and no
+verdict halts the run.
 
 - Compare the returned `plan` with the submitted plan.
-- For each mentor change:
-  - Adopt by default, including safety additions and neutral edits.
-  - Reject or adjust only on a cited conflict with:
-    - user requirement
-    - constitution
-    - repository evidence
-  - Never reject on preference, effort, or cost.
+- Weigh each mentor change on its merits against the user requirement,
+  constitution, and repository evidence, then adopt, adjust, or reject
+  it.
+- On `feedbackFault`, keep the submitted plan.
 - Treat any step absent from both plans as a new decision point.
-- Record each change's disposition and cited ground.
-- Execute the adopted plan.
+- Record each change's disposition and reason.
+- Execute the resulting plan.
 
-Exit codes: `0` proceed · `2` blocked/exhausted · `1` error
+Exit codes: `0` proceed · `2` blocked/exhausted (JSON still prints) ·
+`1` error
 
 ## Learn
 

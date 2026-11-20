@@ -8,10 +8,9 @@
 - multi-step chains with partial-failure risk
 
 - Skip for reversible, single-step work
-- Execute only after `proceed=true`; never override a halt
-- Adopt mentor changes by default; reject or adjust one only on a cited
-  conflict with the user requirement, constitution, or repository
-  evidence
+- Treat every verdict as a second opinion; no verdict halts the run
+- Weigh each mentor change on its merits: adopt, adjust, or reject it,
+  and record why
 
 **`vibe-learn`**—Invoke after any concrete outcome; classify as one of:
 
